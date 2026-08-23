@@ -1,2 +1,6 @@
 export * from './ipc-channels.js';
 export * from './schemas.js';
+export * from './run.js';
+export * from './analysis.js';
+export * from './manifest.js';
+

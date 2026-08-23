@@ -1,0 +1,1 @@
+$ tsc --noEmit -p packages/protocol && tsc --noEmit -p apps/main && tsc --noEmit -p apps/preload && tsc --noEmit -p apps/renderer

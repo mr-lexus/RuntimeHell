@@ -1,0 +1,23 @@
+$ electron-vite build
+[36mvite v8.2.2 [32mbuilding ssr environment for production...[36m[39m
+transforming...
+✓ 88 modules transformed.
+rendering chunks...
+out/main/index.js  142.42 kB
+
+[32m✓ built in 101ms[39m
+[36mvite v8.2.2 [32mbuilding ssr environment for production...[36m[39m
+transforming...
+✓ 87 modules transformed.
+rendering chunks...
+out/preload/index.js  140.83 kB
+
+[32m✓ built in 53ms[39m
+[36mvite v8.2.2 [32mbuilding client environment for production...[36m[39m
+transforming...
+✓ 14 modules transformed.
+rendering chunks...
+../../out/renderer/index.html                  0.32 kB
+../../out/renderer/assets/index-CJgqYh4R.js  489.56 kB
+
+[32m✓ built in 131ms[39m
