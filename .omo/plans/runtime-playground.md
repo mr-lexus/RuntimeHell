@@ -260,7 +260,7 @@ Waves map 1:1 to phases above; wave = 3–6 todos executed sequentially within t
 
 ## Todos
 
-- [ ] 1. Scaffold pnpm monorepo + electron-vite app with typed IPC round-trip
+- [x] 1. Scaffold pnpm monorepo + electron-vite app with typed IPC round-trip
   - References: Scope→Architecture (layout), D1; create exactly the tree under "Repository layout to create" (empty module files allowed as stubs with TODO markers, but apps/main must boot).
   - Acceptance: `pnpm i && pnpm dev` launches an Electron window rendering a React root; `contextIsolation:true`, `nodeIntegration:false`; preload exposes typed `window.api.ping()` → main replies `'pong'` via zod-validated channel `app:ping`; `pnpm typecheck` passes across all three TS projects; vitest runs one smoke test asserting the preload channel schema.
   - QA happy: `.omo/qa/t01-boot.md` records `pnpm dev` launch log + ping/pong assertion output. QA failure: corrupt the zod schema intentionally → test fails with schema error, record in same file, then fix.

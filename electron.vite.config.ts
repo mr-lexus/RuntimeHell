@@ -27,7 +27,10 @@ export default defineConfig({
     resolve: { alias: { '@rh/protocol': protocolAlias } },
     build: {
       outDir: '../../out/renderer',
-      emptyOutDir: true
+      emptyOutDir: true,
+      rollupOptions: {
+        input: resolve(process.cwd(), 'apps/renderer/index.html')
+      }
     }
   }
 });
