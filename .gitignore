@@ -1,0 +1,7 @@
+node_modules/
+out/
+dist/
+*.log
+.DS_Store
+.rhbuild/
+# local caches/workspaces live outside the repo by design (%LOCALAPPDATA% / %USERPROFILE%)

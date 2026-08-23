@@ -1,0 +1,15 @@
+{
+  "name": "runtimehell",
+  "private": true,
+  "version": "0.1.0",
+  "description": "RuntimeHell - multi-runtime JS/TS playground with engine internals analysis",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p packages/protocol && tsc --noEmit -p apps/main && tsc --noEmit -p apps/preload && tsc --noEmit -p apps/renderer",
+    "test": "vitest run",
+    "lint": "node scripts/lint-gates.mjs"
+  },
+  "devDependencies": {}
+}
