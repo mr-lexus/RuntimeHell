@@ -296,7 +296,7 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: `.omo/qa/t06-shell.md` with screenshots of layout + persistence after reload. QA failure: kill app mid-edit в†’ reopen shows dirty indicator restored from autosave (todo 22 finalizes; here assert file written on Ctrl+S only).
   - Commit: `feat(ui): resizable shell layout with panel drawers and file tabs`
 
-- [ ] 7. RuntimeManager v0: system Node detection + pinned-LTS download/verify/cache/remove
+- [x] 7. RuntimeManager v0: system Node detection + pinned-LTS download/verify/cache/remove
   - References: Evidence facts 5; `apps/main/src/binaries/*` (shared downloader lands here FIRST, engines reuse it in todo 15); D2 constraints.
   - Acceptance: detects system-installed node (`where.exe node` + spawn `--version`, absolute path captured); lists versions from `https://nodejs.org/dist/index.json` (defensive parse: tolerate extra/missing optional fields, require version+lts+files); downloads `node-v{ver}-win-x64.zip`, verifies SHA-256 against `SHASUMS256.txt`, atomically extracts (temp dir в†’ rename) to `%LOCALAPPDATA%\RuntimeHell\runtimes\node\{version}\`, writes/upserts `manifest.json` ManifestEntry (sha256 recorded, source:'official-dist'); `remove(version)` deletes dir + manifest row (refuses if entry missing); all operations stream progress events.
   - QA happy: download pinned LTS (e.g., v22.x) on real machine; spawn downloaded exe `--version`; manifest inspected in evidence `.omo/qa/t07-runtime-mgr.md`. QA failure: tamper 1 byte of zip в†’ sha mismatch в†’ install aborted + partial temp removed (assert no orphan dir), evidence recorded.
@@ -473,5 +473,6 @@ Conventional commits, one commit per todo (scope tags p0вЂ¦p10 as in Commit l
 4. Zero invented APIs/flags anywhere: every engine flag string in the codebase traces to OptionsList.h / flag-definitions.h / firefox-source-docs / quickjs cli.md evidence recorded in `.omo/drafts/runtime-playground.md` (F2 cross-check).
 5. Distribution constraints honored: official sources only, manifest with platform/arch/version/sha256 per artifact, no engine ships inside the installer, custom-build requirements surface ONLY through the C-lane UI state.
 6. Broken user programs can never degrade the app: timeout/tree-cancel proven, crash-recovery paths tested, UI always reachable (t08, t11, t22 failure scenarios).
+
 
 
