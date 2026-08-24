@@ -338,7 +338,7 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: `npm i lodash` in workspace в†’ import works in next run (evidence `.omo/qa/t13-packages.md`). QA failure: install nonexistent package `@rh/nope-xyz` в†’ npm error text displayed, workspace package.json unchanged (hash-compared before/after).
   - Commit: `feat(packages): workspace-scoped npm install remove search with progress`
 
-- [ ] 14. Import IntelliSense via @typescript/ata
+- [x] 14. Import IntelliSense via @typescript/ata
   - References: Evidence fact 6; renderer ts-worker setup.
   - Acceptance: ATA delegate receives type files for imports (lodash/zod smoke) в†’ added via `addExtraLib`; re-acquisition debounced on package.json change; offline в†’ status chip "types unavailable (offline)" and editor fully usable; completions offer installed package exports (assert via monaco completion API in Playwright step).
   - QA happy: type `import _ from 'lodash'` в†’ hover on `_.chunk` shows signature (`.omo/qa/t14-ata.md`). QA failure: bogus import `'nonexistent-pkg-xyz'` в†’ no crash, ATA settles, chip shows unresolved, evidence recorded.

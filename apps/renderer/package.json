@@ -8,11 +8,13 @@
   },
   "dependencies": {
     "@babel/parser": "^8.0.4",
+    "@typescript/ata": "^0.9.8",
     "monaco-editor": "^0.56.0",
     "prettier": "^3.9.6",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-window": "^1.8.11",
+    "typescript": "^5.9.3",
     "zustand": "^5.0.15"
   },
   "devDependencies": {

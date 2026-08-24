@@ -56,7 +56,10 @@ export const usePackages = create<PackagesState>((set, get) => ({
     set({ busy: true });
     const response = await window.api.pkgInstall({ workspaceId: 'default', name, managedNodeVersion: useRuntimes.getState().selectedVersion ?? undefined });
     set({ busy: false });
-    if (response.ok) await get().refresh();
+    if (response.ok) {
+      await get().refresh();
+      window.dispatchEvent(new CustomEvent('rh:packages-changed'));
+    }
   },
 
   remove: async (name) => {
@@ -64,7 +67,10 @@ export const usePackages = create<PackagesState>((set, get) => ({
     set({ busy: true });
     const response = await window.api.pkgRemove({ workspaceId: 'default', name, managedNodeVersion: useRuntimes.getState().selectedVersion ?? undefined });
     set({ busy: false });
-    if (response.ok) await get().refresh();
+    if (response.ok) {
+      await get().refresh();
+      window.dispatchEvent(new CustomEvent('rh:packages-changed'));
+    }
   },
 
   bindEvents: () => {

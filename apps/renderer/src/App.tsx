@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { exposeMonacoForTests } from './editor/monaco-setup';
 import { CodeEditor } from './editor/CodeEditor';
+import { createAtaController, getAtaStatus, onAtaStatus, type AtaStatus } from './editor/ata';
+import { typescriptDefaults } from './editor/monaco-setup';
 import { ConsolePanel } from './panels/console/ConsolePanel';
 import { InspectorPanel } from './panels/inspector/InspectorPanel';
 import { RuntimesPanel } from './panels/runtimes/RuntimesPanel';
@@ -72,6 +74,29 @@ export function App(): React.JSX.Element {
     };
   }, [openFile]);
 
+  // ATA (todo 14): debounced type acquisition for imports + status chip.
+  const ataRef = useRef<ReturnType<typeof createAtaController> | null>(null);
+  const [ataStatus, setAtaStatus] = useState<AtaStatus>(getAtaStatus());
+  useEffect(() => {
+    ataRef.current ??= createAtaController((code, path) =>
+      typescriptDefaults.addExtraLib(code, `file:///node_modules/${path}`)
+    );
+    const offStatus = onAtaStatus(setAtaStatus);
+    // Re-acquire when dependencies change (package.json mutation signal).
+    const onPkgsChanged = (): void => {
+      const file = useUi.getState().files.find((f) => f.id === useUi.getState().activeFileId);
+      if (file !== undefined) ataRef.current?.schedule(file.content, true);
+    };
+    window.addEventListener('rh:packages-changed', onPkgsChanged);
+    return () => {
+      offStatus();
+      window.removeEventListener('rh:packages-changed', onPkgsChanged);
+    };
+  }, []);
+  const scheduleAta = (code: string): void => {
+    ataRef.current?.schedule(code);
+  };
+
   const onSave = (content: string): void => {
     const file = activeFile;
     if (!file) return;
@@ -130,7 +155,12 @@ export function App(): React.JSX.Element {
             {f.dirty ? ' •' : ''}
           </button>
         ))}
-        <span style={{ marginLeft: 'auto', color: '#888', alignSelf: 'center' }}>{badge || status}</span>
+        <span style={{ marginLeft: 'auto', color: '#888', alignSelf: 'center', display: 'flex', gap: 10 }}>
+          {ataStatus === 'loading' && <span>types…</span>}
+          {ataStatus === 'ready' && <span style={{ color: '#6a9955' }}>types ready</span>}
+          {ataStatus === 'offline' && <span style={{ color: '#dcdcaa' }}>types unavailable (offline)</span>}
+          {badge || status}
+        </span>
       </div>
 
       {/* editor / drawer split */}
@@ -144,6 +174,7 @@ export function App(): React.JSX.Element {
               onChange={(v) => {
                 updateContent(activeFile.id, v);
                 scheduleAutoRun();
+                scheduleAta(v);
               }}
               onSave={onSave}
               onRun={() => emitRunRequested()}
