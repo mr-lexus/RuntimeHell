@@ -302,7 +302,7 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: download pinned LTS (e.g., v22.x) on real machine; spawn downloaded exe `--version`; manifest inspected in evidence `.omo/qa/t07-runtime-mgr.md`. QA failure: tamper 1 byte of zip в†’ sha mismatch в†’ install aborted + partial temp removed (assert no orphan dir), evidence recorded.
   - Commit: `feat(binaries): runtime manager with checksummed node distribution installs`
 
-- [ ] 8. ProcessRunner: isolated execution with timeout, tree-cancel, streaming, crash recovery
+- [x] 8. ProcessRunner: isolated execution with timeout, tree-cancel, streaming, crash recovery
   - References: Scopeв†’Architecture isolation paragraph; `apps/main/src/execution/process-runner.ts`.
   - Acceptance: spawns executable by ABSOLUTE path, cwd=workspace dir, env = minimal allowlist (PATH trimmed to system32+node dir, no inherited secrets вЂ” document exact env policy in code comment); captures stdout/stderr chunks в†’ coalesced в‰Ґ16ms events; timeout timer default 5000ms (configurable per run) в†’ tree-kill via `taskkill /pid <pid> /T /F` (win) with fallback `kill()`; cancel() idempotent; exit event carries {code, signal, durationMs, killedBy}; crash (spawn ENOENT/EACCES) surfaces as structured RunError, never throws unhandled; orphan sweep utility kills stale PIDs recorded in run-journal on startup.
   - QA happy: run `console.log('hi')` via downloaded node в†’ events sequence logged (`.omo/qa/t08-runner.md`). QA failure scenarios BOTH tested: (a) `while(true){}` в†’ cancel в†’ process gone (assert via `process.kill(pid,0)` throwing) + children reaped; (b) executable path deleted mid-flight в†’ RunError event with actionable message.
@@ -473,6 +473,7 @@ Conventional commits, one commit per todo (scope tags p0вЂ¦p10 as in Commit l
 4. Zero invented APIs/flags anywhere: every engine flag string in the codebase traces to OptionsList.h / flag-definitions.h / firefox-source-docs / quickjs cli.md evidence recorded in `.omo/drafts/runtime-playground.md` (F2 cross-check).
 5. Distribution constraints honored: official sources only, manifest with platform/arch/version/sha256 per artifact, no engine ships inside the installer, custom-build requirements surface ONLY through the C-lane UI state.
 6. Broken user programs can never degrade the app: timeout/tree-cancel proven, crash-recovery paths tested, UI always reachable (t08, t11, t22 failure scenarios).
+
 
 
 

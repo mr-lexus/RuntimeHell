@@ -7,7 +7,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@jridgewell/trace-mapping": "^0.3.31",
     "@rh/protocol": "workspace:*",
+    "esbuild": "^0.28.2",
     "extract-zip": "^2.0.1",
     "zod": "^4.4.3"
   },
