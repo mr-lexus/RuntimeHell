@@ -21,10 +21,21 @@ import {
   BinaryRemoveResponseSchema,
   BinariesListRequestSchema,
   BinariesListResponseSchema,
+  PkgListRequestSchema,
+  PkgListResponseSchema,
+  PkgEventSchema,
+  PkgOpRequestSchema,
+  PkgOpResponseSchema,
+  PkgSearchRequestSchema,
+  PkgSearchResponseSchema,
   type BinaryInstallResponse,
   type BinaryProgressEvent,
   type BinaryRemoveResponse,
   type BinariesListResponse,
+  type PkgEvent,
+  type PkgListResponse,
+  type PkgOpResponse,
+  type PkgSearchResponse,
   type RunCancelResponse,
   type RunEvent,
   type RunStartResponse
@@ -94,6 +105,31 @@ const api = {
     ipcRenderer.on(IPC.binariesProgress, handler);
     return () => {
       ipcRenderer.removeListener(IPC.binariesProgress, handler);
+    };
+  },
+  // --- packages panel (todo 13) ---------------------------------------------
+  pkgInstall: async (req: { workspaceId: string; name: string; versionRange?: string; managedNodeVersion?: string }): Promise<PkgOpResponse> => {
+    return PkgOpResponseSchema.parse(await ipcRenderer.invoke(IPC.packagesInstall, PkgOpRequestSchema.parse(req)));
+  },
+  pkgRemove: async (req: { workspaceId: string; name: string; managedNodeVersion?: string }): Promise<PkgOpResponse> => {
+    return PkgOpResponseSchema.parse(await ipcRenderer.invoke(IPC.packagesRemove, PkgOpRequestSchema.parse(req)));
+  },
+  pkgList: async (workspaceId: string): Promise<PkgListResponse> => {
+    return PkgListResponseSchema.parse(await ipcRenderer.invoke(IPC.packagesList, PkgListRequestSchema.parse({ workspaceId })));
+  },
+  pkgSearch: async (query: string, size?: number): Promise<PkgSearchResponse> => {
+    return PkgSearchResponseSchema.parse(
+      await ipcRenderer.invoke(IPC.packagesSearch, PkgSearchRequestSchema.parse({ query, ...(size !== undefined ? { size } : {}) }))
+    );
+  },
+  onPkgEvent: (cb: (event: PkgEvent) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+      const parsed = PkgEventSchema.safeParse(payload);
+      if (parsed.success) cb(parsed.data);
+    };
+    ipcRenderer.on(IPC.packagesEvent, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.packagesEvent, handler);
     };
   }
 };

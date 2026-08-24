@@ -332,7 +332,7 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: install v22 LTS via UI, run sample, uninstall after `.omo/qa/t12-runtime-ui.md` evidence. QA failure: network cut mid-download в†’ progress errors, temp cleaned, manifest unchanged (assert), retry succeeds after reconnect.
   - Commit: `feat(runtimes): version selector ui backed by managed installs`
 
-- [ ] 13. PackageService: npm operations scoped to workspaces
+- [x] 13. PackageService: npm operations scoped to workspaces
   - References: D7; `apps/main/src/packages/package-service.ts`.
   - Acceptance: ensure-workspace creates `package.json` ({"private":true,"type":"commonjs"} default) on first dep op; **npm executable resolved per D7 order (managed active runtime's bundled npm в†’ PATH npm в†’ structured error with actionable setup guidance)**; install/uninstall/list via spawned npm CLI (`--ignore-scripts` unless setting off) streaming parsed progress lines; search panel queries registry search endpoint (size 20, abortable); failures surface npm stderr verbatim in Packages panel log area.
   - QA happy: `npm i lodash` in workspace в†’ import works in next run (evidence `.omo/qa/t13-packages.md`). QA failure: install nonexistent package `@rh/nope-xyz` в†’ npm error text displayed, workspace package.json unchanged (hash-compared before/after).

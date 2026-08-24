@@ -31,6 +31,13 @@ export const IPC = {
   runtimesListVersions: 'runtimes:list-versions',
   runtimeCapabilities: 'runtimes:capabilities',
 
+  // packages (todo 13)
+  packagesInstall: 'packages:install',
+  packagesRemove: 'packages:remove',
+  packagesList: 'packages:list',
+  packagesSearch: 'packages:search',
+  packagesEvent: 'packages:event', // main -> renderer stream
+
   // workspace files (minimal early surface; WorkspaceStore expands in todo 21)
   wsSaveFile: 'ws:save-file',
   wsReadFile: 'ws:read-file',

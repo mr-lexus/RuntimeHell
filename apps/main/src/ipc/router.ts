@@ -7,6 +7,9 @@ import {
   BinaryRemoveRequestSchema,
   BinariesListRequestSchema,
   IPC,
+  PkgListRequestSchema,
+  PkgOpRequestSchema,
+  PkgSearchRequestSchema,
   PingResponseSchema,
   RunCancelRequestSchema,
   RunStartRequestSchema,
@@ -15,6 +18,7 @@ import {
 import { listFiles, readFile, saveFile } from '../workspace/files.js';
 import type { ExecutionManager } from '../execution/execution-manager.js';
 import type { BinariesController } from '../binaries/binaries-controller.js';
+import type { PackageService } from '../packages/package-service.js';
 
 type Register = (channel: string, handler: (payload: unknown) => Promise<unknown>) => void;
 
@@ -56,6 +60,28 @@ export function registerBinariesHandlers(register: Register, controller: Binarie
   register(IPC.binariesRemove, async (payload) => {
     const req = BinaryRemoveRequestSchema.parse(payload);
     return controller.remove(req.kind, req.id, req.version);
+  });
+}
+
+/** Packages handlers bound to a service instance (todo 13). */
+export function registerPackageHandlers(register: Register, service: PackageService): void {
+  register(IPC.packagesInstall, async (payload) => {
+    const req = PkgOpRequestSchema.parse(payload);
+    return service.install(req.workspaceId, req.name, req.versionRange, true, undefined, req.managedNodeVersion ?? null);
+  });
+  register(IPC.packagesRemove, async (payload) => {
+    const req = PkgOpRequestSchema.parse(payload);
+    return service.uninstall(req.workspaceId, req.name, true, undefined, req.managedNodeVersion ?? null);
+  });
+  register(IPC.packagesList, async (payload) => {
+    const req = PkgListRequestSchema.parse(payload);
+    return { ok: true as const, dependencies: await service.list(req.workspaceId) };
+  });
+  register(IPC.packagesSearch, async (payload) => {
+    const req = PkgSearchRequestSchema.parse(payload);
+    const rows = await service.search(req.query, req.size);
+    if ('error' in rows) return { ok: false as const, message: rows.error };
+    return { ok: true as const, results: rows };
   });
 }
 

@@ -4,6 +4,7 @@ import { CodeEditor } from './editor/CodeEditor';
 import { ConsolePanel } from './panels/console/ConsolePanel';
 import { InspectorPanel } from './panels/inspector/InspectorPanel';
 import { RuntimesPanel } from './panels/runtimes/RuntimesPanel';
+import { PackagesPanel } from './panels/packages/PackagesPanel';
 import { emitRunRequested, onRunRequested, useActiveFile, useUi, type DrawerTab } from './state/ui';
 import { useRun } from './state/run';
 
@@ -194,7 +195,7 @@ export function App(): React.JSX.Element {
             {drawerTab === 'console' && <ConsolePanel />}
             {drawerTab === 'inspector' && <InspectorPanel />}
             {drawerTab === 'analysis' && <div>Engine analysis appears here (todo 19).</div>}
-            {drawerTab === 'packages' && <div>Package management appears here (todo 13).</div>}
+            {drawerTab === 'packages' && <PackagesPanel />}
             {drawerTab === 'runtimes' && <RuntimesPanel />}
           </div>
         </div>

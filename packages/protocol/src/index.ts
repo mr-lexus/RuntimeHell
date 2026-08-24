@@ -4,5 +4,6 @@ export * from './run.js';
 export * from './analysis.js';
 export * from './manifest.js';
 export * from './workspace.js';
+export * from './packages.js';
 
 

@@ -2,9 +2,10 @@ import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { BrowserWindow, app, ipcMain } from 'electron';
 import { IPC } from '@rh/protocol';
-import { registerBinariesHandlers, registerExecutionHandlers, registerIpcHandlers } from './ipc/router.js';
+import { registerBinariesHandlers, registerExecutionHandlers, registerIpcHandlers, registerPackageHandlers } from './ipc/router.js';
 import { ExecutionManager } from './execution/execution-manager.js';
 import { BinariesController } from './binaries/binaries-controller.js';
+import { PackageService } from './packages/package-service.js';
 
 const isDev = !app.isPackaged;
 
@@ -71,6 +72,18 @@ function main(): void {
   registerBinariesHandlers((channel, handler) => {
     ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
   }, binaries);
+
+  // Packages panel (todo 13): npm ops scoped to the workspace.
+  const packages = new PackageService({
+    emit: (event) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send(IPC.packagesEvent, event);
+      }
+    }
+  });
+  registerPackageHandlers((channel, handler) => {
+    ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
+  }, packages);
 
   app.whenReady().then(() => {
     console.log('[boot] electron ready');
