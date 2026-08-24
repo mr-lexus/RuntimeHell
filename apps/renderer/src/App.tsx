@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { exposeMonacoForTests } from './editor/monaco-setup';
 import { CodeEditor } from './editor/CodeEditor';
+import { ConsolePanel } from './panels/console/ConsolePanel';
+import { InspectorPanel } from './panels/inspector/InspectorPanel';
 import { emitRunRequested, onRunRequested, useActiveFile, useUi, type DrawerTab } from './state/ui';
+import { useRun } from './state/run';
 
 const WORKSPACE_ID = 'default';
 
@@ -41,6 +44,15 @@ export function App(): React.JSX.Element {
   const markSaved = useUi((s) => s.markSaved);
   const setDrawerTab = useUi((s) => s.setDrawerTab);
   const setDrawerRatio = useUi((s) => s.setDrawerRatio);
+
+  const phase = useRun((s) => s.phase);
+  const runtimeVersion = useRun((s) => s.runtimeVersion);
+  const lastExit = useRun((s) => s.lastExit);
+  const autoRun = useRun((s) => s.autoRun);
+  const setAutoRun = useRun((s) => s.setAutoRun);
+  const scheduleAutoRun = useRun((s) => s.scheduleAutoRun);
+  const requestCancel = useRun((s) => s.requestCancel);
+
   const activeFile = useActiveFile();
   const [status, setStatus] = useState<string>('ready');
   const splitRef = useRef<HTMLDivElement | null>(null);
@@ -48,7 +60,14 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     exposeMonacoForTests();
     openFile(DEMO_FILE);
-    return onRunRequested(() => setStatus(`run requested @ ${new Date().toISOString()}`));
+    // Real executor wiring (todo 11): Ctrl+Enter and toolbar both funnel into
+    // the run store; streamed events update it via the preload bridge.
+    const offRun = onRunRequested(() => void useRun.getState().requestStart());
+    const offEvents = window.api?.onRunEvent((event) => useRun.getState().handleEvent(event));
+    return () => {
+      offRun();
+      offEvents?.();
+    };
   }, [openFile]);
 
   const onSave = (content: string): void => {
@@ -80,6 +99,15 @@ export function App(): React.JSX.Element {
     window.addEventListener('mouseup', up);
   };
 
+  const badge = [
+    phase === 'idle' ? (runtimeVersion !== null ? `node v${runtimeVersion}` : 'ready') : phase,
+    lastExit !== null
+      ? `exit ${lastExit.code ?? '—'} · ${lastExit.durationMs}ms${lastExit.killedBy !== null ? ` · ${lastExit.killedBy}` : ''}`
+      : null
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontSize: 13 }}>
       {/* tab bar */}
@@ -100,7 +128,7 @@ export function App(): React.JSX.Element {
             {f.dirty ? ' •' : ''}
           </button>
         ))}
-        <span style={{ marginLeft: 'auto', color: '#888', alignSelf: 'center' }}>{status}</span>
+        <span style={{ marginLeft: 'auto', color: '#888', alignSelf: 'center' }}>{badge || status}</span>
       </div>
 
       {/* editor / drawer split */}
@@ -111,7 +139,10 @@ export function App(): React.JSX.Element {
               path={activeFile.relPath}
               value={activeFile.content}
               language={activeFile.language}
-              onChange={(v) => updateContent(activeFile.id, v)}
+              onChange={(v) => {
+                updateContent(activeFile.id, v);
+                scheduleAutoRun();
+              }}
               onSave={onSave}
               onRun={() => emitRunRequested()}
               onFormatError={(m) => setStatus(`format error: ${m}`)}
@@ -122,7 +153,7 @@ export function App(): React.JSX.Element {
         </div>
         <div onMouseDown={startDrag} style={{ height: 4, cursor: 'row-resize', background: '#444' }} />
         <div style={{ flex: `${drawerRatio} 1 0`, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ display: 'flex', gap: 2, background: '#181818', padding: '3px 6px' }}>
+          <div style={{ display: 'flex', gap: 2, background: '#181818', padding: '3px 6px', alignItems: 'center' }}>
             {DRAWER_TABS.map((tab) => (
               <button
                 key={tab}
@@ -138,10 +169,29 @@ export function App(): React.JSX.Element {
                 {tab}
               </button>
             ))}
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+              <label style={{ color: '#999', fontSize: 11, display: 'flex', gap: 4, alignItems: 'center' }}>
+                <input type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} /> auto-run
+              </label>
+              <button
+                onClick={() => void requestCancel()}
+                disabled={phase === 'idle'}
+                style={{
+                  background: phase === 'cancelling' ? '#5a1d1d' : '#444',
+                  color: phase === 'idle' ? '#666' : '#f48771',
+                  border: 'none',
+                  padding: '2px 10px',
+                  cursor: phase === 'idle' ? 'default' : 'pointer',
+                  fontSize: 11
+                }}
+              >
+                Cancel
+              </button>
+            </span>
           </div>
-          <div style={{ flex: 1, overflow: 'auto', padding: 8, color: '#bbb' }}>
-            {drawerTab === 'console' && <div>Console output appears here (todo 11).</div>}
-            {drawerTab === 'inspector' && <div>Value inspector appears here (todo 11).</div>}
+          <div style={{ flex: 1, overflow: 'auto', padding: 8, color: '#bbb', minHeight: 0 }}>
+            {drawerTab === 'console' && <ConsolePanel />}
+            {drawerTab === 'inspector' && <InspectorPanel />}
             {drawerTab === 'analysis' && <div>Engine analysis appears here (todo 19).</div>}
             {drawerTab === 'packages' && <div>Package management appears here (todo 13).</div>}
             {drawerTab === 'runtimes' && <div>Runtime versions appear here (todo 12).</div>}

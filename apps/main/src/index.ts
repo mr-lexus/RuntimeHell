@@ -1,7 +1,9 @@
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { BrowserWindow, app, ipcMain } from 'electron';
-import { registerIpcHandlers } from './ipc/router.js';
+import { IPC } from '@rh/protocol';
+import { registerExecutionHandlers, registerIpcHandlers } from './ipc/router.js';
+import { ExecutionManager } from './execution/execution-manager.js';
 
 const isDev = !app.isPackaged;
 
@@ -44,6 +46,18 @@ function main(): void {
   registerIpcHandlers((channel, handler) => {
     ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
   });
+
+  // Execution events stream main → renderer over the run:event channel.
+  const execution = new ExecutionManager({
+    emit: (event) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send(IPC.runEvent, event);
+      }
+    }
+  });
+  registerExecutionHandlers((channel, handler) => {
+    ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
+  }, execution);
 
   app.whenReady().then(() => {
     console.log('[boot] electron ready');

@@ -314,13 +314,13 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: run TS sample with deliberate TypeError в†’ rendered stack points at original .ts line (evidence `.omo/qa/t09-transpile.md`). QA failure: syntax-error TS file в†’ structured esbuild diagnostics shown in Console panel (screenshot/log), runner never invoked.
   - Commit: `feat(transpile): esbuild pipeline with sourcemap-based stack remapping`
 
-- [ ] 10. ResultCapture: top-level expression reporting + value serializer
+- [x] 10. ResultCapture: top-level expression reporting + value serializer
   - References: Scopeв†’P3; TDD-permitted pure modules; `result-capture.ts`, `serializer.ts`, `packages/engine-parsers` untouched here.
   - Acceptance: babel plugin injects `__rh.report(index, value)` after each top-level EXPRESSION statement and variable declaration initializer (config flag, default on); bootstrap prelude defines `__rh.report` writing NDJSON to fd 3, AND unconditionally implements the stderr sentinel prefix `__RH__:` path; a one-time startup probe decides fd-3 passthrough support on Windows and caches the transport choice вЂ” fd3 is never load-bearing; serializer handles primitives, objects, arrays, Map/Set, Date/RegExp, Error(+stack), Promise(state/value settled-only), functions/classes (name+arity flag), TypedArrays/DataView (type+len+first N), circular refs (reference-id back-edges), depth cap 20, node cap 5000, string truncation 10k chars вЂ” all caps configurable; unit tests cover EVERY type incl. circular + 100k-element array truncation + BOTH transports.
   - QA happy: program mixing all types в†’ serialized tree asserted equal to golden JSON (`.omo/qa/t10-capture.md`). QA failure: self-referential object + getter that throws в†’ report still emitted (throwing getter replaced by `<threw>` marker), evidence recorded.
   - Commit: `feat(results): expression-level capture transform and capped structural serializer`
 
-- [ ] 11. Console + Inspector UI wired to real runs
+- [x] 11. Console + Inspector UI wired to real runs
   - References: Scopeв†’P3 UI.
   - Acceptance: Ctrl+Enter executes current file via RuntimeManager-selected node (system or downloaded) through ProcessRunner+TranspileService+ResultCapture; Console tab shows merged stdout/stderr with error styling and remapped stacks; Inspector tab renders reported values as virtualized expandable tree (react-window) honoring serializer caps; status badge shows runtime/version/duration/exit code; Auto-run toggle (debounced 800ms); Cancel button enabled during run only.
   - QA happy: demo program (async top-level await fetch-less promise chain + Map + Error throw caught) в†’ console lines + inspectable tree screenshots `.omo/qa/t11-inspector-ui.md`. QA failure: infinite loop + Auto-run ON в†’ debounce does not stack runs (single running handle enforced), Cancel terminates, UI returns idle вЂ” timings recorded.

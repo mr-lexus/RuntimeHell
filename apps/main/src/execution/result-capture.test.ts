@@ -10,8 +10,10 @@ describe('injectCapture', () => {
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.reportCount).toBe(2);
-    expect(out.code).toContain('__rh.report(0, foo())');
-    expect(out.code).toContain('__rh.report(1, bar(1))');
+    // retainLines may wrap long calls — compare whitespace-insensitively.
+    const flat = out.code.replace(/\s+/g, ' ');
+    expect(flat).toContain('__rh.report(0, foo())');
+    expect(flat).toContain('__rh.report(1, bar(1))');
   });
 
   it('captures variable declaration bindings by default', () => {
@@ -30,8 +32,9 @@ describe('injectCapture', () => {
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.reportCount).toBe(1);
-    expect(out.code).not.toContain('__rh.report(0, x)');
-    expect(out.code).toContain('__rh.report(0, sideEffect())');
+    const flat = out.code.replace(/\s+/g, ' ');
+    expect(flat).not.toContain('__rh.report(0, x)');
+    expect(flat).toContain('__rh.report(0, sideEffect())');
   });
 
   it('leaves nested statements untouched', () => {

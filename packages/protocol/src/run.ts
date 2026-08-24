@@ -102,3 +102,52 @@ export const RunResultSchema = z
   })
   .strict();
 export type RunResult = z.infer<typeof RunResultSchema>;
+
+/**
+ * Lean IPC surface for todo 11: the renderer sends the ACTIVE FILE CONTENT;
+ * the main process persists it into the workspace, transpiles, captures and
+ * runs. Runtime resolution stays a main-process concern.
+ */
+export const RunStartRequestSchema = z
+  .object({
+    workspaceId: z.string().min(1),
+    relPath: z.string().min(1),
+    content: z.string(),
+    timeoutMs: z.number().int().positive()
+  })
+  .strict();
+export type RunStartRequest = z.infer<typeof RunStartRequestSchema>;
+
+export interface RunStartOk {
+  readonly ok: true;
+  readonly runId: string;
+  readonly runtimeVersion: string;
+}
+export interface RunStartRejected {
+  readonly ok: false;
+  readonly stage: 'active' | 'transform' | 'transpile' | 'runtime';
+  /** Present for transform/transpile failures. */
+  readonly errors?: { readonly text: string; readonly line?: number; readonly column?: number }[];
+  /** Present for stage='active'. */
+  readonly activeRunId?: string;
+  /** Human-readable detail for stage='runtime'. */
+  readonly message?: string;
+}
+export type RunStartResponse = RunStartOk | RunStartRejected;
+
+export const RunStartResponseSchema: z.ZodType<RunStartResponse> = z.union([
+  z.object({ ok: z.literal(true), runId: z.string(), runtimeVersion: z.string() }),
+  z.object({
+    ok: z.literal(false),
+    stage: z.enum(['active', 'transform', 'transpile', 'runtime']),
+    errors: z.array(z.object({ text: z.string(), line: z.number().optional(), column: z.number().optional() })).optional(),
+    activeRunId: z.string().optional(),
+    message: z.string().optional()
+  })
+]);
+
+export const RunCancelRequestSchema = z.object({ runId: z.string().min(1) }).strict();
+export type RunCancelRequest = z.infer<typeof RunCancelRequestSchema>;
+
+export const RunCancelResponseSchema = z.object({ ok: z.boolean() }).strict();
+export type RunCancelResponse = z.infer<typeof RunCancelResponseSchema>;

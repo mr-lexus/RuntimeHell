@@ -72,6 +72,9 @@ export function injectCapture(
   }
   ast.program.body = statements;
 
-  const output = generate(ast.program, { retainLines: false, compact: false });
+  // retainLines keeps authored line numbers stable through the transform so the
+  // downstream esbuild sourcemap (and therefore stack remapping) still points
+  // at the original .ts positions.
+  const output = generate(ast.program, { retainLines: true, compact: false });
   return { ok: true, code: output.code, reportCount };
 }
