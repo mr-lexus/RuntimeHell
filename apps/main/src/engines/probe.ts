@@ -16,13 +16,14 @@ import { tmpDir } from '../binaries/paths.js';
 
 export type ExecuteBinary = (
   exePath: string,
-  args: string[]
+  args: string[],
+  opts?: { cwd?: string }
 ) => Promise<{ code: number | null; stdout: string; stderr: string }>;
 
 /** Real child-process executor with a hard 8s watchdog. */
-export const realExecutor: ExecuteBinary = (exePath, args) =>
+export const realExecutor: ExecuteBinary = (exePath, args, opts) =>
   new Promise((resolve) => {
-    const child = spawn(exePath, args, { windowsHide: true });
+    const child = spawn(exePath, args, { windowsHide: true, ...(opts?.cwd !== undefined ? { cwd: opts.cwd } : {}) });
     let out = '';
     let err = '';
     const timer = setTimeout(() => {
@@ -64,7 +65,9 @@ async function runScript(
   const scriptFile = join(dir, 'probe.js');
   await fs.writeFile(scriptFile, scriptContent, 'utf8');
   try {
-    return await execute(exePath, [...args, scriptFile]);
+    // Sandbox cwd so flag artifacts (turbo.cfg / turbo-*.json / isolate logs)
+    // land in the temp dir instead of the caller's working directory.
+    return await execute(exePath, [...args, scriptFile], { cwd: dir });
   } finally {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   }
