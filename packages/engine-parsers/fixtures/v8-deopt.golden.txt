@@ -1,0 +1,1 @@
+[bailout (kind: deopt-eager, reason: not a Smi): begin. deoptimizing 0x02bd01048b8d <JSFunction f (sfi = 000002BD01033B99)>, 0x0104010002ed <Code TURBOFAN_JS>, opt id 0, node id 33, bytecode offset 2, deopt exit 0, FP to SP delta 32, caller SP 0x001cf1dfe6c0, pc 0x7fff9d40031a]

@@ -1,4 +1,4 @@
-{
+﻿{
     "name": "runtimehell",
     "private": true,
     "version": "0.1.0",
@@ -11,7 +11,9 @@
         "preview": "electron-vite preview",
         "typecheck": "tsc --noEmit -p packages/protocol && tsc --noEmit -p apps/main && tsc --noEmit -p apps/preload && tsc --noEmit -p apps/renderer",
         "test": "vitest run",
-        "lint": "node scripts/lint-gates.mjs"
+        "lint": "node scripts/lint-gates.mjs",
+        "gen-fixtures": "node scripts/gen-fixtures.mjs",
+        "typecheck:all": "pnpm typecheck && tsc --noEmit -p packages/engine-parsers"
     },
     "devDependencies": {
         "@types/node": "^26.2.0",
