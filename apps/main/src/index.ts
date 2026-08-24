@@ -10,6 +10,7 @@ import { PackageService } from './packages/package-service.js';
 import { EngineRegistry } from './engines/registry.js';
 import { AnalysisManager } from './engines/analysis-manager.js';
 import { EnginesController } from './engines/engines-controller.js';
+import { V8EngineAdapterV0 } from './engines/v8-adapter.js';
 
 const isDev = !app.isPackaged;
 
@@ -95,8 +96,10 @@ function main(): void {
     ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
   }, packages);
 
-  // Analysis drawer (todo 19): engine registry + per-type result streaming.
+  // Analysis drawer (todo 19/23): registry + registered V8 adapter.
   const engines = new EngineRegistry();
+  engines.registerAdapter(new V8EngineAdapterV0('v8', engines));
+  engines.registerAdapter(new V8EngineAdapterV0('d8-debug', engines));
   const analysis = new AnalysisManager({
     registry: engines,
     emit: (event) => {

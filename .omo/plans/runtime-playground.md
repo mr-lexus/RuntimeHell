@@ -392,7 +392,7 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: full-suite run log `.omo/qa/t22-e2e.md` with assertions echoed. QA failure: delete engine cache between runs в†’ second run exercises download path and still passes (timing captured), proving recovery.
   - Commit: `test(e2e): v0.1 vertical slice suite with cold-start recovery coverage`
 
-- [ ] 23. REFACTOR: extract RuntimeAdapter/EngineAdapter from proven implementations
+- [x] 23. REFACTOR: extract RuntimeAdapter/EngineAdapter from proven implementations
   - References: D3 (abstraction AFTER working code); Architecture interface block.
   - Acceptance: node runtime + v8 engine reimplemented AS adapters implementing the protocol interfaces; registries with id-based lookup; call sites (ExecutionManager/AnalysisManager/UI) consume ONLY registry lookups; ZERO behavioral change вЂ” todos 8/11/17/22 suites pass UNMODIFIED before and after; diff review confirms no new features smuggled in (pure extraction; any discovered bug fixed in separate commit flagged in evidence).
   - QA happy: full existing suite green post-refactor + architecture rule greps (no 'v8'/'--print-' literals under apps/renderer/src) recorded `.omo/qa/t23-refactor.md`. QA failure: temporarily reintroduce engine literal in renderer в†’ grep gate fails in CI (rule added to lint), evidence recorded, reverted.

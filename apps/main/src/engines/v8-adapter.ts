@@ -1,4 +1,4 @@
-/**
+﻿/**
  * V8EngineAdapter (plan todo 17): six analysis types against a managed d8 /
  * d8-debug binary. Capability gates run BEFORE any process spawns; per-type
  * timeout reuses ProcessRunner (tree-kill + journaling for free).
@@ -9,13 +9,15 @@
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { AnalysisRequest, AnalysisResult, AnalysisType, EngineCapabilities } from '@rh/protocol';
+import type { AnalysisEvent, AnalysisRequest, AnalysisResult, AnalysisStartRequest, AnalysisType, EngineCapabilities } from '@rh/protocol';
 import { realExecutor } from './probe.js';
+import type { AnalysisContext, EngineAdapter, EngineDescription } from './engine-adapter.js';
+import type { EngineRegistry } from './registry.js';
 
 export interface V8AdapterDeps {
   /** Isolated execution (ProcessRunner-backed by default). */
   readonly runIsolated?: IsolatedRun;
-  /** Capability source — the sha-keyed registry cache supplies this. */
+  /** Capability source вЂ” the sha-keyed registry cache supplies this. */
   readonly capabilitiesOf: (binaryPath: string) => Promise<EngineCapabilities>;
   /** Simple executor for metadata probes (--version). */
   readonly execute?: typeof realExecutor;
@@ -94,6 +96,67 @@ export class V8EngineAdapter {
     this.runIsolated = deps.runIsolated ?? processRunnerIsolation;
     this.capabilitiesOf = deps.capabilitiesOf;
     this.execute = deps.execute ?? realExecutor;
+  }
+
+  /**
+   * Full per-type orchestration for one request (moved here from
+   * AnalysisManager in todo 23 so ALL engine-specific sequencing lives in
+   * the adapter layer): TS strip в†’ per-type gate/run в†’ partial-success
+   * events в†’ done.
+   */
+  async runAll(
+    req: AnalysisStartRequest,
+    binaryPath: string,
+    caps: EngineCapabilities,
+    emit: (e: AnalysisEvent) => void,
+    live: { has(id: string): boolean }
+  ): Promise<void> {
+    // Engine shells execute plain JS: strip TS syntax up-front (todo 22).
+    let code = req.code;
+    if (req.lang === 'ts') {
+      try {
+        const { transform } = await import('esbuild');
+        const stripped = await transform(req.code, { loader: 'ts', format: 'esm', target: 'esnext' });
+        code = stripped.code;
+      } catch (err) {
+        emit({
+          t: 'error',
+          requestId: req.requestId,
+          message: `type-strip failed: ${err instanceof Error ? err.message : String(err)}`
+        });
+        emit({ t: 'done', requestId: req.requestId });
+        return;
+      }
+    }
+
+    for (const analysisType of req.analysisTypes) {
+      if (!live.has(req.requestId)) break; // cancelled between types
+      try {
+        const results = await this.analyze({
+          requestId: req.requestId,
+          code,
+          binaryPath,
+          analysisTypes: [analysisType],
+          functionName: req.functionName,
+          timeoutMs: req.timeoutMs ?? 10_000
+        });
+        for (const result of results) {
+          emit({ t: 'result', requestId: req.requestId, result });
+        }
+      } catch (err) {
+        if (err instanceof CapabilityGateError) {
+          emit({ t: 'unsupported', requestId: req.requestId, analysisType, reason: err.message });
+          continue;
+        }
+        emit({
+          t: 'error',
+          requestId: req.requestId,
+          message: err instanceof Error ? err.message : String(err)
+        });
+        break;
+      }
+    }
+    emit({ t: 'done', requestId: req.requestId });
   }
 
   async engineVersion(binaryPath: string): Promise<string> {
@@ -179,7 +242,7 @@ function buildFlags(
     // would print nothing. Eager-compile everything.
     //
     // NOTE (drift, V8 15.x): --print-bytecode-filter=<name> no longer matches
-    // eagerly-compiled functions — their SharedFunctionInfo names are still
+    // eagerly-compiled functions вЂ” their SharedFunctionInfo names are still
     // empty at dump time, so the filter yields ZERO output. We dump ALL blocks
     // and let the normalized view / caller locate the relevant ones.
     flags.push('--no-lazy');
@@ -192,4 +255,126 @@ async function collectJsonArtifacts(dir: string): Promise<{ name: string; path: 
   return names
     .filter((n) => n.endsWith('.json') || n.endsWith('.cfg'))
     .map((n) => ({ name: n, path: join(dir, n) }));
+}
+
+// ---------------------------------------------------------------------------
+// EngineAdapter implementation (todo 23): registry-facing wrapper owning the
+// per-type sequencing, TS strip, and cancel-aware isolation.
+// ---------------------------------------------------------------------------
+
+/** ProcessRunner-backed isolation that registers its kill-hook via ctx. */
+export function trackedProcessIsolation(ctx: AnalysisContext, requestId: string): IsolatedRun {
+  return async (options) => {
+    const { ProcessRunner } = await import('../execution/process-runner.js');
+    const runner = new ProcessRunner();
+    const out: string[] = [];
+    const err: string[] = [];
+    const off = runner.onEvent((e) => {
+      if (e.type === 'stdout') out.push(e.data);
+      else if (e.type === 'stderr') err.push(e.data);
+    });
+    const handle = runner.run({
+      exePath: options.exePath,
+      args: options.args,
+      cwd: options.cwd,
+      timeoutMs: options.timeoutMs
+    });
+    ctx.registerCancel(async () => {
+      await handle.cancel();
+    });
+    try {
+      const result = await handle.result;
+      return {
+        code: result.exitCode,
+        stdout: out.join(''),
+        stderr: err.join(''),
+        timedOut: result.status === 'timeout'
+      };
+    } finally {
+      off();
+    }
+  };
+}
+
+/** Registry-facing V8 adapter (id 'v8' | 'd8-debug'). */
+export class V8EngineAdapterV0 implements EngineAdapter {
+  constructor(
+    readonly id: 'v8' | 'd8-debug',
+    private readonly registry: EngineRegistry
+  ) {}
+
+  async describe(): Promise<EngineDescription> {
+    return this.registry.describe(this.id);
+  }
+
+  async analyze(
+    req: AnalysisStartRequest & { binaryPath: string },
+    ctx: AnalysisContext
+  ): Promise<void> {
+    const description = await this.registry.describe(this.id);
+    if (!description.binaryPath || !description.capabilities) {
+      ctx.emit({
+        t: 'error',
+        requestId: req.requestId,
+        message: description.reason ?? `${this.id} unavailable`
+      });
+      ctx.emit({ t: 'done', requestId: req.requestId });
+      return;
+    }
+    const binaryPath = description.binaryPath;
+    const caps = await this.registry.capabilities(binaryPath);
+    const engineVersion = description.version ?? 'unknown';
+    const inner = new V8EngineAdapter({
+      capabilitiesOf: async () => caps,
+      execute: realExecutor,
+      runIsolated: trackedProcessIsolation(ctx, req.requestId)
+    });
+
+    // Engine shells execute plain JS: strip TS syntax up-front (todo 22).
+    let code = req.code;
+    if (req.lang === 'ts') {
+      try {
+        const { transform } = await import('esbuild');
+        const stripped = await transform(req.code, { loader: 'ts', format: 'esm', target: 'esnext' });
+        code = stripped.code;
+      } catch (err) {
+        ctx.emit({
+          t: 'error',
+          requestId: req.requestId,
+          message: `type-strip failed: ${err instanceof Error ? err.message : String(err)}`
+        });
+        ctx.emit({ t: 'done', requestId: req.requestId });
+        return;
+      }
+    }
+
+    for (const analysisType of req.analysisTypes) {
+      if (!ctx.isLive(req.requestId)) break; // cancelled between types
+      try {
+        const results = await inner.analyze({
+          requestId: req.requestId,
+          code,
+          binaryPath,
+          analysisTypes: [analysisType],
+          functionName: req.functionName,
+          timeoutMs: req.timeoutMs ?? 10_000
+        });
+        for (const result of results) {
+          ctx.emit({ t: 'result', requestId: req.requestId, result });
+        }
+      } catch (err) {
+        if (err instanceof CapabilityGateError) {
+          ctx.emit({ t: 'unsupported', requestId: req.requestId, analysisType, reason: err.message });
+          continue;
+        }
+        ctx.emit({
+          t: 'error',
+          requestId: req.requestId,
+          message: err instanceof Error ? err.message : String(err)
+        });
+        break;
+      }
+    }
+    ctx.emit({ t: 'done', requestId: req.requestId });
+  }
 }

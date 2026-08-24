@@ -1,7 +1,7 @@
-/**
+﻿/**
  * EngineRegistry (plan todo 16): id-keyed engine descriptions backed by the
  * binary manifest, with sha256-keyed capability caching. analyze() dispatch
- * is a stub here — concrete adapters land in todos 17/24/25 and register
+ * is a stub here вЂ” concrete adapters land in todos 17/24/25 and register
  * themselves; the registry NEVER contains per-engine flag strings beyond the
  * probe module.
  */
@@ -9,6 +9,8 @@ import type { EngineCapabilities, EngineId } from '@rh/protocol';
 import { readManifest } from '../binaries/binary-manager.js';
 import { join } from 'node:path';
 import { hashBinary, probeV8Binary, realExecutor, type ExecuteBinary } from './probe.js';
+import type { AnalysisEvent, AnalysisStartRequest } from '@rh/protocol';
+import type { EngineAdapter } from './engine-adapter.js';
 
 export interface EngineDescription {
   readonly id: EngineId | 'd8-debug';
@@ -30,6 +32,7 @@ export interface EngineRegistryDeps {
 
 export class EngineRegistry {
   private readonly capsByHash = new Map<string, EngineCapabilities>();
+  private readonly adapters = new Map<string, EngineAdapter>();
   private readonly execute: ExecuteBinary;
   private readonly hash: (exePath: string) => Promise<string>;
 
@@ -79,7 +82,7 @@ export class EngineRegistry {
         version: null,
         binaryPath: null,
         capabilities: null,
-        reason: `${id} is not installed — install it from the Runtimes/engines panel`
+        reason: `${id} is not installed вЂ” install it from the Runtimes/engines panel`
       };
     }
     const exists = await import('node:fs').then((fs) =>
@@ -105,9 +108,23 @@ export class EngineRegistry {
     return Promise.all(KNOWN_IDS.map((id) => this.describe(id)));
   }
 
-  /** Dispatch stub — adapters register concrete implementations in todo 17+. */
-  analyze(): Promise<never> {
-    return Promise.reject(new Error('analyze dispatch lands with the V8 adapter (todo 17)'));
+  /** Adapter registration (todo 23): V8 registers in index.ts; SM/JSC follow. */
+  registerAdapter(adapter: EngineAdapter): void {
+    this.adapters.set(adapter.id, adapter);
+  }
+
+  getAdapter(id: EngineId | 'd8-debug'): EngineAdapter | null {
+    return this.adapters.get(id) ?? null;
+  }
+
+  /** Dispatch through the registered adapter for this engine id. */
+  async analyze(
+    req: AnalysisStartRequest,
+    ctx: import('./engine-adapter.js').AnalysisContext
+  ): Promise<void> {
+    const adapter = this.getAdapter(req.engineId);
+    if (!adapter) throw new Error(`no engine adapter registered for '${req.engineId}'`);
+    await adapter.analyze({ ...req, binaryPath: '' }, ctx);
   }
 }
 
