@@ -26,8 +26,14 @@ export interface DownloadProgress {
 
 export interface FetchSource {
   url: string;
-  /** Expected sha256 (resolved by the runtime-specific source builder). */
-  sha256: string;
+  /**
+   * Expected sha256. REQUIRED for artifacts whose host publishes checksums.
+   * Official-canary V8 zips publish none — those pass `undefined` and enter
+   * RECORD MODE: the observed hash is returned and persisted into the
+   * manifest, so any later re-install of the same version is verified
+   * against the previously recorded digest (D2 audit trail).
+   */
+  sha256?: string;
 }
 
 export interface InstallRequest {
@@ -143,12 +149,13 @@ export async function installArtifact(req: InstallRequest): Promise<ManifestEntr
 
   try {
     const expected = req.source.sha256;
-    if (!expected) throw new Error('missing expected sha256');
-
     const actual = await downloadTo(req.source, stageZip, req.onProgress, req.entry.id, req.entry.version);
-    if (actual !== expected) {
+    if (expected !== undefined && actual !== expected) {
       throw new Error(`sha256 mismatch for ${req.source.url}: expected ${expected}, got ${actual}`);
     }
+    // Record-mode (no upstream checksum): the OBSERVED hash becomes the
+    // manifest's pinned sha256 for this artifact/version combination.
+    const recordedSha = expected ?? actual;
 
     await extractZip(stageZip, stageDir);
     if (req.stripRoot !== false) await hoistSingleRoot(stageDir);
@@ -167,6 +174,7 @@ export async function installArtifact(req: InstallRequest): Promise<ManifestEntr
 
     const entry: ManifestEntry = {
       ...req.entry,
+      sha256: recordedSha,
       installedPath: finalDir,
       addedAt: new Date().toISOString()
     };

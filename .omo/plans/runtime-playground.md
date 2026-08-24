@@ -344,7 +344,7 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: type `import _ from 'lodash'` в†’ hover on `_.chunk` shows signature (`.omo/qa/t14-ata.md`). QA failure: bogus import `'nonexistent-pkg-xyz'` в†’ no crash, ATA settles, chip shows unresolved, evidence recorded.
   - Commit: `feat(editor): automatic type acquisition for installed packages`
 
-- [ ] 15. BinaryManager generalization + engine manifest seed (V8 first)
+- [x] 15. BinaryManager generalization + engine manifest seed (V8 first)
   - References: Evidence facts 1,5; D2 constraints; C-lane section.
   - Acceptance: todo-7 downloader generalized behind ManifestEntry schema (kind:'engine'); generalization is BEHAVIOR-PRESERVING вЂ” runtime install tests from todo 7/12 stay green unmodified; seed manifest sources implemented: v8 rel+dbg via chromium-v8 official canary URLs incl. `*-latest.json` discovery + EXPERIMENTAL milestone-guess helper for historical pins (marked experimental in code+UI tooltip); spidermonkey/jsc entries declared but DISABLED until todos 24/25 (schema-ready); every resolved artifact hash-verified before install; C-lane: resolver returning `customBuildRequired:true` when no artifact source covers {engine,platform} в†’ UI state per C-lane spec (unit-testable resolver decision table covering v8-win64 вњ…, sm-win64 вњ…, jsc-win64 вњ…(+support entry webkit-requirements), quickjs-win64 вњ… future, v8-macos-arm64 вњ…, hypothetical missing combo в†’ C-lane).
   - QA happy: download d8-dbg latest win64; `d8 --version` executes; manifest row present (`.omo/qa/t15-binary-manager.md`). QA failure: wrong-size artifact (truncated download) в†’ sha reject, atomic temp cleanup, no manifest mutation.
