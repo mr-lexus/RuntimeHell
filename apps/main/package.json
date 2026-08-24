@@ -8,6 +8,10 @@
   },
   "dependencies": {
     "@rh/protocol": "workspace:*",
+    "extract-zip": "^2.0.1",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/extract-zip": "^2.0.3"
   }
 }
