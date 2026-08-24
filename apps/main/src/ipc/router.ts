@@ -3,6 +3,7 @@
  * Kept free of electron imports so they are unit-testable under vitest.
  */
 import {
+  AnalysisStartRequestSchema,
   BinaryInstallRequestSchema,
   BinaryRemoveRequestSchema,
   BinariesListRequestSchema,
@@ -19,6 +20,7 @@ import { listFiles, readFile, saveFile } from '../workspace/files.js';
 import type { ExecutionManager } from '../execution/execution-manager.js';
 import type { BinariesController } from '../binaries/binaries-controller.js';
 import type { PackageService } from '../packages/package-service.js';
+import type { AnalysisManager } from '../engines/analysis-manager.js';
 
 type Register = (channel: string, handler: (payload: unknown) => Promise<unknown>) => void;
 
@@ -82,6 +84,20 @@ export function registerPackageHandlers(register: Register, service: PackageServ
     const rows = await service.search(req.query, req.size);
     if ('error' in rows) return { ok: false as const, message: rows.error };
     return { ok: true as const, results: rows };
+  });
+}
+
+/** Analysis handlers bound to a manager instance (todo 19). */
+export function registerAnalysisHandlers(register: Register, manager: AnalysisManager): void {
+  register(IPC.analysisRequest, async (payload) => {
+    const req = AnalysisStartRequestSchema.parse(payload);
+    void manager.start(req); // results stream via analysisEvent
+    return { accepted: true as const, requestId: req.requestId };
+  });
+  register(IPC.analysisCancel, async (payload) => {
+    const req = (payload ?? {}) as { requestId?: string };
+    if (typeof req.requestId !== 'string') throw new Error('requestId required');
+    return { ok: await manager.cancel(req.requestId) };
   });
 }
 

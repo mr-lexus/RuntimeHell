@@ -368,7 +368,7 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: parser golden test passes on committed fixtures incl. one в‰Ґ200-instruction function (`.omo/qa/t18-parsers.md`). QA failure: feed truncated/garbage fixture в†’ parser returns partial + rawLines, no exception (assert), evidence recorded.
   - Commit: `feat(parsers): tolerant v8 bytecode and deopt parsers with golden fixtures`
 
-- [ ] 19. Analysis drawer UI (raw-first)
+- [x] 19. Analysis drawer UI (raw-first)
   - References: Scopeв†’MVP analysis bullets; D4 (no engine terms outside engines layer).
   - Acceptance: context menu on selection: Analyze в–ё {AST, Bytecode, Optimized code, IR graph, Deopts, GC} вЂ” items disabled by capability probe with reason tooltips; drawer tabs Raw (monospace, verbatim) | Normalized (table from parsers; header banner "best-effort normalization вЂ” raw output is authoritative") | Artifacts (turbo-*.json listing); engine picker shows engine@version+binary origin; Copy raw button; requests cancellable while process alive.
   - QA happy: analyze sum() bytecode в†’ normalized table rows visible + raw tab byte-identical to captured stdout (diff-checked) `.omo/qa/t19-analysis-ui.md`. QA failure: cancel analysis mid-run в†’ process killed, drawer shows cancelled state, no zombie (runner journal asserted).

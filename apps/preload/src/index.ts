@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+﻿import { contextBridge, ipcRenderer } from 'electron';
 import {
   IPC,
   ListFilesRequestSchema,
@@ -16,6 +16,7 @@ import {
   SaveFileResponseSchema,
   BinaryInstallRequestSchema,
   BinaryInstallResponseSchema,
+  type BinaryInstallResponse,
   BinaryProgressEventSchema,
   BinaryRemoveRequestSchema,
   BinaryRemoveResponseSchema,
@@ -28,7 +29,11 @@ import {
   PkgOpResponseSchema,
   PkgSearchRequestSchema,
   PkgSearchResponseSchema,
-  type BinaryInstallResponse,
+  AnalysisEventSchema,
+  AnalysisStartRequestSchema,
+  AnalysisStartResponseSchema,
+  type AnalysisEvent,
+  type AnalysisStartResponse,
   type BinaryProgressEvent,
   type BinaryRemoveResponse,
   type BinariesListResponse,
@@ -130,6 +135,38 @@ const api = {
     ipcRenderer.on(IPC.packagesEvent, handler);
     return () => {
       ipcRenderer.removeListener(IPC.packagesEvent, handler);
+    };
+  },
+  // --- analysis drawer (todo 19) ---------------------------------------------
+  enginesList: async (): Promise<unknown> => {
+    return ipcRenderer.invoke(IPC.enginesList, {});
+  },
+  engineCapabilities: async (engineId: string): Promise<unknown> => {
+    return ipcRenderer.invoke(IPC.engineCapabilities, { engineId });
+  },
+  analyze: async (req: {
+    requestId: string;
+    engineId: 'v8' | 'd8-debug';
+    code: string;
+    analysisTypes: Array<'ast' | 'bytecode' | 'optcode' | 'ir-graph' | 'deopts' | 'gc'>;
+    functionName?: string;
+    timeoutMs?: number;
+  }): Promise<AnalysisStartResponse> => {
+    return AnalysisStartResponseSchema.parse(
+      await ipcRenderer.invoke(IPC.analysisRequest, AnalysisStartRequestSchema.parse(req))
+    );
+  },
+  cancelAnalysis: async (requestId: string): Promise<{ ok: boolean }> => {
+    return (await ipcRenderer.invoke(IPC.analysisCancel, { requestId })) as { ok: boolean };
+  },
+  onAnalysisEvent: (cb: (event: AnalysisEvent) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+      const parsed = AnalysisEventSchema.safeParse(payload);
+      if (parsed.success) cb(parsed.data);
+    };
+    ipcRenderer.on(IPC.analysisEvent, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.analysisEvent, handler);
     };
   }
 };

@@ -87,6 +87,9 @@ importers:
       '@babel/parser':
         specifier: ^8.0.4
         version: 8.0.4
+      '@rh/engine-parsers':
+        specifier: workspace:*
+        version: link:../../packages/engine-parsers
       '@typescript/ata':
         specifier: ^0.9.8
         version: 0.9.8(typescript@5.9.3)

@@ -3,12 +3,15 @@ import { exposeMonacoForTests } from './editor/monaco-setup';
 import { CodeEditor } from './editor/CodeEditor';
 import { createAtaController, getAtaStatus, onAtaStatus, type AtaStatus } from './editor/ata';
 import { typescriptDefaults } from './editor/monaco-setup';
+import { AnalysisPanel } from './panels/analysis/AnalysisPanel';
 import { ConsolePanel } from './panels/console/ConsolePanel';
 import { InspectorPanel } from './panels/inspector/InspectorPanel';
 import { RuntimesPanel } from './panels/runtimes/RuntimesPanel';
 import { PackagesPanel } from './panels/packages/PackagesPanel';
 import { emitRunRequested, onRunRequested, useActiveFile, useUi, type DrawerTab } from './state/ui';
 import { useRun } from './state/run';
+import { ANALYSIS_ALL_TYPES } from './state/analysis';
+import { useAnalysis } from './state/analysis';
 
 const WORKSPACE_ID = 'default';
 
@@ -58,6 +61,14 @@ export function App(): React.JSX.Element {
   const requestCancel = useRun((s) => s.requestCancel);
 
   const activeFile = useActiveFile();
+  const analysisEngines = useAnalysis((s) => s.engines);
+  const analysisEngineId = useAnalysis((s) => s.engineId);
+  const analyzeActions = ANALYSIS_ALL_TYPES.map((type) => {
+    const caps = analysisEngines.find((e) => e.id === analysisEngineId)?.capabilities;
+    const key = type as keyof typeof caps;
+    const supported = typeof caps === 'object' && caps !== null ? caps[key] !== false : true;
+    return { type, label: `Analyze ▸ ${type}`, supported };
+  });
   const [status, setStatus] = useState<string>('ready');
   const splitRef = useRef<HTMLDivElement | null>(null);
 
@@ -68,9 +79,11 @@ export function App(): React.JSX.Element {
     // the run store; streamed events update it via the preload bridge.
     const offRun = onRunRequested(() => void useRun.getState().requestStart());
     const offEvents = window.api?.onRunEvent((event) => useRun.getState().handleEvent(event));
+    const offAnalysis = window.api?.onAnalysisEvent((event) => useAnalysis.getState().handleEvent(event));
     return () => {
       offRun();
       offEvents?.();
+      offAnalysis?.();
     };
   }, [openFile]);
 
@@ -179,6 +192,11 @@ export function App(): React.JSX.Element {
               onSave={onSave}
               onRun={() => emitRunRequested()}
               onFormatError={(m) => setStatus(`format error: ${m}`)}
+              analyzeActions={analyzeActions}
+              onAnalyze={(type, code) => {
+                useAnalysis.getState().request(code, [type]);
+                setDrawerTab('analysis');
+              }}
             />
           ) : (
             <div style={{ color: '#888', padding: 20 }}>No file open</div>
@@ -225,7 +243,7 @@ export function App(): React.JSX.Element {
           <div style={{ flex: 1, overflow: 'auto', padding: 8, color: '#bbb', minHeight: 0 }}>
             {drawerTab === 'console' && <ConsolePanel />}
             {drawerTab === 'inspector' && <InspectorPanel />}
-            {drawerTab === 'analysis' && <div>Engine analysis appears here (todo 19).</div>}
+            {drawerTab === 'analysis' && <AnalysisPanel code={activeFile?.content ?? ''} />}
             {drawerTab === 'packages' && <PackagesPanel />}
             {drawerTab === 'runtimes' && <RuntimesPanel />}
           </div>

@@ -2,10 +2,13 @@ import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { BrowserWindow, app, ipcMain } from 'electron';
 import { IPC } from '@rh/protocol';
-import { registerBinariesHandlers, registerExecutionHandlers, registerIpcHandlers, registerPackageHandlers } from './ipc/router.js';
+import { registerBinariesHandlers, registerExecutionHandlers, registerIpcHandlers, registerPackageHandlers, registerAnalysisHandlers } from './ipc/router.js';
 import { ExecutionManager } from './execution/execution-manager.js';
 import { BinariesController } from './binaries/binaries-controller.js';
 import { PackageService } from './packages/package-service.js';
+import { EngineRegistry } from './engines/registry.js';
+import { AnalysisManager } from './engines/analysis-manager.js';
+import { EnginesController } from './engines/engines-controller.js';
 
 const isDev = !app.isPackaged;
 
@@ -84,6 +87,27 @@ function main(): void {
   registerPackageHandlers((channel, handler) => {
     ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
   }, packages);
+
+  // Analysis drawer (todo 19): engine registry + per-type result streaming.
+  const engines = new EngineRegistry();
+  const analysis = new AnalysisManager({
+    registry: engines,
+    emit: (event) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send(IPC.analysisEvent, event);
+      }
+    }
+  });
+  const enginesController = new EnginesController({ registry: engines });
+  const registrar = (channel: string, handler: (payload: unknown) => Promise<unknown>): void => {
+    ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
+  };
+  registerAnalysisHandlers(registrar, analysis);
+  registrar(IPC.enginesList, async () => enginesController.list());
+  registrar(IPC.engineCapabilities, async (payload) => {
+    const req = (payload ?? {}) as { engineId?: string };
+    return enginesController.capabilities(req.engineId ?? 'v8');
+  });
 
   app.whenReady().then(() => {
     console.log('[boot] electron ready');

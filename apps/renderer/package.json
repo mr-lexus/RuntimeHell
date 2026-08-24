@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@babel/parser": "^8.0.4",
+    "@rh/engine-parsers": "workspace:*",
     "@typescript/ata": "^0.9.8",
     "monaco-editor": "^0.56.0",
     "prettier": "^3.9.6",

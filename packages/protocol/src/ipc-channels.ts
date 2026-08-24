@@ -16,6 +16,7 @@ export const IPC = {
   analysisRequest: 'analysis:request',
   analysisResult: 'analysis:result', // main -> renderer
   analysisCancel: 'analysis:cancel',
+  analysisEvent: 'analysis:event', // main -> renderer stream (todo 19)
 
   // binaries (runtimes + engines)
   binariesList: 'binaries:list',

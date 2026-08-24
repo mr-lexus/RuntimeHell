@@ -2,6 +2,16 @@ import { useEffect, useRef } from 'react';
 import * as monaco from 'monaco-editor';
 import { getSelectionInfo, type SelectionInfo } from './selection-service';
 
+export type AnalyzeType = 'ast' | 'bytecode' | 'optcode' | 'ir-graph' | 'deopts' | 'gc';
+
+export interface AnalyzeActionState {
+  readonly type: AnalyzeType;
+  readonly label: string;
+  /** Capability probe verdict from the selected engine (todo 16/19). */
+  readonly supported: boolean;
+  readonly reason?: string;
+}
+
 export interface CodeEditorProps {
   path: string;
   value: string;
@@ -11,6 +21,9 @@ export interface CodeEditorProps {
   onRun?: () => void;
   onFormatError?: (message: string) => void;
   onSelectionChanged?: (info: SelectionInfo | null) => void;
+  /** Context-menu Analyze actions; disabled entries render with tooltips. */
+  onAnalyze?: (type: AnalyzeType, code: string) => void;
+  analyzeActions?: readonly AnalyzeActionState[];
 }
 
 let prettierWorker: Worker | null = null;
@@ -30,6 +43,7 @@ function parserFor(language: string): 'babel' | 'typescript' | 'tsx' {
 export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const capKeysRef = useRef<Map<AnalyzeType, monaco.editor.IContextKey<boolean>>>(new Map());
   const propsRef = useRef(props);
   propsRef.current = props;
 
@@ -90,6 +104,28 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       propsRef.current.onRun?.();
     });
+
+    // Analyze ▸ context-menu actions (todo 19). Capability gating uses
+    // Monaco context keys so items render disabled with reason tooltips.
+    const ANALYZE_TYPES: AnalyzeType[] = ['ast', 'bytecode', 'optcode', 'ir-graph', 'deopts', 'gc'];
+    for (const type of ANALYZE_TYPES) {
+      capKeysRef.current.set(type, editor.createContextKey(`rh.cap.${type}`, true));
+      editor.addAction({
+        id: `rh.analyze.${type}`,
+        label: `Analyze ▸ ${type}`,
+        contextMenuGroupId: '9_analyze',
+        precondition: `rh.cap.${type}`,
+        run: (ed) => {
+          const model = ed.getModel();
+          const sel = ed.getSelection();
+          const code =
+            sel !== null && model !== null && !sel.isEmpty()
+              ? model.getValueInRange(sel)
+              : (ed.getValue() ?? '');
+          propsRef.current.onAnalyze?.(type, code);
+        }
+      });
+    }
     editor.addCommand(monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF, () => {
       const id = ++formatSeq;
       const req = { id, code: editor.getValue(), parser: parserFor(propsRef.current.language) };
@@ -126,6 +162,13 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
       monaco.editor.setModelLanguage(model, props.language);
     }
   }, [props.language]);
+
+  // Reflect capability probe verdicts into the context-menu keys (todo 19).
+  useEffect(() => {
+    for (const action of props.analyzeActions ?? []) {
+      capKeysRef.current.get(action.type)?.set(action.supported);
+    }
+  }, [props.analyzeActions]);
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
 }
