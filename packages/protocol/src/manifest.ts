@@ -83,9 +83,9 @@ export type BinariesListResponse = z.infer<typeof BinariesListResponseSchema>;
 
 export const BinaryInstallRequestSchema = z
   .object({
-    kind: z.literal('runtime'),
-    id: z.literal('node'),
-    version: z.string().min(1)
+    kind: z.enum(['runtime', 'engine']),
+    id: z.string().min(1),
+    version: z.string().min(1).optional()
   })
   .strict();
 export type BinaryInstallRequest = z.infer<typeof BinaryInstallRequestSchema>;

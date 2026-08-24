@@ -10,32 +10,33 @@
 > commits; THIS session verifies each commit boundary, audits QA evidence,
 > and maintains this ledger. Do not delete the other session's work.
 
-## Last updated: 2026-08-24 10:53 (+03)
+## Last updated: 2026-08-24 14:37 (+03)
 
 ### Current state
-- **HEAD**: `1b44e2c feat(parsers): tolerant v8 bytecode and deopt parsers with golden fixtures`
-- **Last verified todo**: 18 (typecheck exit 0 · engine-parsers 6 passed / 1 skipped; fixtures committed incl. 90KB ≥200-instruction golden + truncated-input golden)
-- **Implementing session is working on**: todo 19 (Analysis drawer UI)
+- **HEAD**: `356e6a7 feat(workspace): persistent workspaces settings history with session restore`
+- **Last verified batch**: todos 19+20+21 (typecheck exit 0 · full monorepo vitest 175 passed / 13 skipped · evidence t19/t20/t21 audited)
+- **Implementing session is working on**: todo 22 (v0.1 vertical-slice E2E hardening) — dirty tree shows @playwright/test deps landing + ata/binaries-controller touch-ups
 
 ### Completed & verified
 | Todo | Commit | Gates | Evidence |
 |---|---|---|---|
-| 1–12 | b5aa6cf…3dd6854 | pre-existing | t01–t12 present |
-| 13 PackageService | `a9656de` | typecheck 0 · 28 pkg/protocol tests | t13 ✓ CVE-2024-27980 mitigation |
-| 14 ATA types | `24533ef` | typecheck 0 · 110 passed / 5 skipped | t14 ✓ |
-| 15 BinaryManager+C-lane | `afae001` | typecheck 0 · 125 passed / 6 skipped | t15 ✓ recorded-digest pinning |
-| 16 EngineRegistry+probes | `c716f3a` (+`8c8ef9c`) | typecheck 0 · 26 passed / 6 skipped | t16 ✓ |
-| 17 V8EngineAdapter | `c2d8713` | typecheck 0 · engines/parsers green | t17 ✓ |
-| 18 Parsers+fixtures | `1b44e2c` | typecheck 0 · parsers 6 passed / 1 skipped | t18-parsers.md present; gen-fixtures script committed |
+| 1–18 | b5aa6cf…`1b44e2c` | see prior entries / git log | t01–t18 present |
+| 19 Analysis drawer UI | `9d6ce52` | included in batch gates below | t19 ✓ cancel kills live process via tree-cancel |
+| 20 SelectionService wrapping | `53b3b5d` | 〃 | t20 ✓ wrapper preview toggle + exact snippet persisted to .rhbuild/analysis |
+| 21 WorkspaceStore/Settings/History | `356e6a7` | typecheck 0 · **175 passed / 13 skipped** (whole repo) | t21 ✓ corrupt-settings recovery, history ring buffer |
 
 ### Next todo
-- **19** Analysis drawer UI (raw-first) → expect
-  `feat(ui): analysis drawer with raw and normalized views and capability-aware actions`,
-  `.omo/qa/t19-analysis-ui.md`. Verify: raw tab byte-identical to captured stdout;
-  cancel-mid-run kills process (runner journal asserted).
+- **22** v0.1 vertical-slice E2E (release-candidate gate) → expect
+  `test(e2e): v0.1 vertical slice suite with cold-start recovery coverage`,
+  `.omo/qa/t22-e2e.md`. Verify: suite green TWICE consecutively on clean cache;
+  cold-start download path exercised between runs; normalized rows contain
+  `sum` + ≥3 instruction rows + non-empty Raw tab.
+- After 22: v0.1 complete → refactor wave starts at 23 (behavior-preserving;
+  suites must stay green unmodified before AND after).
 
 ### Blockers / notes
-- None blocking. Dual-session protocol holding.
+- None blocking. Session gap 11:35→14:35 (context interruption) bridged by
+  this ledger; implementer had committed 19–21 meanwhile — protocol worked.
 - Live-network/binary tests gated; skip markers keep CI green.
 
 ### Blockers / notes

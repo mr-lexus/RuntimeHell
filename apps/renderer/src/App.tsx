@@ -119,9 +119,19 @@ export function App(): React.JSX.Element {
   const ataRef = useRef<ReturnType<typeof createAtaController> | null>(null);
   const [ataStatus, setAtaStatus] = useState<AtaStatus>(getAtaStatus());
   useEffect(() => {
-    ataRef.current ??= createAtaController((code, path) =>
-      typescriptDefaults.addExtraLib(code, `file:///node_modules/${path}`)
-    );
+    ataRef.current ??= createAtaController({
+      spawnWorker: () => {
+        const worker = new Worker(new URL('./editor/ata.worker.ts', import.meta.url), { type: 'module' });
+        type WorkerMsg = { type: 'file' | 'error' | 'done'; code?: string; path?: string; message?: string; count?: number };
+        return {
+          postMessage: (data: { code: string }) => worker.postMessage(data),
+          setOnMessage: (cb: (msg: WorkerMsg) => void) => {
+            worker.addEventListener('message', (event: MessageEvent<WorkerMsg>) => cb(event.data));
+          }
+        };
+      },
+      addExtraLib: (code, path) => typescriptDefaults.addExtraLib(code, path)
+    });
     const offStatus = onAtaStatus(setAtaStatus);
     // Re-acquire when dependencies change (package.json mutation signal).
     const onPkgsChanged = (): void => {

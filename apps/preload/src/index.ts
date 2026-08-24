@@ -94,6 +94,14 @@ const api = {
       )
     );
   },
+  installEngine: async (id: 'v8' | 'd8-debug', version?: string): Promise<BinaryInstallResponse> => {
+    return BinaryInstallResponseSchema.parse(
+      await ipcRenderer.invoke(
+        IPC.binariesInstall,
+        BinaryInstallRequestSchema.parse({ kind: 'engine', id, ...(version !== undefined ? { version } : {}) })
+      )
+    );
+  },
   removeRuntime: async (version: string): Promise<BinaryRemoveResponse> => {
     return BinaryRemoveResponseSchema.parse(
       await ipcRenderer.invoke(

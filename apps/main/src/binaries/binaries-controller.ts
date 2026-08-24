@@ -60,17 +60,31 @@ export class BinariesController {
     return { system, installed, available, ...(availableError !== undefined ? { availableError } : {}) };
   }
 
-  async install(kind: 'runtime', id: 'node', version: string): Promise<BinaryInstallResponse> {
+  async install(kind: 'runtime' | 'engine', id: string, version?: string): Promise<BinaryInstallResponse> {
     try {
-      const normalized = version.startsWith('v') ? version : `v${version}`;
-      const built = await buildNodeInstall(normalized, (received, total) => {
-        this.deps.emitProgress({
-          kind: 'runtime',
-          id,
-          version,
-          receivedBytes: received,
-          totalBytes: total
+      if (kind === 'engine') {
+        const { installEngine } = await import('./engine-downloader.js');
+        const outcome = await installEngine({
+          engineId: id as 'v8' | 'd8-debug',
+          ...(version !== undefined ? { version } : {}),
+          onProgress: (p) => {
+            this.deps.emitProgress({
+              kind: 'runtime',
+              id,
+              version: p.version || version || '',
+              receivedBytes: p.receivedBytes,
+              totalBytes: p.totalBytes
+            });
+          }
         });
+        this.deps.emitProgress({ kind: 'runtime', id, version: outcome.entry.version, receivedBytes: 0, totalBytes: null, done: true });
+        return { ok: true, entry: outcome.entry };
+      }
+
+      const normalized = version !== undefined && !version.startsWith('v') ? `v${version}` : (version ?? '');
+      if (normalized === '') throw new Error('version required for runtime installs');
+      const built = await buildNodeInstall(normalized, (received, total) => {
+        this.deps.emitProgress({ kind: 'runtime', id, version: normalized, receivedBytes: received, totalBytes: total });
       });
       const entry: ManifestEntry = await installArtifact({
         entry: built.entry,
@@ -78,14 +92,14 @@ export class BinariesController {
         onProgress: (p) => {
           this.deps.emitProgress({
             kind: 'runtime',
-            id: id,
-            version: p.version || version,
+            id,
+            version: normalized,
             receivedBytes: p.receivedBytes,
             totalBytes: p.totalBytes
           });
         }
       });
-      this.deps.emitProgress({ kind: 'runtime', id, version, receivedBytes: 0, totalBytes: null, done: true });
+      this.deps.emitProgress({ kind: 'runtime', id, version: normalized, receivedBytes: 0, totalBytes: null, done: true });
       return { ok: true, entry };
     } catch (err) {
       return { ok: false, message: err instanceof Error ? err.message : String(err) };

@@ -13,9 +13,25 @@ import { _electron, type ElectronApplication, type Page } from 'playwright';
 const mainEntry = resolve(process.cwd(), 'out/main/index.js');
 
 async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
-  const app = await _electron.launch({ args: [mainEntry] });
+  const t0 = Date.now();
+  const step = (m: string): void => console.log(`[e2e-monaco +${Date.now() - t0}ms] ${m}`);
+  const app = await _electron.launch({
+    args: [mainEntry],
+    env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1' }
+  });
+  step('launched');
+  app.process().stdout?.on('data', (c: Buffer) => {
+    const text = c.toString().trim();
+    if (text !== '') step(`main.out: ${text.slice(0, 200)}`);
+  });
+  app.process().stderr?.on('data', (c: Buffer) => {
+    const text = c.toString().trim();
+    if (text !== '') step(`main.err: ${text.slice(0, 300)}`);
+  });
   const page = await app.firstWindow();
+  step('firstWindow');
   await page.waitForSelector('#root', { timeout: 20000 });
+  step('#root');
   return { app, page };
 }
 

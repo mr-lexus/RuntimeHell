@@ -64,6 +64,10 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
       getValue: (): string => editor.getValue(),
       setValue: (v: string): void => editor.setValue(v),
       setLanguage: (l: string): void => monaco.editor.setModelLanguage(editor.getModel()!, l),
+      setSelection: (startLine: number, startCol: number, endLine: number, endCol: number): void => {
+        editor.setSelection({ startLineNumber: startLine, startColumn: startCol, endLineNumber: endLine, endColumn: endCol });
+        editor.focus();
+      },
       getSelectionInfo: (): SelectionInfo | null => {
         const sel = editor.getSelection();
         const model = editor.getModel();
@@ -76,6 +80,23 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
           endLine: sel.endLineNumber,
           endCol: sel.endColumn
         });
+      },
+      /** Drives the same path as the context-menu Analyze items (todo 19/22). */
+      runAnalyze: (type: AnalyzeType): void => {
+        const model = editor.getModel();
+        const sel = editor.getSelection();
+        let code = editor.getValue();
+        let info: SelectionInfo | null = null;
+        if (sel !== null && model !== null && !sel.isEmpty()) {
+          code = model.getValueInRange(sel);
+          info = getSelectionInfo(model.getValue(), code, {
+            startLine: sel.startLineNumber,
+            startCol: sel.startColumn,
+            endLine: sel.endLineNumber,
+            endCol: sel.endColumn
+          });
+        }
+        propsRef.current.onAnalyze?.(type, code, info);
       }
     };
 

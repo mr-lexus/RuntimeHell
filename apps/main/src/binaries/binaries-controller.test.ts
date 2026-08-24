@@ -76,6 +76,20 @@ describe('BinariesController.install/remove', () => {
     if (!response.ok) expect(response.message.length).toBeGreaterThan(0);
   });
 
+  it('refuses disabled engines before any network access', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => {
+      throw new Error('network must not be touched');
+    }) as typeof fetch;
+    try {
+      const response = await makeController([]).install('engine', 'spidermonkey');
+      expect(response.ok).toBe(false);
+      if (!response.ok) expect(response.message).toMatch(/not active yet|later milestone/i);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('remove of a never-installed version returns structured failure', async () => {
     const controller = makeController([]);
     const response = await controller.remove('runtime', 'node', '99.99.99');
