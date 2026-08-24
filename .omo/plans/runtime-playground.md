@@ -308,7 +308,7 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: run `console.log('hi')` via downloaded node в†’ events sequence logged (`.omo/qa/t08-runner.md`). QA failure scenarios BOTH tested: (a) `while(true){}` в†’ cancel в†’ process gone (assert via `process.kill(pid,0)` throwing) + children reaped; (b) executable path deleted mid-flight в†’ RunError event with actionable message.
   - Commit: `feat(execution): hardened process runner with tree-cancel and crash recovery`
 
-- [ ] 9. TranspileService (esbuild) with sourcemap remap
+- [x] 9. TranspileService (esbuild) with sourcemap remap
   - References: D5; `apps/main/src/transpile/transpile-service.ts`.
   - Acceptance: .ts/.tsx inputs transformed (loader matching extension, format cjs for node v0.x, sourceMap external) into `workspaces/{id}/.rhbuild/entry.{cjs,mjs}`; stack-trace lines from runtime errors remapped to ORIGINAL positions using source maps before display (unit test: synthetic error in TS maps back to authored line); non-TS files pass through unchanged (copy); transform failure returns structured error with esbuild message array.
   - QA happy: run TS sample with deliberate TypeError в†’ rendered stack points at original .ts line (evidence `.omo/qa/t09-transpile.md`). QA failure: syntax-error TS file в†’ structured esbuild diagnostics shown in Console panel (screenshot/log), runner never invoked.
@@ -473,6 +473,7 @@ Conventional commits, one commit per todo (scope tags p0вЂ¦p10 as in Commit l
 4. Zero invented APIs/flags anywhere: every engine flag string in the codebase traces to OptionsList.h / flag-definitions.h / firefox-source-docs / quickjs cli.md evidence recorded in `.omo/drafts/runtime-playground.md` (F2 cross-check).
 5. Distribution constraints honored: official sources only, manifest with platform/arch/version/sha256 per artifact, no engine ships inside the installer, custom-build requirements surface ONLY through the C-lane UI state.
 6. Broken user programs can never degrade the app: timeout/tree-cancel proven, crash-recovery paths tested, UI always reachable (t08, t11, t22 failure scenarios).
+
 
 
 

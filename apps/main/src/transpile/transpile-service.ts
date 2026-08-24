@@ -1,5 +1,5 @@
-/**
- * TranspileService (plan todo 9, D5): TS/TSX → CJS via esbuild API in the main
+﻿/**
+ * TranspileService (plan todo 9, D5): TS/TSX в†’ CJS via esbuild API in the main
  * process, with external source maps for stack remapping. Non-TS files pass
  * through unchanged. Transform failures return structured diagnostics; the
  * runner is never invoked for broken sources.
@@ -7,7 +7,7 @@
 import { transform, type TransformFailure } from 'esbuild';
 import { dirname, join } from 'node:path';
 import { promises as fs } from 'node:fs';
-import { originalPositionFor, type TraceMap } from '@jridgewell/trace-mapping';
+import { originalPositionFor, TraceMap, type TraceMap as TraceMapType } from '@jridgewell/trace-mapping';
 
 export interface TranspileSuccess {
   ok: true;
@@ -92,15 +92,13 @@ export async function passthroughTo(buildDir: string, relPath: string, source: s
 // Stack remapping
 // ---------------------------------------------------------------------------
 
-const traceMaps = new Map<string, TraceMap>();
+const traceMaps = new Map<string, TraceMapType>();
 
-export async function loadTraceMap(mapPath: string): Promise<TraceMap> {
+export async function loadTraceMap(mapPath: string): Promise<TraceMapType> {
   const cached = traceMaps.get(mapPath);
   if (cached) return cached;
   const raw = JSON.parse(await fs.readFile(mapPath, 'utf8'));
-  // Lazy import keeps the type simple; trace-mapping exports TraceMap class.
-  const { TraceMap: TM } = await import('@jridgewell/trace-mapping');
-  const tm = new TM(raw) as TraceMap;
+  const tm = new TraceMap(raw);
   traceMaps.set(mapPath, tm);
   return tm;
 }

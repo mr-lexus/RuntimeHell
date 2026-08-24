@@ -11,11 +11,16 @@
  * dies; idempotent; every run is journaled for startup orphan sweeps.
  */
 import { spawn } from 'node:child_process';
-import { promises as fs } from 'node:fs';
-import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { RunEvent, RunResult } from '@rh/protocol';
-import { cacheRoot } from '../binaries/paths.js';
+import { dirname, join } from 'node:path';
+import type { RunEvent, RunResult, SerializedValue } from '@rh/protocol';
+import { SentinelLineSplitter, parseReportFrame } from './report-transport.js';
+import type { ReportTransport } from './report-transport.js';
+import { isAlive, readJournal, treeKill, writeJournal } from './run-journal.js';
+
+// Compatibility surface: existing consumers import these from process-runner.
+export { readJournal, sweepOrphans, writeJournal } from './run-journal.js';
+export type { JournalEntry } from './run-journal.js';
 
 export interface RunOptions {
   exePath: string;
@@ -23,6 +28,12 @@ export interface RunOptions {
   cwd: string;
   timeoutMs: number;
   extraEnv?: Record<string, string>;
+  /**
+   * Carrier for ResultCapture frames. Children ALWAYS emit sentinel lines on
+   * stderr (fd3 is never load-bearing); 'fd3' additionally pipes a dedicated
+   * stdio[3] channel and the runner deduplicates by frame nonce.
+   */
+  reportTransport?: ReportTransport;
 }
 
 export interface RunHandle {
@@ -44,77 +55,6 @@ function sanitizedEnv(exePath: string, extraEnv?: Record<string, string>): NodeJ
     ...(extraEnv ?? {})
   };
   return env;
-}
-
-function treeKill(pid: number): Promise<void> {
-  return new Promise((resolve) => {
-    if (process.platform !== 'win32') {
-      try {
-        process.kill(pid);
-      } catch {
-        /* already dead */
-      }
-      resolve();
-      return;
-    }
-    const tk = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
-    tk.on('error', () => resolve());
-    tk.on('close', () => resolve());
-  });
-}
-
-async function isAlive(pid: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    try {
-      process.kill(pid, 0);
-      resolve(true);
-    } catch {
-      resolve(false);
-    }
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Run journal (orphan sweep support)
-// ---------------------------------------------------------------------------
-
-function journalPath(): string {
-  return join(cacheRoot(), 'run-journal.json');
-}
-
-interface JournalEntry {
-  runId: string;
-  pid: number;
-  startedAt: string;
-  exited: boolean;
-}
-
-export async function readJournal(): Promise<JournalEntry[]> {
-  try {
-    return JSON.parse(await fs.readFile(journalPath(), 'utf8')) as JournalEntry[];
-  } catch {
-    return [];
-  }
-}
-
-export async function writeJournal(entries: JournalEntry[]): Promise<void> {
-  await fs.mkdir(cacheRoot(), { recursive: true });
-  await fs.writeFile(journalPath(), JSON.stringify(entries, null, 2), 'utf8');
-}
-
-/** Kill any journaled processes that never reported exit (crash recovery). */
-export async function sweepOrphans(): Promise<number> {
-  const entries = await readJournal();
-  let killed = 0;
-  for (const entry of entries) {
-    if (!entry.exited && (await isAlive(entry.pid))) {
-      await treeKill(entry.pid);
-      killed++;
-    }
-    entry.exited = true;
-  }
-  await writeJournal([]);
-  return killed;
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +119,27 @@ export class ProcessRunner {
     const stdoutPump = this.makePump(runId, 'stdout');
     const stderrPump = this.makePump(runId, 'stderr');
 
+    // --- ResultCapture frame plumbing (plan todo 10) -------------------------
+    const reports = new Map<number, SerializedValue>();
+    const seenNonces = new Set<number>();
+    const handleFrameJson = (jsonPayload: string): void => {
+      const frame = parseReportFrame(jsonPayload);
+      if (frame === null) return;
+      // Dual-channel delivery (stderr + fd3) is deduplicated by nonce.
+      if (frame.nonce !== undefined) {
+        if (seenNonces.has(frame.nonce)) return;
+        seenNonces.add(frame.nonce);
+      }
+      if (frame.phase === 'error' || frame.value === undefined) return;
+      reports.set(frame.index, frame.value);
+      this.emit({ type: 'result', runId, index: frame.index, value: frame.value });
+    };
+    const stderrRouter = new SentinelLineSplitter({
+      onSentinel: handleFrameJson,
+      onText: (text) => stderrPump.push(Buffer.from(text, 'utf8'))
+    });
+    let fd3Router: SentinelLineSplitter | null = null;
+
     let resolveResult!: (r: RunResult) => void;
     const result = new Promise<RunResult>((resolve) => {
       resolveResult = resolve;
@@ -187,6 +148,8 @@ export class ProcessRunner {
     const finish = (status: RunResult['status'], code: number | null, signal: string | null): void => {
       if (settled) return;
       settled = true;
+      stderrRouter.flush();
+      fd3Router?.flush();
       stdoutPump.flush();
       stderrPump.flush();
       const durationMs = Date.now() - startedAt;
@@ -198,7 +161,15 @@ export class ProcessRunner {
         durationMs,
         killedBy: cancelled
       });
-      resolveResult({ runId, status, exitCode: code, durationMs, reports: [] });
+      resolveResult({
+        runId,
+        status,
+        exitCode: code,
+        durationMs,
+        // Last frame per index wins (promise settlement overwrites the
+        // placeholder), ordered by index.
+        reports: [...reports.entries()].sort((a, b) => a[0] - b[0]).map(([index, value]) => ({ index, value }))
+      });
       // Mark journal entry exited.
       void readJournal().then((entries) => {
         const entry = entries.find((e) => e.runId === runId);
@@ -219,10 +190,17 @@ export class ProcessRunner {
     };
 
     try {
+      const env = sanitizedEnv(options.exePath, options.extraEnv);
+      // The runner owns the transport decision; callers must not set this.
+      env['RH_REPORT_TRANSPORT'] = options.reportTransport === 'fd3' ? 'fd3' : 'stderr';
+      const stdio: ('pipe' | 'ignore')[] | undefined =
+        options.reportTransport === 'fd3' ? ['pipe', 'pipe', 'pipe', 'pipe'] : undefined;
+
       const child = spawn(options.exePath, options.args ?? [], {
         cwd: options.cwd,
-        env: sanitizedEnv(options.exePath, options.extraEnv),
-        windowsHide: true
+        env,
+        windowsHide: true,
+        stdio
       });
       childRef = child;
       handle.pid = child.pid ?? null;
@@ -235,7 +213,13 @@ export class ProcessRunner {
       }
 
       child.stdout?.on('data', (c: Buffer) => stdoutPump.push(c));
-      child.stderr?.on('data', (c: Buffer) => stderrPump.push(c));
+      // stderr carries user output AND sentinel frames; the router separates them.
+      child.stderr?.on('data', (c: Buffer) => stderrRouter.push(c.toString('utf8')));
+      if (options.reportTransport === 'fd3') {
+        fd3Router = new SentinelLineSplitter({ onSentinel: handleFrameJson, onText: () => undefined });
+        const fd3 = child.stdio[3];
+        fd3?.on('data', (c: Buffer) => fd3Router?.push(c.toString('utf8')));
+      }
       child.on('error', (err: NodeJS.ErrnoException) => {
         stdoutPump.dispose();
         stderrPump.dispose();
