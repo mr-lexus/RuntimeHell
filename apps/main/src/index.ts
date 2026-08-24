@@ -2,7 +2,8 @@ import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { BrowserWindow, app, ipcMain } from 'electron';
 import { IPC } from '@rh/protocol';
-import { registerBinariesHandlers, registerExecutionHandlers, registerIpcHandlers, registerPackageHandlers, registerAnalysisHandlers } from './ipc/router.js';
+import { registerBinariesHandlers, registerExecutionHandlers, registerIpcHandlers, registerPackageHandlers, registerAnalysisHandlers, registerPersistenceHandlers } from './ipc/router.js';
+import { appendHistory } from './workspace/history.js';
 import { ExecutionManager } from './execution/execution-manager.js';
 import { BinariesController } from './binaries/binaries-controller.js';
 import { PackageService } from './packages/package-service.js';
@@ -51,13 +52,19 @@ function main(): void {
   registerIpcHandlers((channel, handler) => {
     ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
   });
+  registerPersistenceHandlers((channel, handler) => {
+    ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
+  });
 
-  // Execution events stream main → renderer over the run:event channel.
+  // Persistence (todo 21): settings + workspaces + history.
   const execution = new ExecutionManager({
     emit: (event) => {
       for (const win of BrowserWindow.getAllWindows()) {
         win.webContents.send(IPC.runEvent, event);
       }
+    },
+    recordRun: (record) => {
+      void appendHistory(record.workspaceId, record).catch(() => {});
     }
   });
   registerExecutionHandlers((channel, handler) => {

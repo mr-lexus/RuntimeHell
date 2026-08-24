@@ -18,10 +18,14 @@ import {
   type SaveFileRequest
 } from '@rh/protocol';
 
+export function workspacesDir(): string {
+  return join(homedir(), 'RuntimeHell', 'workspaces');
+}
+
 export function workspaceRoot(workspaceId: string): string {
   const id = workspaceId.replace(/[^a-zA-Z0-9_-]/g, '');
   if (!id || id !== workspaceId) throw new Error(`invalid workspaceId: ${workspaceId}`);
-  return join(homedir(), 'RuntimeHell', 'workspaces', id);
+  return join(workspacesDir(), id);
 }
 
 function safeResolve(root: string, relPath: string): string {

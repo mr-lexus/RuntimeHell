@@ -169,6 +169,25 @@ const api = {
     return () => {
       ipcRenderer.removeListener(IPC.analysisEvent, handler);
     };
+  },
+  // --- persistence (todo 21) --------------------------------------------------
+  settingsGet: async (): Promise<unknown> => {
+    return ipcRenderer.invoke(IPC.settingsGet, {});
+  },
+  settingsSet: async (patch: unknown): Promise<unknown> => {
+    return ipcRenderer.invoke(IPC.settingsSet, patch);
+  },
+  listWorkspaces: async (): Promise<unknown> => {
+    return ipcRenderer.invoke(IPC.wsListWorkspaces, {});
+  },
+  createWorkspace: async (name?: string): Promise<unknown> => {
+    return ipcRenderer.invoke(IPC.wsCreateWorkspace, name !== undefined ? { name } : {});
+  },
+  deleteWorkspace: async (workspaceId: string): Promise<unknown> => {
+    return ipcRenderer.invoke(IPC.wsDeleteWorkspace, { workspaceId });
+  },
+  historyList: async (workspaceId: string): Promise<unknown> => {
+    return ipcRenderer.invoke(IPC.historyList, { workspaceId });
   }
 };
 

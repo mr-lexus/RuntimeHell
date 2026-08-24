@@ -1,8 +1,8 @@
-/**
+﻿/**
  * Run state (plan todo 11): binds renderer UI to the main-process
  * ExecutionManager over the typed preload bridge. Console lines are capped;
  * reports are last-wins per index (promise settlements overwrite
- * placeholders). Auto-run debounces at 800ms and never stacks runs — the
+ * placeholders). Auto-run debounces at 800ms and never stacks runs вЂ” the
  * main process additionally enforces single-flight per workspace.
  */
 import { create } from 'zustand';
@@ -31,12 +31,14 @@ interface RunState {
   phase: RunPhase;
   runId: string | null;
   runtimeVersion: string | null;
+  timeoutMs: number;
   lines: ConsoleLine[];
   reports: { index: number; value: SerializedValue }[];
   lastExit: LastExit | null;
   autoRun: boolean;
   notice: string | null;
   setAutoRun: (v: boolean) => void;
+  setTimeoutMs: (ms: number) => void;
   requestStart: () => Promise<void>;
   scheduleAutoRun: () => void;
   requestCancel: () => Promise<void>;
@@ -69,11 +71,14 @@ export const useRun = create<RunState>((set, get) => ({
   phase: 'idle',
   runId: null,
   runtimeVersion: null,
+  timeoutMs: 5000,
   lines: [],
   reports: [],
   lastExit: null,
   autoRun: false,
   notice: null,
+
+  setTimeoutMs: (ms) => set({ timeoutMs: ms }),
 
   setAutoRun: (v) => {
     if (!v && debounceTimer !== null) {

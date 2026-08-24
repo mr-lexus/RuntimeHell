@@ -42,7 +42,15 @@ export const IPC = {
   // workspace files (minimal early surface; WorkspaceStore expands in todo 21)
   wsSaveFile: 'ws:save-file',
   wsReadFile: 'ws:read-file',
-  wsListFiles: 'ws:list-files'
+  wsListFiles: 'ws:list-files',
+
+  // workspace store + settings + history (todo 21)
+  wsListWorkspaces: 'ws:list-workspaces',
+  wsCreateWorkspace: 'ws:create-workspace',
+  wsDeleteWorkspace: 'ws:delete-workspace',
+  settingsGet: 'settings:get',
+  settingsSet: 'settings:set',
+  historyList: 'history:list'
 } as const;
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];

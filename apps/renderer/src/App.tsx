@@ -76,13 +76,39 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     exposeMonacoForTests();
-    openFile(DEMO_FILE);
+    let disposed = false;
+    // Session restore (todo 21): settings-driven tabs/prefs; demo file only
+    // when nothing was previously open.
+    void (async () => {
+      const settings = (await window.api?.settingsGet()) as
+        | { prefs: { timeoutMs: number; autorun: boolean }; session: { tabs: { workspaceId: string; relPath: string }[]; activeRelPath: string | null } }
+        | undefined;
+      if (disposed) return;
+      if (settings !== undefined) {
+        useRun.getState().setTimeoutMs(settings.prefs.timeoutMs);
+        useRun.getState().setAutoRun(settings.prefs.autorun);
+        for (const tab of settings.session.tabs) {
+          const read = (await window.api?.readFile({ workspaceId: tab.workspaceId, relPath: tab.relPath })) as
+            | { ok: boolean; content?: string }
+            | undefined;
+          const content = read?.ok === true && typeof read.content === 'string' ? read.content : '';
+          const language = tab.relPath.endsWith('.ts') ? 'typescript' : tab.relPath.endsWith('.tsx') ? 'typescript' : 'javascript';
+          openFile({ id: `${tab.workspaceId}:${tab.relPath}`, relPath: tab.relPath, language, content, dirty: false });
+        }
+        if (settings.session.activeRelPath !== null) {
+          const match = useUi.getState().files.find((f) => f.relPath === settings.session.activeRelPath);
+          if (match !== undefined) useUi.getState().setActive(match.id);
+        }
+      }
+      if (!disposed && useUi.getState().files.length === 0) openFile(DEMO_FILE);
+    })();
     // Real executor wiring (todo 11): Ctrl+Enter and toolbar both funnel into
     // the run store; streamed events update it via the preload bridge.
     const offRun = onRunRequested(() => void useRun.getState().requestStart());
     const offEvents = window.api?.onRunEvent((event) => useRun.getState().handleEvent(event));
     const offAnalysis = window.api?.onAnalysisEvent((event) => useAnalysis.getState().handleEvent(event));
     return () => {
+      disposed = true;
       offRun();
       offEvents?.();
       offAnalysis?.();
@@ -111,6 +137,31 @@ export function App(): React.JSX.Element {
   const scheduleAta = (code: string): void => {
     ataRef.current?.schedule(code);
   };
+
+  // Autosave (todo 21): 500ms debounce after edits; session tabs persisted.
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (saveTimer.current !== null) clearTimeout(saveTimer.current);
+    if (activeFile?.dirty === true) {
+      const file = activeFile;
+      saveTimer.current = setTimeout(() => {
+        void window.api
+          ?.saveFile({ workspaceId: WORKSPACE_ID, relPath: file.relPath, content: file.content })
+          .then(() => markSaved(file.id))
+          .catch(() => {});
+      }, 500);
+    }
+    if (sessionTimer.current !== null) clearTimeout(sessionTimer.current);
+    sessionTimer.current = setTimeout(() => {
+      void window.api?.settingsSet({
+        session: {
+          tabs: files.map((f) => ({ workspaceId: WORKSPACE_ID, relPath: f.relPath })),
+          activeRelPath: useUi.getState().activeFileId !== null ? (useActiveFile()?.relPath ?? null) : null
+        }
+      });
+    }, 500);
+  }, [files, activeFile, markSaved]);
 
   const onSave = (content: string): void => {
     const file = activeFile;

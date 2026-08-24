@@ -17,6 +17,9 @@ import {
   type PingResponse
 } from '@rh/protocol';
 import { listFiles, readFile, saveFile } from '../workspace/files.js';
+import { createWorkspace, deleteWorkspace, listWorkspaces } from '../workspace/workspace-store.js';
+import { loadSettings, updateSettings } from '../workspace/settings-store.js';
+import { readHistory } from '../workspace/history.js';
 import type { ExecutionManager } from '../execution/execution-manager.js';
 import type { BinariesController } from '../binaries/binaries-controller.js';
 import type { PackageService } from '../packages/package-service.js';
@@ -98,6 +101,28 @@ export function registerAnalysisHandlers(register: Register, manager: AnalysisMa
     const req = (payload ?? {}) as { requestId?: string };
     if (typeof req.requestId !== 'string') throw new Error('requestId required');
     return { ok: await manager.cancel(req.requestId) };
+  });
+}
+
+/** Workspace/settings/history handlers (todo 21). */
+export function registerPersistenceHandlers(register: Register): void {
+  register(IPC.wsListWorkspaces, async () => listWorkspaces());
+  register(IPC.wsCreateWorkspace, async (payload) => {
+    const req = (payload ?? {}) as { id?: string; name?: string };
+    return createWorkspace(typeof req.id === 'string' && req.id !== '' ? req.id : undefined, req.name);
+  });
+  register(IPC.wsDeleteWorkspace, async (payload) => {
+    const req = (payload ?? {}) as { workspaceId?: string };
+    if (typeof req.workspaceId !== 'string') throw new Error('workspaceId required');
+    await deleteWorkspace(req.workspaceId);
+    return { ok: true as const };
+  });
+  register(IPC.settingsGet, async () => (await loadSettings()).settings);
+  register(IPC.settingsSet, async (payload) => updateSettings((payload ?? {}) as never));
+  register(IPC.historyList, async (payload) => {
+    const req = (payload ?? {}) as { workspaceId?: string };
+    if (typeof req.workspaceId !== 'string') throw new Error('workspaceId required');
+    return { ok: true as const, records: await readHistory(req.workspaceId) };
   });
 }
 

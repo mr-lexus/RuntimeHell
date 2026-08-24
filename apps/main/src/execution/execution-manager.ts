@@ -25,6 +25,19 @@ export interface ExecutionManagerDeps {
   readonly createRunner?: () => ProcessRunner;
   /** Event delivery into the renderer. */
   readonly emit: (event: RunEvent) => void;
+  /** History recorder (todo 21); injected so tests stay filesystem-free. */
+  readonly recordRun?: (record: {
+    workspaceId: string;
+    runId: string;
+    startedAt: string;
+    finishedAt: string;
+    relPath: string;
+    contentSnapshot: string;
+    status: string;
+    exitCode: number | null;
+    durationMs: number;
+    killedBy: string | null;
+  }) => void;
 }
 
 interface ActiveRun {
@@ -111,6 +124,7 @@ export class ExecutionManager {
 
     const bootstrap = join(__dirname, 'templates', 'bootstrap.cjs');
     const reportTransport = (await probeFd3Support(runtime.exePath)) ? ('fd3' as const) : ('stderr' as const);
+    const startedAt = Date.now();
 
     // stderr text flows through the remapper line-by-line (order-stable);
     // `currentRunId` is set as soon as the runner hands us the handle.
@@ -148,6 +162,23 @@ export class ExecutionManager {
           this.activeByRunId.delete(handle.runId);
           this.activeByWorkspace.delete(req.workspaceId);
           run.unsubscribe();
+        }
+        // History ring (todo 21): request snapshot + result summary.
+        try {
+          this.deps.recordRun?.({
+            workspaceId: req.workspaceId,
+            runId: handle.runId,
+            startedAt: new Date(startedAt).toISOString(),
+            finishedAt: new Date().toISOString(),
+            relPath: req.relPath,
+            contentSnapshot: req.content,
+            status: event.killedBy === 'timeout' ? 'timeout' : event.killedBy === 'user' ? 'cancelled' : 'completed',
+            exitCode: event.code,
+            durationMs: event.durationMs,
+            killedBy: event.killedBy
+          });
+        } catch {
+          /* history is best-effort */
         }
       }
     });

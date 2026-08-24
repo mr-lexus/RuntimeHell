@@ -380,7 +380,7 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: select bare expression `users.filter(x=>x.active)` (with `users` defined above in file) в†’ wrapped snippet runs standalone producing bytecode for filter callback (`.omo/qa/t20-wrapping.md`). QA failure: selection referencing undefined identifier в†’ engine reports ReferenceError in Raw tab (expected, clearly surfaced as analysis-of-broken-snippet), no app crash.
   - Commit: `feat(selection): safe standalone wrapping strategies with transparent preview`
 
-- [ ] 21. WorkspaceStore + Settings + History (persistence core)
+- [x] 21. WorkspaceStore + Settings + History (persistence core)
   - References: Scopeв†’MVP workspace bullet; `apps/main/src/workspace/*`.
   - Acceptance: workspaces CRUD under `%USERPROFILE%\RuntimeHell\workspaces\{id}\` (id=nanoid; files stored verbatim); settings store in `%APPDATA%\RuntimeHell\settings.json` with versioned migrations (v1 defaults: timeoutMs 5000, autorun false, ignoreScripts true, defaultRuntime 'node'); history ring buffer last 100 runs per workspace (request snapshot + result summary + timestamps) persisted and viewable; autosave debounce 500ms on edit; session restore reopens previous tabs/workspaces exactly.
   - QA happy: create workspace, edit 3 files, restart app в†’ identical state restored (file hashes compared) `.omo/qa/t21-persistence.md`. QA failure: hand-corrupt settings.json в†’ app boots on defaults + backup of corrupt file saved alongside (assert), never crashes.
