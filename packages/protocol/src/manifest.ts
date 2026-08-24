@@ -47,3 +47,82 @@ export const CustomBuildRecipeSchema = z
   })
   .strict();
 export type CustomBuildRecipe = z.infer<typeof CustomBuildRecipeSchema>;
+
+// --- Runtimes panel surface (todo 12) --------------------------------------
+
+export const NodeVersionRowSchema = z
+  .object({
+    version: z.string().min(1), // '22.17.0' (no leading v)
+    lts: z.boolean(),
+    date: z.string()
+  })
+  .strict();
+export type NodeVersionRow = z.infer<typeof NodeVersionRowSchema>;
+
+export const SystemRuntimeInfoSchema = z
+  .object({
+    exePath: z.string().min(1),
+    version: z.string().min(1)
+  })
+  .strict();
+export type SystemRuntimeInfo = z.infer<typeof SystemRuntimeInfoSchema>;
+
+export const BinariesListRequestSchema = z.object({}).strict();
+export type BinariesListRequest = z.infer<typeof BinariesListRequestSchema>;
+
+export const BinariesListResponseSchema = z
+  .object({
+    system: SystemRuntimeInfoSchema.nullable(),
+    installed: z.array(ManifestEntrySchema),
+    available: z.array(NodeVersionRowSchema),
+    /** Non-fatal index-fetch failure surfaced to the UI. */
+    availableError: z.string().optional()
+  })
+  .strict();
+export type BinariesListResponse = z.infer<typeof BinariesListResponseSchema>;
+
+export const BinaryInstallRequestSchema = z
+  .object({
+    kind: z.literal('runtime'),
+    id: z.literal('node'),
+    version: z.string().min(1)
+  })
+  .strict();
+export type BinaryInstallRequest = z.infer<typeof BinaryInstallRequestSchema>;
+
+export const BinaryInstallAcceptedSchema = z
+  .object({ ok: z.literal(true), entry: ManifestEntrySchema })
+  .strict();
+export const BinaryInstallRejectedSchema = z
+  .object({ ok: z.literal(false), message: z.string().min(1) })
+  .strict();
+export const BinaryInstallResponseSchema = z.union([BinaryInstallAcceptedSchema, BinaryInstallRejectedSchema]);
+export type BinaryInstallResponse = z.infer<typeof BinaryInstallResponseSchema>;
+
+export const BinaryRemoveRequestSchema = z
+  .object({
+    kind: z.enum(['runtime', 'engine', 'runtime-support']),
+    id: z.string().min(1),
+    version: z.string().min(1)
+  })
+  .strict();
+export type BinaryRemoveRequest = z.infer<typeof BinaryRemoveRequestSchema>;
+
+export const BinaryRemoveResponseSchema = z.union([
+  z.object({ ok: z.literal(true) }).strict(),
+  z.object({ ok: z.literal(false), message: z.string().min(1) }).strict()
+]);
+export type BinaryRemoveResponse = z.infer<typeof BinaryRemoveResponseSchema>;
+
+/** Streamed install/download progress over the binariesProgress channel. */
+export const BinaryProgressEventSchema = z
+  .object({
+    kind: z.literal('runtime'),
+    id: z.string().min(1),
+    version: z.string().min(1),
+    receivedBytes: z.number().nonnegative(),
+    totalBytes: z.number().nullable(),
+    done: z.boolean().optional()
+  })
+  .strict();
+export type BinaryProgressEvent = z.infer<typeof BinaryProgressEventSchema>;

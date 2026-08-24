@@ -2,9 +2,19 @@
  * Pure IPC handler implementations.
  * Kept free of electron imports so they are unit-testable under vitest.
  */
-import { IPC, PingResponseSchema, RunCancelRequestSchema, RunStartRequestSchema, type PingResponse } from '@rh/protocol';
+import {
+  BinaryInstallRequestSchema,
+  BinaryRemoveRequestSchema,
+  BinariesListRequestSchema,
+  IPC,
+  PingResponseSchema,
+  RunCancelRequestSchema,
+  RunStartRequestSchema,
+  type PingResponse
+} from '@rh/protocol';
 import { listFiles, readFile, saveFile } from '../workspace/files.js';
 import type { ExecutionManager } from '../execution/execution-manager.js';
+import type { BinariesController } from '../binaries/binaries-controller.js';
 
 type Register = (channel: string, handler: (payload: unknown) => Promise<unknown>) => void;
 
@@ -30,6 +40,22 @@ export function registerExecutionHandlers(register: Register, manager: Execution
   register(IPC.runCancel, async (payload) => {
     const req = RunCancelRequestSchema.parse(payload);
     return { ok: await manager.cancel(req.runId) };
+  });
+}
+
+/** Binaries handlers bound to a controller instance (todo 12). */
+export function registerBinariesHandlers(register: Register, controller: BinariesController): void {
+  register(IPC.binariesList, async (payload) => {
+    BinariesListRequestSchema.parse(payload ?? {});
+    return controller.list();
+  });
+  register(IPC.binariesInstall, async (payload) => {
+    const req = BinaryInstallRequestSchema.parse(payload);
+    return controller.install(req.kind, req.id, req.version);
+  });
+  register(IPC.binariesRemove, async (payload) => {
+    const req = BinaryRemoveRequestSchema.parse(payload);
+    return controller.remove(req.kind, req.id, req.version);
   });
 }
 

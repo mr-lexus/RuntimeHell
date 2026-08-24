@@ -8,6 +8,7 @@
 import { create } from 'zustand';
 import type { RunEvent, SerializedValue } from '@rh/protocol';
 import { getActiveFile, type OpenFile } from './ui.js';
+import { useRuntimes } from './runtimes.js';
 
 export type RunPhase = 'idle' | 'running' | 'cancelling';
 
@@ -99,7 +100,9 @@ export const useRun = create<RunState>((set, get) => ({
       workspaceId: 'default',
       relPath: file.relPath,
       content: file.content,
-      timeoutMs: 5000
+      timeoutMs: 5000,
+      // Per-workspace override (todo 12); falls back to system node in main.
+      runtimeVersion: useRuntimes.getState().selectedVersion ?? undefined
     });
     if (!response.ok) {
       set({ phase: 'idle' });

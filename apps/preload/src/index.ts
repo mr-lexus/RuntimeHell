@@ -14,6 +14,17 @@ import {
   RunStartResponseSchema,
   SaveFileRequestSchema,
   SaveFileResponseSchema,
+  BinaryInstallRequestSchema,
+  BinaryInstallResponseSchema,
+  BinaryProgressEventSchema,
+  BinaryRemoveRequestSchema,
+  BinaryRemoveResponseSchema,
+  BinariesListRequestSchema,
+  BinariesListResponseSchema,
+  type BinaryInstallResponse,
+  type BinaryProgressEvent,
+  type BinaryRemoveResponse,
+  type BinariesListResponse,
   type RunCancelResponse,
   type RunEvent,
   type RunStartResponse
@@ -34,7 +45,7 @@ const api = {
     return ListFilesResponseSchema.parse(await ipcRenderer.invoke(IPC.wsListFiles, ListFilesRequestSchema.parse(req)));
   },
   // --- execution (todo 11) -------------------------------------------------
-  startRun: async (req: { workspaceId: string; relPath: string; content: string; timeoutMs: number }): Promise<RunStartResponse> => {
+  startRun: async (req: { workspaceId: string; relPath: string; content: string; timeoutMs: number; runtimeVersion?: string }): Promise<RunStartResponse> => {
     return RunStartResponseSchema.parse(
       await ipcRenderer.invoke(IPC.runStart, RunStartRequestSchema.parse(req))
     );
@@ -51,6 +62,38 @@ const api = {
     ipcRenderer.on(IPC.runEvent, handler);
     return () => {
       ipcRenderer.removeListener(IPC.runEvent, handler);
+    };
+  },
+  // --- runtimes panel (todo 12) --------------------------------------------
+  listBinaries: async (): Promise<BinariesListResponse> => {
+    return BinariesListResponseSchema.parse(
+      await ipcRenderer.invoke(IPC.binariesList, BinariesListRequestSchema.parse({}))
+    );
+  },
+  installRuntime: async (version: string): Promise<BinaryInstallResponse> => {
+    return BinaryInstallResponseSchema.parse(
+      await ipcRenderer.invoke(
+        IPC.binariesInstall,
+        BinaryInstallRequestSchema.parse({ kind: 'runtime', id: 'node', version })
+      )
+    );
+  },
+  removeRuntime: async (version: string): Promise<BinaryRemoveResponse> => {
+    return BinaryRemoveResponseSchema.parse(
+      await ipcRenderer.invoke(
+        IPC.binariesRemove,
+        BinaryRemoveRequestSchema.parse({ kind: 'runtime', id: 'node', version })
+      )
+    );
+  },
+  onBinariesProgress: (cb: (event: BinaryProgressEvent) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+      const parsed = BinaryProgressEventSchema.safeParse(payload);
+      if (parsed.success) cb(parsed.data);
+    };
+    ipcRenderer.on(IPC.binariesProgress, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC.binariesProgress, handler);
     };
   }
 };

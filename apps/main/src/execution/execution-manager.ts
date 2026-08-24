@@ -7,18 +7,20 @@
  * is unit-testable; index.ts binds the sink to webContents.send.
  */
 import { join } from 'node:path';
-import type { RunEvent, RunStartRequest, RunStartResponse } from '@rh/protocol';
+import type { ManifestEntry, RunEvent, RunStartRequest, RunStartResponse } from '@rh/protocol';
 import { probeFd3Support } from './fd3-probe.js';
 import { injectCapture } from './result-capture.js';
 import { ProcessRunner, type RunHandle } from './process-runner.js';
 import { StackLineRemapper } from './stack-remapper.js';
 import { needsTranspile, passthroughTo, transpileTo } from '../transpile/transpile-service.js';
 import { detectSystemNode } from '../runtimes/node/node-runtime.js';
+import { resolveRuntimeChoice } from '../runtimes/runtime-resolver.js';
+import { readManifest } from '../binaries/binary-manager.js';
 import { workspaceRoot } from '../workspace/files.js';
 
 export interface ExecutionManagerDeps {
-  /** Runtime executable resolution; default = cached system-node detection. */
-  readonly resolveRuntime?: () => Promise<{ exePath: string; version: string } | null>;
+  /** Runtime executable resolution; default = resolver order (managed selected → system). */
+  readonly resolveRuntime?: (requestedVersion?: string) => Promise<{ exePath: string; version: string } | null>;
   /** Runner factory; default = one shared ProcessRunner. */
   readonly createRunner?: () => ProcessRunner;
   /** Event delivery into the renderer. */
@@ -31,13 +33,25 @@ interface ActiveRun {
   readonly unsubscribe: () => void;
 }
 
-type RuntimeResolver = () => Promise<{ exePath: string; version: string } | null>;
+type RuntimeResolver = (requestedVersion?: string) => Promise<{ exePath: string; version: string } | null>;
 
 let systemNodeCache: Promise<{ exePath: string; version: string } | null> | null = null;
 
-function defaultResolveRuntime(): Promise<{ exePath: string; version: string } | null> {
+function ensureSystemDetected(): Promise<{ exePath: string; version: string } | null> {
   systemNodeCache ??= detectSystemNode();
   return systemNodeCache;
+}
+
+/**
+ * Displayed resolution order (todo 12): requested managed version → system
+ * installation → 'none' (UI offers a managed download). The manifest is read
+ * per call: installs/uninstalls mutate it between runs.
+ */
+async function defaultResolveRuntime(requestedVersion?: string): Promise<{ exePath: string; version: string } | null> {
+  const [manifest, system] = await Promise.all([readManifest(), ensureSystemDetected()]);
+  const entries: ManifestEntry[] = manifest.entries;
+  const picked = resolveRuntimeChoice(requestedVersion, entries, system);
+  return picked.kind === 'none' ? null : { exePath: picked.exePath, version: picked.version };
 }
 
 export class ExecutionManager {
@@ -60,7 +74,7 @@ export class ExecutionManager {
     if (existing) return { ok: false, stage: 'active', activeRunId: existing.runId };
 
     // Runtime first: fail before touching disk when no Node is available.
-    const runtime = await this.resolveRuntime();
+    const runtime = await this.resolveRuntime(req.runtimeVersion);
     if (!runtime) {
       return {
         ok: false,

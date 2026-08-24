@@ -326,7 +326,7 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: demo program (async top-level await fetch-less promise chain + Map + Error throw caught) в†’ console lines + inspectable tree screenshots `.omo/qa/t11-inspector-ui.md`. QA failure: infinite loop + Auto-run ON в†’ debounce does not stack runs (single running handle enforced), Cancel terminates, UI returns idle вЂ” timings recorded.
   - Commit: `feat(ui): live console and virtualized value inspector bound to execution`
 
-- [ ] 12. Multi-runtime groundwork: version selector UI reading RuntimeManager
+- [x] 12. Multi-runtime groundwork: version selector UI reading RuntimeManager
   - References: Scopeв†’MVP "runtime version selector".
   - Acceptance: Runtimes panel lists detected system node + installed/downloadable versions (from todo 7 index parse); selecting uninstalled version streams progress and flips to ready on completion; per-workspace override stored; **executable resolution order implemented and displayed: managed selected version в†’ system installation в†’ offer managed download**; removal button (disabled while version in use by a run).
   - QA happy: install v22 LTS via UI, run sample, uninstall after `.omo/qa/t12-runtime-ui.md` evidence. QA failure: network cut mid-download в†’ progress errors, temp cleaned, manifest unchanged (assert), retry succeeds after reconnect.

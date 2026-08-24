@@ -113,7 +113,9 @@ export const RunStartRequestSchema = z
     workspaceId: z.string().min(1),
     relPath: z.string().min(1),
     content: z.string(),
-    timeoutMs: z.number().int().positive()
+    timeoutMs: z.number().int().positive(),
+    /** Requested MANAGED node version; falls back to system when absent/uninstalled. */
+    runtimeVersion: z.string().min(1).optional()
   })
   .strict();
 export type RunStartRequest = z.infer<typeof RunStartRequestSchema>;

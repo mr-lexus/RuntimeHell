@@ -2,8 +2,9 @@ import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { BrowserWindow, app, ipcMain } from 'electron';
 import { IPC } from '@rh/protocol';
-import { registerExecutionHandlers, registerIpcHandlers } from './ipc/router.js';
+import { registerBinariesHandlers, registerExecutionHandlers, registerIpcHandlers } from './ipc/router.js';
 import { ExecutionManager } from './execution/execution-manager.js';
+import { BinariesController } from './binaries/binaries-controller.js';
 
 const isDev = !app.isPackaged;
 
@@ -58,6 +59,18 @@ function main(): void {
   registerExecutionHandlers((channel, handler) => {
     ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
   }, execution);
+
+  // Runtimes panel (todo 12): list/install/remove with streamed progress.
+  const binaries = new BinariesController({
+    emitProgress: (event) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send(IPC.binariesProgress, event);
+      }
+    }
+  });
+  registerBinariesHandlers((channel, handler) => {
+    ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
+  }, binaries);
 
   app.whenReady().then(() => {
     console.log('[boot] electron ready');
