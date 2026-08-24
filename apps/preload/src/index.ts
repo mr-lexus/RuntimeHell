@@ -151,6 +151,7 @@ const api = {
     analysisTypes: Array<'ast' | 'bytecode' | 'optcode' | 'ir-graph' | 'deopts' | 'gc'>;
     functionName?: string;
     timeoutMs?: number;
+    workspaceId?: string;
   }): Promise<AnalysisStartResponse> => {
     return AnalysisStartResponseSchema.parse(
       await ipcRenderer.invoke(IPC.analysisRequest, AnalysisStartRequestSchema.parse(req))

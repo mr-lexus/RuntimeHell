@@ -22,7 +22,7 @@ export interface CodeEditorProps {
   onFormatError?: (message: string) => void;
   onSelectionChanged?: (info: SelectionInfo | null) => void;
   /** Context-menu Analyze actions; disabled entries render with tooltips. */
-  onAnalyze?: (type: AnalyzeType, code: string) => void;
+  onAnalyze?: (type: AnalyzeType, code: string, info: SelectionInfo | null) => void;
   analyzeActions?: readonly AnalyzeActionState[];
 }
 
@@ -118,11 +118,18 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
         run: (ed) => {
           const model = ed.getModel();
           const sel = ed.getSelection();
-          const code =
-            sel !== null && model !== null && !sel.isEmpty()
-              ? model.getValueInRange(sel)
-              : (ed.getValue() ?? '');
-          propsRef.current.onAnalyze?.(type, code);
+          let code = ed.getValue() ?? '';
+          let info: SelectionInfo | null = null;
+          if (sel !== null && model !== null && !sel.isEmpty()) {
+            code = model.getValueInRange(sel);
+            info = getSelectionInfo(model.getValue(), code, {
+              startLine: sel.startLineNumber,
+              startCol: sel.startColumn,
+              endLine: sel.endLineNumber,
+              endCol: sel.endColumn
+            });
+          }
+          propsRef.current.onAnalyze?.(type, code, info);
         }
       });
     }

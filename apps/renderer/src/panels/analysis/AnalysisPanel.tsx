@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import type { AnalysisType } from '@rh/protocol';
+import type { SelectionInfo } from '../../editor/selection-service';
 import { ANALYSIS_ALL_TYPES, useAnalysis, type TypeState } from '../../state/analysis';
 import { ResultViewer } from './ResultViewer';
 
@@ -25,8 +26,9 @@ function statusColor(s: TypeState): string {
  * capability-aware actions. The selected engine gates the buttons; the
  * backend probe re-verifies before spawning.
  */
-export function AnalysisPanel({ code }: { code: string }): React.JSX.Element {
+export function AnalysisPanel({ code, selection }: { code: string; selection: SelectionInfo | null }): React.JSX.Element {
   const state = useAnalysis();
+  const [showWrapper, setShowWrapper] = useState(false);
   const selected = state.engines.find((e) => e.id === state.engineId);
   const caps = selected?.capabilities ?? null;
   const doneTypes = ANALYSIS_ALL_TYPES.filter((t) => state.types[t].status === 'done');
@@ -75,13 +77,7 @@ export function AnalysisPanel({ code }: { code: string }): React.JSX.Element {
               key={type}
               title={tooltip}
               disabled={state.requestId !== null}
-              onClick={() =>
-                state.request(
-                  code,
-                  [type],
-                  type === 'bytecode' ? undefined /* selection wrapping lands in todo 20 */ : undefined
-                )
-              }
+              onClick={() => state.requestFromSelection(selection, code, [type])}
               style={{
                 background: t.status === 'running' ? '#3a3325' : '#2a2a2a',
                 color: supported ? '#ccc' : '#555',
@@ -106,6 +102,32 @@ export function AnalysisPanel({ code }: { code: string }): React.JSX.Element {
 
       {state.lastError !== null && <div style={{ color: '#f48771' }}>{state.lastError}</div>}
       {state.cancelledNotice && <div style={{ color: '#dcdcaa' }}>analysis cancelled</div>}
+
+      {state.generatedCode !== null && (
+        <div>
+          <label style={{ color: '#888', fontSize: 11, display: 'flex', gap: 4, alignItems: 'center' }}>
+            <input type="checkbox" checked={showWrapper} onChange={(e) => setShowWrapper(e.target.checked)} /> show
+            generated wrapper
+          </label>
+          {showWrapper && (
+            <pre
+              style={{
+                margin: 0,
+                background: '#111',
+                border: '1px solid #222',
+                padding: 6,
+                maxHeight: 160,
+                overflow: 'auto',
+                fontSize: 11,
+                whiteSpace: 'pre-wrap',
+                color: '#9cdcfe'
+              }}
+            >
+              {state.generatedCode}
+            </pre>
+          )}
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto', minHeight: 0 }}>
         {ANALYSIS_ALL_TYPES.filter((t) => state.types[t].status !== 'idle').map((type) => {

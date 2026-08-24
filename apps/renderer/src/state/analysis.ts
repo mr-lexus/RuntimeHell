@@ -5,6 +5,8 @@
  */
 import { create } from 'zustand';
 import type { AnalysisEvent, AnalysisResult, AnalysisType, EngineCapabilities } from '@rh/protocol';
+import { buildAnalysisSnippet } from '../editor/wrapping';
+import type { SelectionInfo } from '../editor/selection-service';
 
 export type TypeStatus = 'idle' | 'running' | 'done' | 'unsupported' | 'error';
 
@@ -42,9 +44,11 @@ interface AnalysisState {
   types: Record<AnalysisType, TypeState>;
   lastError: string | null;
   cancelledNotice: boolean;
+  /** Exact snippet that will run — powers the "show generated wrapper" toggle. */
+  generatedCode: string | null;
   setEngine: (id: 'v8' | 'd8-debug') => void;
   refreshEngines: () => Promise<void>;
-  request: (code: string, types: AnalysisType[], functionName?: string) => void;
+  requestFromSelection: (info: SelectionInfo | null, fullText: string, types: AnalysisType[], sampleInvocation?: boolean) => void;
   cancel: () => Promise<void>;
   handleEvent: (e: AnalysisEvent) => void;
 }
@@ -55,6 +59,7 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
   requestId: null,
   engineId: 'd8-debug',
   engines: [],
+  generatedCode: null,
   types: freshTypes(),
   lastError: null,
   cancelledNotice: false,
@@ -69,20 +74,33 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
     });
   },
 
-  request: (code, types, functionName) => {
+  requestFromSelection: (info, fullText, types, sampleInvocation = false) => {
     if (!window.api?.analyze) return;
     if (types.length === 0) return;
+    if (get().requestId !== null) return; // single analysis at a time
+    const kind = info?.kind ?? 'module';
+    const text = info?.text ?? fullText;
+    const snippet = buildAnalysisSnippet({ kindGuess: kind, text, sampleInvocation });
     const requestId = `ui-${Date.now()}-${++seq}`;
     const typesState = freshTypes();
     for (const t of types) typesState[t] = { status: 'running', reason: null, result: null };
-    set({ requestId, types: typesState, lastError: null, cancelledNotice: false });
+    set({
+      requestId,
+      types: typesState,
+      lastError: null,
+      cancelledNotice: false,
+      generatedCode: snippet.code
+    });
     void window.api
       .analyze({
         requestId,
         engineId: get().engineId,
-        code,
+        code: snippet.code,
         analysisTypes: types,
-        ...(functionName !== undefined ? { functionName } : {})
+        ...(snippet.functionName !== null && (kind === 'function' || kind === 'class')
+          ? { functionName: snippet.functionName }
+          : {}),
+        workspaceId: 'default'
       })
       .catch(() => set({ requestId: null }));
   },

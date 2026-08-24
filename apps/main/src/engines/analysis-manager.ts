@@ -6,6 +6,8 @@
  * Per-type sequencing: one gated failure emits 'unsupported' for THAT type
  * and continues with the remaining requested types (partial success).
  */
+import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
 import type { AnalysisEvent, AnalysisStartRequest } from '@rh/protocol';
 import { CapabilityGateError, V8EngineAdapter, type IsolatedRun } from './v8-adapter.js';
 import type { EngineRegistry } from './registry.js';
@@ -64,6 +66,17 @@ export class AnalysisManager {
     // Placeholder cancel so early cancellations are acknowledged even before
     // the real ProcessRunner handle exists.
     this.cancelByRequest.set(req.requestId, async () => {});
+    // Transparency (todo 20): persist the EXACT snippet that will run.
+    if (req.workspaceId !== undefined) {
+      try {
+        const { workspaceRoot } = await import('../workspace/files.js');
+        const dir = join(workspaceRoot(req.workspaceId), '.rhbuild', 'analysis');
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(join(dir, `${req.requestId}.mjs`), req.code, 'utf8');
+      } catch {
+        /* persistence is best-effort; analysis proceeds regardless */
+      }
+    }
     const description = await this.deps.registry.describe(req.engineId);
     if (!description.binaryPath || !description.capabilities) {
       this.deps.emit({

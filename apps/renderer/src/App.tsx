@@ -9,6 +9,7 @@ import { InspectorPanel } from './panels/inspector/InspectorPanel';
 import { RuntimesPanel } from './panels/runtimes/RuntimesPanel';
 import { PackagesPanel } from './panels/packages/PackagesPanel';
 import { emitRunRequested, onRunRequested, useActiveFile, useUi, type DrawerTab } from './state/ui';
+import type { SelectionInfo } from './editor/selection-service';
 import { useRun } from './state/run';
 import { ANALYSIS_ALL_TYPES } from './state/analysis';
 import { useAnalysis } from './state/analysis';
@@ -71,6 +72,7 @@ export function App(): React.JSX.Element {
   });
   const [status, setStatus] = useState<string>('ready');
   const splitRef = useRef<HTMLDivElement | null>(null);
+  const lastSelectionRef = useRef<SelectionInfo | null>(null);
 
   useEffect(() => {
     exposeMonacoForTests();
@@ -192,9 +194,12 @@ export function App(): React.JSX.Element {
               onSave={onSave}
               onRun={() => emitRunRequested()}
               onFormatError={(m) => setStatus(`format error: ${m}`)}
+              onSelectionChanged={(info) => {
+                lastSelectionRef.current = info;
+              }}
               analyzeActions={analyzeActions}
-              onAnalyze={(type, code) => {
-                useAnalysis.getState().request(code, [type]);
+              onAnalyze={(type, _code, info) => {
+                useAnalysis.getState().requestFromSelection(info ?? null, activeFile?.content ?? '', [type]);
                 setDrawerTab('analysis');
               }}
             />
@@ -243,7 +248,9 @@ export function App(): React.JSX.Element {
           <div style={{ flex: 1, overflow: 'auto', padding: 8, color: '#bbb', minHeight: 0 }}>
             {drawerTab === 'console' && <ConsolePanel />}
             {drawerTab === 'inspector' && <InspectorPanel />}
-            {drawerTab === 'analysis' && <AnalysisPanel code={activeFile?.content ?? ''} />}
+            {drawerTab === 'analysis' && (
+              <AnalysisPanel code={activeFile?.content ?? ''} selection={lastSelectionRef.current} />
+            )}
             {drawerTab === 'packages' && <PackagesPanel />}
             {drawerTab === 'runtimes' && <RuntimesPanel />}
           </div>
