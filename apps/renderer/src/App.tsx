@@ -1,36 +1,153 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { exposeMonacoForTests } from './editor/monaco-setup';
+import { CodeEditor } from './editor/CodeEditor';
+import { emitRunRequested, onRunRequested, useActiveFile, useUi, type DrawerTab } from './state/ui';
 
-interface RuntimeHellApi {
-  ping: (sentAt: number) => Promise<{ pong: true; receivedAt: number; echoSentAt?: number }>;
+const WORKSPACE_ID = 'default';
+
+const DEMO_FILE = {
+  id: 'default:entry.ts',
+  relPath: 'entry.ts',
+  language: 'typescript',
+  dirty: false,
+  content: `// RuntimeHell demo — Ctrl+Enter runs, Shift+Alt+F formats, Ctrl+S saves.
+interface User { id: number; name: string; active: boolean }
+
+const users: User[] = [
+  { id: 1, name: 'Alex', active: true },
+  { id: 2, name: 'Sam', active: false }
+];
+
+function sum(a: number, b: number): number {
+  return a + b;
 }
 
-declare global {
-  interface Window {
-    api: RuntimeHellApi;
-  }
-}
+const active = users.filter((u) => u.active);
+console.log('active users:', active);
+sum(40, 2);
+`
+};
+
+const DRAWER_TABS: DrawerTab[] = ['console', 'inspector', 'analysis', 'packages', 'runtimes'];
 
 export function App(): React.JSX.Element {
-  const [pingResult, setPingResult] = useState<string>('pinging…');
-
-  const doPing = useCallback(async () => {
-    try {
-      const res = await window.api.ping(Date.now());
-      setPingResult(`pong (round-trip ${res.receivedAt - (res.echoSentAt ?? res.receivedAt)}ms)`);
-    } catch (err) {
-      setPingResult(`ping failed: ${String(err)}`);
-    }
-  }, []);
+  const files = useUi((s) => s.files);
+  const activeFileId = useUi((s) => s.activeFileId);
+  const drawerTab = useUi((s) => s.drawerTab);
+  const drawerRatio = useUi((s) => s.drawerRatio);
+  const openFile = useUi((s) => s.openFile);
+  const setActive = useUi((s) => s.setActive);
+  const updateContent = useUi((s) => s.updateContent);
+  const markSaved = useUi((s) => s.markSaved);
+  const setDrawerTab = useUi((s) => s.setDrawerTab);
+  const setDrawerRatio = useUi((s) => s.setDrawerRatio);
+  const activeFile = useActiveFile();
+  const [status, setStatus] = useState<string>('ready');
+  const splitRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    void doPing();
-  }, [doPing]);
+    exposeMonacoForTests();
+    openFile(DEMO_FILE);
+    return onRunRequested(() => setStatus(`run requested @ ${new Date().toISOString()}`));
+  }, [openFile]);
+
+  const onSave = (content: string): void => {
+    const file = activeFile;
+    if (!file) return;
+    void window.api
+      .saveFile({ workspaceId: WORKSPACE_ID, relPath: file.relPath, content })
+      .then(() => {
+        markSaved(file.id);
+        setStatus(`saved ${file.relPath}`);
+      })
+      .catch((err: unknown) => setStatus(`save failed: ${String(err)}`));
+  };
+
+  const startDrag = (e: React.MouseEvent): void => {
+    e.preventDefault();
+    const container = splitRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const move = (ev: MouseEvent): void => {
+      const ratio = 1 - (ev.clientY - rect.top) / rect.height;
+      setDrawerRatio(Math.min(0.85, Math.max(0.08, ratio)));
+    };
+    const up = (): void => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
 
   return (
-    <div style={{ fontFamily: 'system-ui, sans-serif', padding: 24 }}>
-      <h1>RuntimeHell</h1>
-      <p>IPC bridge status: {pingResult}</p>
-      <button onClick={() => void doPing()}>Ping main process</button>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontSize: 13 }}>
+      {/* tab bar */}
+      <div style={{ display: 'flex', gap: 2, background: '#1e1e1e', padding: '4px 6px' }}>
+        {files.map((f) => (
+          <button
+            key={f.id}
+            onClick={() => setActive(f.id)}
+            style={{
+              background: f.id === activeFileId ? '#333' : 'transparent',
+              color: '#ddd',
+              border: 'none',
+              padding: '4px 10px',
+              cursor: 'pointer'
+            }}
+          >
+            {f.relPath}
+            {f.dirty ? ' •' : ''}
+          </button>
+        ))}
+        <span style={{ marginLeft: 'auto', color: '#888', alignSelf: 'center' }}>{status}</span>
+      </div>
+
+      {/* editor / drawer split */}
+      <div ref={splitRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div style={{ flex: `${1 - drawerRatio} 1 0`, minHeight: 0 }}>
+          {activeFile ? (
+            <CodeEditor
+              path={activeFile.relPath}
+              value={activeFile.content}
+              language={activeFile.language}
+              onChange={(v) => updateContent(activeFile.id, v)}
+              onSave={onSave}
+              onRun={() => emitRunRequested()}
+              onFormatError={(m) => setStatus(`format error: ${m}`)}
+            />
+          ) : (
+            <div style={{ color: '#888', padding: 20 }}>No file open</div>
+          )}
+        </div>
+        <div onMouseDown={startDrag} style={{ height: 4, cursor: 'row-resize', background: '#444' }} />
+        <div style={{ flex: `${drawerRatio} 1 0`, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <div style={{ display: 'flex', gap: 2, background: '#181818', padding: '3px 6px' }}>
+            {DRAWER_TABS.map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setDrawerTab(tab)}
+                style={{
+                  background: tab === drawerTab ? '#333' : 'transparent',
+                  color: '#ccc',
+                  border: 'none',
+                  padding: '3px 10px',
+                  cursor: 'pointer'
+                }}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+          <div style={{ flex: 1, overflow: 'auto', padding: 8, color: '#bbb' }}>
+            {drawerTab === 'console' && <div>Console output appears here (todo 11).</div>}
+            {drawerTab === 'inspector' && <div>Value inspector appears here (todo 11).</div>}
+            {drawerTab === 'analysis' && <div>Engine analysis appears here (todo 19).</div>}
+            {drawerTab === 'packages' && <div>Package management appears here (todo 13).</div>}
+            {drawerTab === 'runtimes' && <div>Runtime versions appear here (todo 12).</div>}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

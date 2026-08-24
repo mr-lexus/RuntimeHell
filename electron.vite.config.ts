@@ -26,7 +26,7 @@ export default defineConfig({
     plugins: [react()],
     resolve: { alias: { '@rh/protocol': protocolAlias } },
     build: {
-      outDir: '../../out/renderer',
+      outDir: 'out/renderer', // resolved against repo root (cwd), like main/preload
       emptyOutDir: true,
       rollupOptions: {
         input: resolve(process.cwd(), 'apps/renderer/index.html')

@@ -272,7 +272,7 @@ Waves map 1:1 to phases above; wave = 3–6 todos executed sequentially within t
   - QA happy: link to first green run URL in `.omo/qa/t02-ci.md`. QA failure: push commit breaking typecheck → CI red screenshot/log excerpt recorded, then revert.
   - Commit: `chore(ci): windows-first github actions pipeline`
 
-- [ ] 3. Shared protocol package (zod schemas for every cross-process payload)
+- [x] 3. Shared protocol package (zod schemas for every cross-process payload)
   - References: Scope→Architecture interfaces block; `packages/protocol/src/*`.
   - Acceptance: schemas+types exported for RunRequest/RunEvent(stdout|stderr|result|exit|error)/RunResult/AnalysisRequest/AnalysisResult/ManifestEntry/RuntimeCapabilities/EngineCapabilities/ipc-channel name union; unit tests cover parse(serialize(x))==x round-trips and rejection of malformed payloads (missing sha256 in ManifestEntry etc.).
   - QA happy: `.omo/qa/t03-protocol.md` with passing round-trip test names. QA failure: inject invalid AnalysisResult (unknown analysisType) → zod rejects, test asserts rejection, evidence recorded.

@@ -8,7 +8,10 @@
     "jsx": "react-jsx",
     "types": ["vite/client"],
     "paths": {
-      "@rh/protocol": ["../../packages/protocol/src/index.ts"]
+      "@rh/protocol": ["../../packages/protocol/src/index.ts"],
+      "monaco-editor/esm/vs/languages/features/typescript/register": [
+        "../node_modules/monaco-editor/esm/vs/languages/features/typescript/register"
+      ]
     }
   },
   "include": ["src"]
