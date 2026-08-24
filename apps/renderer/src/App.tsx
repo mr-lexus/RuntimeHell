@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+﻿import { useEffect, useRef, useState } from 'react';
 import { exposeMonacoForTests } from './editor/monaco-setup';
 import { CodeEditor } from './editor/CodeEditor';
 import { createAtaController, getAtaStatus, onAtaStatus, type AtaStatus } from './editor/ata';
@@ -21,7 +21,7 @@ const DEMO_FILE = {
   relPath: 'entry.ts',
   language: 'typescript',
   dirty: false,
-  content: `// RuntimeHell demo — Ctrl+Enter runs, Shift+Alt+F formats, Ctrl+S saves.
+  content: `// RuntimeHell demo вЂ” Ctrl+Enter runs, Shift+Alt+F formats, Ctrl+S saves.
 interface User { id: number; name: string; active: boolean }
 
 const users: User[] = [
@@ -68,7 +68,7 @@ export function App(): React.JSX.Element {
     const caps = analysisEngines.find((e) => e.id === analysisEngineId)?.capabilities;
     const key = type as keyof typeof caps;
     const supported = typeof caps === 'object' && caps !== null ? caps[key] !== false : true;
-    return { type, label: `Analyze ▸ ${type}`, supported };
+    return { type, label: `Analyze в–ё ${type}`, supported };
   });
   const [status, setStatus] = useState<string>('ready');
   const splitRef = useRef<HTMLDivElement | null>(null);
@@ -76,6 +76,20 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     exposeMonacoForTests();
+    // Temporary e2e diagnostics (todo 22): expose store snapshots.
+    (window as unknown as Record<string, unknown>)['__rh_debug'] = {
+      drawerTab: () => useUi.getState().drawerTab,
+      analysis: () => {
+        const s = useAnalysis.getState();
+        return {
+          requestId: s.requestId,
+          engineId: s.engineId,
+          engines: s.engines.map((e) => ({ id: e.id, version: e.version, missing: e.binaryPath === null })),
+          lastError: s.lastError,
+          types: Object.fromEntries(ANALYSIS_ALL_TYPES.map((t) => [t, s.types[t].status]))
+        };
+      }
+    };
     let disposed = false;
     // Session restore (todo 21): settings-driven tabs/prefs; demo file only
     // when nothing was previously open.
@@ -205,11 +219,11 @@ export function App(): React.JSX.Element {
   const badge = [
     phase === 'idle' ? (runtimeVersion !== null ? `node v${runtimeVersion}` : 'ready') : phase,
     lastExit !== null
-      ? `exit ${lastExit.code ?? '—'} · ${lastExit.durationMs}ms${lastExit.killedBy !== null ? ` · ${lastExit.killedBy}` : ''}`
+      ? `exit ${lastExit.code ?? 'вЂ”'} В· ${lastExit.durationMs}ms${lastExit.killedBy !== null ? ` В· ${lastExit.killedBy}` : ''}`
       : null
   ]
     .filter(Boolean)
-    .join(' · ');
+    .join(' В· ');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontSize: 13 }}>
@@ -228,11 +242,11 @@ export function App(): React.JSX.Element {
             }}
           >
             {f.relPath}
-            {f.dirty ? ' •' : ''}
+            {f.dirty ? ' вЂў' : ''}
           </button>
         ))}
         <span style={{ marginLeft: 'auto', color: '#888', alignSelf: 'center', display: 'flex', gap: 10 }}>
-          {ataStatus === 'loading' && <span>types…</span>}
+          {ataStatus === 'loading' && <span>typesвЂ¦</span>}
           {ataStatus === 'ready' && <span style={{ color: '#6a9955' }}>types ready</span>}
           {ataStatus === 'offline' && <span style={{ color: '#dcdcaa' }}>types unavailable (offline)</span>}
           {badge || status}
@@ -260,7 +274,8 @@ export function App(): React.JSX.Element {
               }}
               analyzeActions={analyzeActions}
               onAnalyze={(type, _code, info) => {
-                useAnalysis.getState().requestFromSelection(info ?? null, activeFile?.content ?? '', [type]);
+                const lang = activeFile?.language === 'typescript' ? 'ts' : 'js';
+                useAnalysis.getState().requestFromSelection(info ?? null, activeFile?.content ?? '', [type], false, lang);
                 setDrawerTab('analysis');
               }}
             />
@@ -310,7 +325,11 @@ export function App(): React.JSX.Element {
             {drawerTab === 'console' && <ConsolePanel />}
             {drawerTab === 'inspector' && <InspectorPanel />}
             {drawerTab === 'analysis' && (
-              <AnalysisPanel code={activeFile?.content ?? ''} selection={lastSelectionRef.current} />
+              <AnalysisPanel
+                code={activeFile?.content ?? ''}
+                selection={lastSelectionRef.current}
+                lang={activeFile?.language === 'typescript' ? 'ts' : 'js'}
+              />
             )}
             {drawerTab === 'packages' && <PackagesPanel />}
             {drawerTab === 'runtimes' && <RuntimesPanel />}

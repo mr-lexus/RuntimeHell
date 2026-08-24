@@ -80,6 +80,8 @@ export const AnalysisStartRequestSchema = z
     analysisTypes: z.array(AnalysisTypeSchema).min(1),
     functionName: z.string().optional(),
     timeoutMs: z.number().int().positive().optional(),
+    /** Source language of `code` — 'ts' gets type-stripped before engine exec. */
+    lang: z.enum(['js', 'ts']).optional(),
     /** When present, the exact analyzed snippet is persisted under
      *  `<workspace>/.rhbuild/analysis/<requestId>.mjs` for transparency. */
     workspaceId: z.string().min(1).optional()

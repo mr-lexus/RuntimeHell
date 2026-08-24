@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Analysis drawer state (plan todo 19): per-type status machine, streamed
  * result collection, cancellation. Engine picker + capability chips are
  * fed by EnginesController via the preload bridge.
@@ -44,11 +44,17 @@ interface AnalysisState {
   types: Record<AnalysisType, TypeState>;
   lastError: string | null;
   cancelledNotice: boolean;
-  /** Exact snippet that will run — powers the "show generated wrapper" toggle. */
+  /** Exact snippet that will run вЂ” powers the "show generated wrapper" toggle. */
   generatedCode: string | null;
   setEngine: (id: 'v8' | 'd8-debug') => void;
   refreshEngines: () => Promise<void>;
-  requestFromSelection: (info: SelectionInfo | null, fullText: string, types: AnalysisType[], sampleInvocation?: boolean) => void;
+  requestFromSelection: (
+    info: SelectionInfo | null,
+    fullText: string,
+    types: AnalysisType[],
+    sampleInvocation?: boolean,
+    lang?: 'js' | 'ts'
+  ) => void;
   cancel: () => Promise<void>;
   handleEvent: (e: AnalysisEvent) => void;
 }
@@ -74,7 +80,7 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
     });
   },
 
-  requestFromSelection: (info, fullText, types, sampleInvocation = false) => {
+  requestFromSelection: (info, fullText, types, sampleInvocation = false, lang) => {
     if (!window.api?.analyze) return;
     if (types.length === 0) return;
     if (get().requestId !== null) return; // single analysis at a time
@@ -100,7 +106,8 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
         ...(snippet.functionName !== null && (kind === 'function' || kind === 'class')
           ? { functionName: snippet.functionName }
           : {}),
-        workspaceId: 'default'
+        workspaceId: 'default',
+        ...(lang !== undefined ? { lang } : {})
       })
       .catch(() => set({ requestId: null }));
   },

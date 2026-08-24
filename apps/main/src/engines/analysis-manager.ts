@@ -90,6 +90,24 @@ export class AnalysisManager {
     const binaryPath = description.binaryPath;
     const caps = await this.deps.registry.capabilities(binaryPath);
 
+    // Engine shells execute plain JS: strip TS syntax up-front (todo 22).
+    let code = req.code;
+    if (req.lang === 'ts') {
+      try {
+        const { transform } = await import('esbuild');
+        const stripped = await transform(req.code, { loader: 'ts', format: 'esm', target: 'esnext' });
+        code = stripped.code;
+      } catch (err) {
+        this.deps.emit({
+          t: 'error',
+          requestId: req.requestId,
+          message: `type-strip failed: ${err instanceof Error ? err.message : String(err)}`
+        });
+        this.deps.emit({ t: 'done', requestId: req.requestId });
+        return;
+      }
+    }
+
     const adapter =
       this.deps.createAdapter?.(binaryPath) ??
       new V8EngineAdapter({
@@ -104,7 +122,7 @@ export class AnalysisManager {
       try {
         const results = await adapter.analyze({
           requestId: req.requestId,
-          code: req.code,
+          code,
           binaryPath,
           analysisTypes: [analysisType],
           functionName: req.functionName,

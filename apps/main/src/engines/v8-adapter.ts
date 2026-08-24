@@ -174,8 +174,15 @@ function buildFlags(
     return [`--trace-turbo`, `--trace-turbo-path=${workDir}`];
   }
   const flags = [...TYPE_FLAG_MAP[type]];
-  if (type === 'bytecode' && functionName !== undefined && perFunctionFilter) {
-    flags.push(`--print-bytecode-filter=${functionName}`);
+  if (type === 'bytecode') {
+    // Definitions-only snippets never CALL their functions; lazy compilation
+    // would print nothing. Eager-compile everything.
+    //
+    // NOTE (drift, V8 15.x): --print-bytecode-filter=<name> no longer matches
+    // eagerly-compiled functions — their SharedFunctionInfo names are still
+    // empty at dump time, so the filter yields ZERO output. We dump ALL blocks
+    // and let the normalized view / caller locate the relevant ones.
+    flags.push('--no-lazy');
   }
   return flags;
 }

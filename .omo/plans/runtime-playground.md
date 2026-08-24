@@ -386,7 +386,7 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: create workspace, edit 3 files, restart app в†’ identical state restored (file hashes compared) `.omo/qa/t21-persistence.md`. QA failure: hand-corrupt settings.json в†’ app boots on defaults + backup of corrupt file saved alongside (assert), never crashes.
   - Commit: `feat(workspace): persistent workspaces settings history with session restore`
 
-- [ ] 22. v0.1 vertical-slice E2E hardening (release-candidate gate)
+- [x] 22. v0.1 vertical-slice E2E hardening (release-candidate gate)
   - References: MVP definition; all prior todos.
   - Acceptance: Playwright _electron suite covering THE slice: fresh workspace в†’ type TS program using lodash в†’ run (auto-transpile) в†’ inspect Map result в†’ select `function sum(a,b){return a+b}` в†’ Analyze Bytecode (d8-dbg) в†’ assert normalized rows contain `sum` + в‰Ґ3 instruction rows + Raw tab non-empty; suite green twice consecutively on clean cache (cold-start download path included); cold-start duration logged.
   - QA happy: full-suite run log `.omo/qa/t22-e2e.md` with assertions echoed. QA failure: delete engine cache between runs в†’ second run exercises download path and still passes (timing captured), proving recovery.

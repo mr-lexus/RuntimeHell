@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import type { AnalysisType } from '@rh/protocol';
 import type { SelectionInfo } from '../../editor/selection-service';
 import { ANALYSIS_ALL_TYPES, useAnalysis, type TypeState } from '../../state/analysis';
@@ -26,7 +26,7 @@ function statusColor(s: TypeState): string {
  * capability-aware actions. The selected engine gates the buttons; the
  * backend probe re-verifies before spawning.
  */
-export function AnalysisPanel({ code, selection }: { code: string; selection: SelectionInfo | null }): React.JSX.Element {
+export function AnalysisPanel({ code, selection, lang }: { code: string; selection: SelectionInfo | null; lang: 'js' | 'ts' }): React.JSX.Element {
   const state = useAnalysis();
   const [showWrapper, setShowWrapper] = useState(false);
   const selected = state.engines.find((e) => e.id === state.engineId);
@@ -61,7 +61,7 @@ export function AnalysisPanel({ code, selection }: { code: string; selection: Se
             {Object.entries(caps)
               .filter(([k, v]) => k !== 'notes' && v === true)
               .map(([k]) => k)
-              .join(' · ') || 'no capabilities probed'}
+              .join(' В· ') || 'no capabilities probed'}
           </span>
         )}
       </div>
@@ -71,13 +71,13 @@ export function AnalysisPanel({ code, selection }: { code: string; selection: Se
           const t = state.types[type];
           const capKey = `${type}` as keyof typeof caps;
           const supported = caps === null ? true : caps[capKey] !== false;
-          const tooltip = !supported ? `unsupported by this binary — ${selected?.reason ?? 'capability unavailable'}` : '';
+          const tooltip = !supported ? `unsupported by this binary вЂ” ${selected?.reason ?? 'capability unavailable'}` : '';
           return (
             <button
               key={type}
               title={tooltip}
               disabled={state.requestId !== null}
-              onClick={() => state.requestFromSelection(selection, code, [type])}
+              onClick={() => state.requestFromSelection(selection, code, [type], false, lang)}
               style={{
                 background: t.status === 'running' ? '#3a3325' : '#2a2a2a',
                 color: supported ? '#ccc' : '#555',
@@ -89,7 +89,7 @@ export function AnalysisPanel({ code, selection }: { code: string; selection: Se
               }}
             >
               {TYPE_LABEL[type]}
-              {t.status === 'running' ? '…' : ''}
+              {t.status === 'running' ? 'вЂ¦' : ''}
             </button>
           );
         })}
@@ -138,11 +138,11 @@ export function AnalysisPanel({ code, selection }: { code: string; selection: Se
                 <strong style={{ color: statusColor(t) }}>{TYPE_LABEL[type]}</strong>
                 <span style={{ color: '#666', fontFamily: 'monospace', fontSize: 10 }}>
                   {t.result !== null &&
-                    `${t.result.engine}@${t.result.engineVersion} · ${t.result.metadata.durationMs}ms`}
+                    `${t.result.engine}@${t.result.engineVersion} В· ${t.result.metadata.durationMs}ms`}
                 </span>
               </div>
-              {t.status === 'running' && <div style={{ color: '#dcdcaa' }}>running…</div>}
-              {t.status === 'unsupported' && <div style={{ color: '#f48771' }}>unsupported — {t.reason}</div>}
+              {t.status === 'running' && <div style={{ color: '#dcdcaa' }}>runningвЂ¦</div>}
+              {t.status === 'unsupported' && <div style={{ color: '#f48771' }}>unsupported вЂ” {t.reason}</div>}
               {t.status === 'error' && <div style={{ color: '#f48771' }}>{t.reason}</div>}
               {t.result !== null && <ResultViewer result={t.result} />}
             </div>

@@ -11,9 +11,16 @@ function NormalizedBytecodeTable({ raw }: { raw: string }): React.JSX.Element {
   const rows = useMemo(() => {
     const out: { fn: string; offset: number; op: string; operands: string }[] = [];
     for (const fn of parsed.functions) {
+      const label = fn.name || '(top level)';
       for (const instr of fn.instructions) {
         if (out.length >= MAX_ROWS) break;
-        out.push({ fn: fn.name || '(top level)', offset: instr.offset, op: instr.bytecode, operands: instr.operands.join(' ') });
+        out.push({ fn: label, offset: instr.offset, op: instr.bytecode, operands: instr.operands.join(' ') });
+      }
+      // Constant-pool entries surface definition names (e.g. SFI references)
+      // that instruction rows alone don't show.
+      for (const poolLine of fn.constantPool) {
+        if (out.length >= MAX_ROWS) break;
+        out.push({ fn: label, offset: -1, op: 'pool', operands: poolLine });
       }
     }
     return out;

@@ -1,4 +1,4 @@
-import react from '@vitejs/plugin-react';
+﻿import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 
@@ -15,7 +15,7 @@ export default defineConfig({
     build: {
       outDir: 'out/main',
       lib: { entry: 'apps/main/src/index.ts' },
-      rollupOptions: { external: ['electron', 'esbuild'] }
+      rollupOptions: { external: ['electron', 'esbuild'] },
     }
   },
   preload: {
