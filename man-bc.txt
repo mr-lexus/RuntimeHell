@@ -1,6 +1,0 @@
-V8 is running with developer-only features enabled. Stability and security will suffer.
-C:/Users/lexus/AppData/Local/Temp/rh-e2e-home-JkIgFb/RuntimeHell/workspaces/default/.rhbuild/analysis/ui-1787610894846-1.mjs:19: SyntaxError: Unexpected token ':'
-function sum(a: number, b: number): number {
-              ^
-SyntaxError: Unexpected token ':'
-
