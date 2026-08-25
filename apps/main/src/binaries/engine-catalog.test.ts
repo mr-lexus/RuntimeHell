@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Engine catalog + downloader unit tests (plan todo 15): the C-lane decision
  * table is exhaustive per acceptance; V8 latest parsing and record-vs-verify
  * sha handling are covered with mocked fetch (real canary download is
@@ -36,15 +36,15 @@ describe('resolveEngineArtifact (C-lane decision table)', () => {
     // [engineId, platform, arch, enabled, customBuildRequired?]
     ['v8', 'win64', 'x64', true],
     ['d8-debug', 'win64', 'x64', true],
-    ['spidermonkey', 'win64', 'x64', false],
+    ['spidermonkey', 'win64', 'x64', true],
     ['javascriptcore', 'win64', 'x64', false],
     ['quickjs', 'win64', 'x64', false],
-    ['v8', 'mac64arm', 'arm64', false, true], // hypothetical uncovered combo → C-lane
+    ['v8', 'mac64arm', 'arm64', false, true], // hypothetical uncovered combo в†’ C-lane
     ['d8-debug', 'linux64', 'x64', false, true]
   ];
 
   for (const [engineId, platform, arch, enabled, cbr] of rows) {
-    it(`${engineId}/${platform}/${arch} → ${enabled ? 'managed download' : cbr === true ? 'C-LANE' : 'declared-disabled'}`, () => {
+    it(`${engineId}/${platform}/${arch} в†’ ${enabled ? 'managed download' : cbr === true ? 'C-LANE' : 'declared-disabled'}`, () => {
       const source = resolveEngineArtifact(engineId as never, platform as never, arch as never);
       expect(source.enabled).toBe(enabled);
       // C-lane flag is only SET when true (schema default false).
@@ -115,7 +115,7 @@ describe('installEngine (record-mode sha, fake network)', () => {
       expect(first.entry.version).toBe('13.2.152.16');
       expect(first.entry.sha256).toBe(sha); // recorded
 
-      // Corrupt upstream on re-install → verified against recorded digest.
+      // Corrupt upstream on re-install в†’ verified against recorded digest.
       globalThis.fetch = (async (input: FetchInput) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
         downloads += 1;

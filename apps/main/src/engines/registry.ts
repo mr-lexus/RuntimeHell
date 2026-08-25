@@ -21,7 +21,12 @@ export interface EngineDescription {
   readonly reason: string | null;
 }
 
-const ENGINE_BINARY_NAME = 'd8.exe';
+const ENGINE_BINARY_NAME: Record<string, string> = {
+  v8: 'd8.exe',
+  'd8-debug': 'd8.exe',
+  spidermonkey: 'js.exe',
+  javascriptcore: 'jsc.exe'
+};
 /** Registry ids map to manifest entry ids; 'd8-debug' IS its own entry id. */
 const KNOWN_IDS: (EngineId | 'd8-debug')[] = ['v8', 'd8-debug', 'spidermonkey', 'javascriptcore'];
 
@@ -56,7 +61,7 @@ export class EngineRegistry {
     return [...byId.entries()].map(([id, v]) => ({
       id,
       version: v.version,
-      binaryPath: join(v.installedPath, ENGINE_BINARY_NAME)
+      binaryPath: join(v.installedPath, ENGINE_BINARY_NAME[id] ?? 'engine.exe')
     }));
   }
 

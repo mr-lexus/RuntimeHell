@@ -75,7 +75,7 @@ export type AnalysisResult = z.infer<typeof AnalysisResultSchema>;
 export const AnalysisStartRequestSchema = z
   .object({
     requestId: z.string().min(8),
-    engineId: z.enum(['v8', 'd8-debug']),
+    engineId: z.enum(['v8', 'd8-debug', 'spidermonkey', 'javascriptcore']),
     code: z.string(),
     analysisTypes: z.array(AnalysisTypeSchema).min(1),
     functionName: z.string().optional(),

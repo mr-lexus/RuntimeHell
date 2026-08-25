@@ -1,6 +1,6 @@
-/**
+﻿/**
  * BinariesController unit tests (plan todo 12): list assembly, install
- * progress emission, remove idempotence — BinaryManager itself is exercised
+ * progress emission, remove idempotence вЂ” BinaryManager itself is exercised
  * by its own suite (network installs skip without RH_NETWORK_E2E).
  */
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -45,7 +45,7 @@ describe('BinariesController.list', () => {
     const controller = makeController([], { exePath: 'C:/n.exe', version: '24.18.0' });
     const list = await controller.list();
     expect(list.system).toEqual({ exePath: 'C:/n.exe', version: '24.18.0' });
-    // LTS rows first (≤8), then current (≤3).
+    // LTS rows first (в‰¤8), then current (в‰¤3).
     expect(list.available[0]?.lts).toBe(true);
     expect(list.available.length).toBeLessThanOrEqual(11);
     expect(list.installed).toEqual([]);
@@ -84,7 +84,7 @@ describe('BinariesController.install/remove', () => {
     try {
       const response = await makeController([]).install('engine', 'spidermonkey');
       expect(response.ok).toBe(false);
-      if (!response.ok) expect(response.message).toMatch(/not active yet|later milestone/i);
+      if (!response.ok) expect(response.message).toMatch(/jsshell|resolve|download/i);
     } finally {
       globalThis.fetch = originalFetch;
     }

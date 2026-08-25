@@ -154,7 +154,7 @@ const api = {
   },
   analyze: async (req: {
     requestId: string;
-    engineId: 'v8' | 'd8-debug';
+    engineId: 'v8' | 'd8-debug' | 'spidermonkey' | 'javascriptcore';
     code: string;
     analysisTypes: Array<'ast' | 'bytecode' | 'optcode' | 'ir-graph' | 'deopts' | 'gc'>;
     functionName?: string;

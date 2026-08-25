@@ -150,7 +150,9 @@ export async function installArtifact(req: InstallRequest): Promise<ManifestEntr
   try {
     const expected = req.source.sha256;
     const actual = await downloadTo(req.source, stageZip, req.onProgress, req.entry.id, req.entry.version);
-    if (expected !== undefined && actual !== expected) {
+    // Empty/undefined expected ⇒ RECORD MODE (no upstream checksum exists,
+    // e.g. Mozilla jsshell zips): the observed digest is pinned instead.
+    if (expected !== undefined && expected !== '' && actual !== expected) {
       throw new Error(`sha256 mismatch for ${req.source.url}: expected ${expected}, got ${actual}`);
     }
     // Record-mode (no upstream checksum): the OBSERVED hash becomes the

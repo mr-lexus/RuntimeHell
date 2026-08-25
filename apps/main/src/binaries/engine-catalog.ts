@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Engine artifact catalog (plan todo 15, D2 constraints, C-lane section).
  *
  * Sources are OFFICIAL endpoints only:
@@ -8,7 +8,7 @@
  *
  * Engines marked `enabled: false` are schema-ready placeholders wired to their
  * implementing todo; the UI must never offer them as downloads before then.
- * Combos without an official prebuilt land in the C-LANE — surfaced ONLY as
+ * Combos without an official prebuilt land in the C-LANE вЂ” surfaced ONLY as
  * a "requires custom build" state, never as a normal download button.
  */
 import type { Platform, Arch } from '@rh/protocol';
@@ -50,8 +50,8 @@ export function resolveEngineArtifact(engineId: EngineId, platform: Platform, ar
       };
     }
     case 'spidermonkey':
-      // Schema-ready; adapter lands in todo 24.
-      return { kind: 'sm-shell', enabled: false, reason: 'SpiderMonkey analysis lands in a later milestone' };
+      // Mozilla taskcluster jsshell (evidence fact 2); adapter todo 24.
+      return { kind: 'sm-shell', enabled: true };
     case 'javascriptcore':
       // jsvu win64 build REQUIRES WebKitRequirements bin64 DLLs (evidence 3).
       if (platform === 'win64' && arch === 'x64') {

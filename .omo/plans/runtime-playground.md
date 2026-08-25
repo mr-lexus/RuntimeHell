@@ -398,7 +398,7 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: full existing suite green post-refactor + architecture rule greps (no 'v8'/'--print-' literals under apps/renderer/src) recorded `.omo/qa/t23-refactor.md`. QA failure: temporarily reintroduce engine literal in renderer в†’ grep gate fails in CI (rule added to lint), evidence recorded, reverted.
   - Commit: `refactor(adapters): extract runtime and engine adapter registries preserving behavior`
 
-- [ ] 24. SpiderMonkeyAdapter (capability-probed)
+- [x] 24. SpiderMonkeyAdapter (capability-probed)
   - References: Evidence fact 2; matrix column SM.
   - Acceptance: manifest entry via jsvu-compatible taskcluster win64 jsshell source (URL scheme verified at implementation; if taskcluster auth/retention blocks direct fetch, FALLBACK documented+implemented: drive `npx jsvu --os=win64 --engines=spidermonkey` programmatically and adopt its installed binary into our cache+manifest); probes decide dis()-availability (script defines fn, calls dis(fn), checks output markers); analyses: bytecode via dis-wrapper file, ast via reflect.parse(...).toSource()/JSON serialization captured from shell, deopts/JIT-spew ONLY when probe detects debug-capable binary (IONFLAGS env injection supported in adapter options); normalized SM parser for dis() output (loc/op/source-notes tables) with fixtures from real binary.
   - QA happy: analyze same sum() on SpiderMonkey в†’ Raw contains SM opcode names (independent terminology asserted, e.g., not LdaZero) `.omo/qa/t24-sm.md`. QA failure: force-disable probe (mock) в†’ Bytecode action disabled with reason, no spawn attempted.

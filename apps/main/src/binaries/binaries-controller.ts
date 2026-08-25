@@ -1,6 +1,6 @@
-/**
+﻿/**
  * BinariesController (plan todo 12): assembles the Runtimes panel payload and
- * drives installs with streamed progress. Pure of electron imports — the
+ * drives installs with streamed progress. Pure of electron imports вЂ” the
  * progress sink is injected (index.ts binds webContents.send).
  */
 import type {
@@ -63,6 +63,12 @@ export class BinariesController {
   async install(kind: 'runtime' | 'engine', id: string, version?: string): Promise<BinaryInstallResponse> {
     try {
       if (kind === 'engine') {
+        if (id === 'spidermonkey') {
+          const { installSmEngine } = await import('./sm-downloader.js');
+          const entry = await installSmEngine({ onProgress: (p) => this.deps.emitProgress({ kind: 'runtime', id, version: p.totalBytes === null ? '' : id, receivedBytes: p.receivedBytes, totalBytes: p.totalBytes }) });
+          this.deps.emitProgress({ kind: 'runtime', id, version: entry.version, receivedBytes: 0, totalBytes: null, done: true });
+          return { ok: true, entry };
+        }
         const { installEngine } = await import('./engine-downloader.js');
         const outcome = await installEngine({
           engineId: id as 'v8' | 'd8-debug',
