@@ -416,7 +416,7 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: V8+SM+JSC compare of sum() renders 3 rows with distinct opcode vocabularies вЂ” assert V8 raw matches /\b(Lda|Star|Mov|CallProperty)/ AND SM raw contains dis-table headers (`loc`, `op`) AND neither raw contains the other's signature tokens `.omo/qa/t26-compare.md`. QA failure: one engine lacks capability (rel d8 for AST) в†’ row renders "unsupported (reason)" while others complete вЂ” partial success semantics asserted.
   - Commit: `feat(compare): multi-engine comparison grid with raw terminology and md export`
 
-- [ ] 27. Deno + Bun runtime adapters
+- [x] 27. Deno + Bun runtime adapters
   - References: Evidence facts 5; matrix columns; P8.
   - Acceptance: DenoAdapter/BunAdapter behind extracted interfaces; managers resolve versions via GitHub releases APIs (asset patterns verified; sha256 digest field primary, sidecar .sha256sum fallback for Deno; baseline variant selection for Bun exposed as advanced toggle); capabilities: deno/bun supportsTypeScriptNative=true в†’ TranspileService bypassed (assert no .rhbuild emitted); permission model: Deno runs with explicit `--allow-all` OFF by default вЂ” default deny with per-run permission checkboxes mapped to flags; bun baseline CPU check documented; per-runtime package strategy: Deno npm-natural imports allowed via `npm:` specifier hint in UI when runtime=deno and bare import fails once.
   - QA happy: run same TS sample on node(transpiled)/deno(native)/bun(native) вЂ” outputs equivalent; evidence includes three run manifests `.omo/qa/t27-runtimes.md`. QA failure: deno run needing net permission with deny-default в†’ permission error surfaced with hint linking permission checkboxes.
