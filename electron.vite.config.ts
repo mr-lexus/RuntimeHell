@@ -1,5 +1,4 @@
-﻿import react from '@vitejs/plugin-react';
-import { resolve } from 'node:path';
+﻿import { resolve } from 'node:path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 
 const protocolAlias = resolve(process.cwd(), 'packages/protocol/src/index.ts');
@@ -28,8 +27,14 @@ export default defineConfig({
   },
   renderer: {
     root: 'apps/renderer',
-    plugins: [react()],
-    resolve: { alias: { '@rh/protocol': protocolAlias } },
+    plugins: [],
+    resolve: {
+      alias: { '@rh/protocol': protocolAlias },
+      dedupe: ['react', 'react-dom'],
+    },
+    optimizeDeps: {
+      include: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
+    },
     build: {
       outDir: 'out/renderer', // resolved against repo root (cwd), like main/preload
       emptyOutDir: true,
