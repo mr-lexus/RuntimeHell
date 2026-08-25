@@ -69,6 +69,15 @@ export class BinariesController {
           this.deps.emitProgress({ kind: 'runtime', id, version: entry.version, receivedBytes: 0, totalBytes: null, done: true });
           return { ok: true, entry };
         }
+        if (id === 'javascriptcore') {
+          // JSC needs the WebKitRequirements DLLs on the CHILD PATH (todo 25).
+          const { ensureWebKitRequirements } = await import('./webkit-requirements.js');
+          await ensureWebKitRequirements();
+          const { installJscEngine } = await import('./jsc-downloader.js');
+          const entry = await installJscEngine({ onProgress: (p) => this.deps.emitProgress({ kind: 'runtime', id, version: p.totalBytes === null ? '' : id, receivedBytes: p.receivedBytes, totalBytes: p.totalBytes }) });
+          this.deps.emitProgress({ kind: 'runtime', id, version: entry.version, receivedBytes: 0, totalBytes: null, done: true });
+          return { ok: true, entry };
+        }
         const { installEngine } = await import('./engine-downloader.js');
         const outcome = await installEngine({
           engineId: id as 'v8' | 'd8-debug',

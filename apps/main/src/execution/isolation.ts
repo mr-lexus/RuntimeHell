@@ -13,8 +13,11 @@ export interface IsolatedRunOptions {
   args: string[];
   cwd: string;
   timeoutMs: number;
+  /** Extra PATH directories prepended for this child only. */
+  pathPrepend?: string[];
+  /** Extra environment variables merged over the sanitized base. */
+  extraEnv?: Record<string, string>;
 }
-
 export interface IsolatedRunResult {
   code: number | null;
   stdout: string;
@@ -38,7 +41,9 @@ export function trackedProcessIsolation(ctx: AnalysisContext, requestId: string)
       exePath: options.exePath,
       args: options.args,
       cwd: options.cwd,
-      timeoutMs: options.timeoutMs
+      timeoutMs: options.timeoutMs,
+      pathPrepend: options.pathPrepend,
+      extraEnv: options.extraEnv
     });
     ctx.registerCancel(async () => {
       await handle.cancel();

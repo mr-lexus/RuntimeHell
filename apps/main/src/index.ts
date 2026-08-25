@@ -12,6 +12,7 @@ import { AnalysisManager } from './engines/analysis-manager.js';
 import { EnginesController } from './engines/engines-controller.js';
 import { V8EngineAdapterV0 } from './engines/v8-adapter.js';
 import { SpiderMonkeyAdapter } from './engines/spidermonkey/sm-adapter.js';
+import { JavaScriptCoreAdapter } from './engines/javascriptcore/jsc-adapter.js';
 
 const isDev = !app.isPackaged;
 
@@ -102,6 +103,8 @@ function main(): void {
   engines.registerAdapter(new V8EngineAdapterV0('v8', engines));
   engines.registerAdapter(new V8EngineAdapterV0('d8-debug', engines));
   engines.registerAdapter(new SpiderMonkeyAdapter(engines));
+  const jscAdapter = new JavaScriptCoreAdapter(engines);
+  engines.registerAdapter(jscAdapter);
   const analysis = new AnalysisManager({
     registry: engines,
     emit: (event) => {

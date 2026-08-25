@@ -404,7 +404,7 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
   - QA happy: analyze same sum() on SpiderMonkey в†’ Raw contains SM opcode names (independent terminology asserted, e.g., not LdaZero) `.omo/qa/t24-sm.md`. QA failure: force-disable probe (mock) в†’ Bytecode action disabled with reason, no spawn attempted.
   - Commit: `feat(engines): spidermonkey adapter with dis-based bytecode and reflect.parse ast`
 
-- [ ] 25. JavaScriptCoreAdapter (+WebKitRequirements support artifact)
+- [x] 25. JavaScriptCoreAdapter (+WebKitRequirements support artifact)
   - References: Evidence fact 3; matrix column JSC.
   - Acceptance: manifest entries jsc (source:'taskcluster'/'webkit-requirements' as applicable) PLUS support artifact webkit-requirements zip (sha256-verified) extracted under our cache and injected into CHILD process PATH only (never user/system PATH; adapter composes env per-run); options driven via `JSC_*` env vars (verified in OptionsList.h) preferring env over CLI-flag parsing drift: bytecode=`JSC_dumpGeneratedBytecodes=true`, deopts=`JSC_printEachOSRExit=true`, gc=`JSC_logGC=2`, graphs=`JSC_dumpGraphAtEachPhase=true` (+artifact collection of dumped files, location verified at impl and asserted in tests); per-function via `JSC_dumpGraphAllowlist` file for ir-graph type when capability allows; jsc parser for bytecode dump format + fixtures.
   - QA happy: analyze sum() on jsc в†’ bytecode raw contains JSC opcodes; child PATH contains requirements dir ONLY within that run (env snapshot asserted) `.omo/qa/t25-jsc.md`. QA failure: remove requirements dir в†’ probe fails with actionable error referencing support artifact, UI offers "repair" redownload.

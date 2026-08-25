@@ -28,6 +28,8 @@ export interface RunOptions {
   cwd: string;
   timeoutMs: number;
   extraEnv?: Record<string, string>;
+  /** Directories prepended to the child PATH (e.g. WebKitRequirements bin64). */
+  pathPrepend?: string[];
   /**
    * Carrier for ResultCapture frames. Children ALWAYS emit sentinel lines on
    * stderr (fd3 is never load-bearing); 'fd3' additionally pipes a dedicated
@@ -43,7 +45,12 @@ export interface RunHandle {
   cancel: () => Promise<void>;
 }
 
-function sanitizedEnv(exePath: string, extraEnv?: Record<string, string>): NodeJS.ProcessEnv {
+function sanitizedEnv(
+  exePath: string,
+  extraEnv?: Record<string, string>,
+  pathPrepend?: string[]
+): NodeJS.ProcessEnv {
+  const basePATH = join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32') + ';' + dirname(exePath);
   const env: NodeJS.ProcessEnv = {
     SystemRoot: process.env['SystemRoot'],
     windir: process.env['windir'],
@@ -51,7 +58,7 @@ function sanitizedEnv(exePath: string, extraEnv?: Record<string, string>): NodeJ
     TMP: process.env['TMP'],
     PROCESSOR_ARCHITECTURE: process.env['PROCESSOR_ARCHITECTURE'],
     NUMBER_OF_PROCESSORS: process.env['NUMBER_OF_PROCESSORS'],
-    PATH: join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32') + ';' + dirname(exePath),
+    PATH: pathPrepend !== undefined && pathPrepend.length > 0 ? [...pathPrepend, basePATH].join(';') : basePATH,
     ...(extraEnv ?? {})
   };
   return env;
@@ -190,7 +197,7 @@ export class ProcessRunner {
     };
 
     try {
-      const env = sanitizedEnv(options.exePath, options.extraEnv);
+      const env = sanitizedEnv(options.exePath, options.extraEnv, options.pathPrepend);
       // The runner owns the transport decision; callers must not set this.
       env['RH_REPORT_TRANSPORT'] = options.reportTransport === 'fd3' ? 'fd3' : 'stderr';
       const stdio: ('pipe' | 'ignore')[] | undefined =
