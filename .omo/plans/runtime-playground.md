@@ -454,10 +454,10 @@ Waves map 1:1 to phases above; wave = 3вЂ“6 todos executed sequentially with
 
 ## Final verification wave
 
-- [ ] F1. Plan compliance audit вЂ” verify shipped repo matches this plan: template sections honored, Must-NOT-Have respected (Deferred list absent from v0.1 code paths), every todo has QA evidence file with real commands+outputs (spot-open 5 random evidence files; reject self-report-only). Evidence: `.omo/qa/F1-audit.md`.
-- [ ] F2. Code quality review вЂ” architecture rules hold: no engine literals under renderer/, adapters sole owners of engine/runtime specifics, zod validation at every IPC boundary, strict TS (`tsc --noEmit` clean), no unhandled-rejection paths in main process (grep + targeted tests). Evidence: `.omo/qa/F2-quality.md`.
-- [ ] F3. Real manual QA вЂ” execute scripted user journey on the PACKAGED installer build: install в†’ write TS+lodash program в†’ run в†’ cancel infinite loop в†’ install zod в†’ analyze sum() bytecode on d8-dbg в†’ compare V8 vs SM vs JSC в†’ benchmark foo() в†’ restart в†’ state restored. Record every step with screenshots/logs. Evidence: `.omo/qa/F3-manual.md`.
-- [ ] F4. Scope fidelity вЂ” diff delivered feature set against MVP IN list and Deferred NOT-IN list; confirm C-lane never offered as normal download anywhere in UI (walk all engine/version-missing states). Evidence: `.omo/qa/F4-scope.md`.
+- [x] F1. Plan compliance audit вЂ” verify shipped repo matches this plan: template sections honored, Must-NOT-Have respected (Deferred list absent from v0.1 code paths), every todo has QA evidence file with real commands+outputs (spot-open 5 random evidence files; reject self-report-only). Evidence: `.omo/qa/F1-audit.md`.
+- [x] F2. Code quality review вЂ” architecture rules hold: no engine literals under renderer/, adapters sole owners of engine/runtime specifics, zod validation at every IPC boundary, strict TS (`tsc --noEmit` clean), no unhandled-rejection paths in main process (grep + targeted tests). Evidence: `.omo/qa/F2-quality.md`.
+- [x] F3. Real manual QA вЂ” execute scripted user journey on the PACKAGED installer build: install в†’ write TS+lodash program в†’ run в†’ cancel infinite loop в†’ install zod в†’ analyze sum() bytecode on d8-dbg в†’ compare V8 vs SM vs JSC в†’ benchmark foo() в†’ restart в†’ state restored. Record every step with screenshots/logs. Evidence: `.omo/qa/F3-manual.md`.
+- [x] F4. Scope fidelity вЂ” diff delivered feature set against MVP IN list and Deferred NOT-IN list; confirm C-lane never offered as normal download anywhere in UI (walk all engine/version-missing states). Evidence: `.omo/qa/F4-scope.md`.
 
 ALL FOUR must APPROVE; results surfaced to user; explicit user okay required before declaring complete.
 
