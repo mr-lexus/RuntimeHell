@@ -5,3 +5,8 @@ dist/
 .DS_Store
 .rhbuild/
 # local caches/workspaces live outside the repo by design (%LOCALAPPDATA% / %USERPROFILE%)
+# agent session/scratch state (never commit)
+.omo/run-continuation/
+.omo/notepads/
+.playwright-mcp/
+alignment-check.png
