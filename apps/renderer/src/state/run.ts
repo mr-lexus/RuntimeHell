@@ -2,7 +2,7 @@
  * Run state (plan todo 11): binds renderer UI to the main-process
  * ExecutionManager over the typed preload bridge. Console lines are capped;
  * reports are last-wins per index (promise settlements overwrite
- * placeholders). Auto-run debounces at 800ms and never stacks runs вЂ” the
+ * placeholders). Auto-run debounces at 800ms and never stacks runs — the
  * main process additionally enforces single-flight per workspace.
  */
 import { create } from 'zustand';
@@ -27,6 +27,18 @@ interface LastExit {
   killedBy: string | null;
 }
 
+export interface InlineConsoleEntry {
+  readonly line: number;
+  readonly column?: number;
+  readonly level: 'log' | 'error' | 'warn' | 'info' | 'debug' | 'table' | 'dir' | 'trace';
+  readonly text: string;
+  readonly args?: SerializedValue[];
+}
+
+/** Language override for the run pipeline. 'ts' transpiles via esbuild (default);
+ * 'js' forces passthrough so Node 22+ can `--experimental-strip-types` the source. */
+export type RunLang = 'js' | 'ts';
+
 interface RunState {
   phase: RunPhase;
   runId: string | null;
@@ -34,11 +46,16 @@ interface RunState {
   timeoutMs: number;
   lines: ConsoleLine[];
   reports: { index: number; value: SerializedValue }[];
+  inlineConsole: InlineConsoleEntry[];
+  inlineByLine: Record<number, InlineConsoleEntry[]>;
+  resultByLine: Record<number, SerializedValue>;
   lastExit: LastExit | null;
   autoRun: boolean;
   notice: string | null;
+  lang: RunLang;
   setAutoRun: (v: boolean) => void;
   setTimeoutMs: (ms: number) => void;
+  setLang: (lang: RunLang) => void;
   requestStart: () => Promise<void>;
   scheduleAutoRun: () => void;
   requestCancel: () => Promise<void>;
@@ -74,9 +91,16 @@ export const useRun = create<RunState>((set, get) => ({
   timeoutMs: 5000,
   lines: [],
   reports: [],
+  inlineConsole: [],
+  inlineByLine: {},
+  resultByLine: {},
   lastExit: null,
   autoRun: false,
   notice: null,
+  // Default 'ts' preserves the historical behavior (esbuild for .ts/.tsx/.mts).
+  // The toggle in App.tsx overrides this; auto-detect from file extension runs
+  // when a different file is opened.
+  lang: 'ts',
 
   setTimeoutMs: (ms) => set({ timeoutMs: ms }),
 
@@ -88,26 +112,35 @@ export const useRun = create<RunState>((set, get) => ({
     set({ autoRun: v });
   },
 
+  setLang: (lang) => set({ lang }),
+
   requestStart: async () => {
+    console.log('[run] requestStart enter', { phase: get().phase, hasBridge: !!api(), file: getActiveFile()?.relPath, hasContent: !!getActiveFile()?.content });
     const bridge = api();
     if (!bridge) {
+      console.log('[run] no bridge');
       set({ notice: 'runtime bridge unavailable' });
       return;
     }
-    if (get().phase !== 'idle') return; // single running handle, client side too
+    if (get().phase !== 'idle') {
+      console.log('[run] not idle', get().phase);
+      return;
+    }
     const file: OpenFile | null = getActiveFile();
     if (!file) {
       set({ notice: 'no file open' });
       return;
     }
-    set({ phase: 'running', lines: [], reports: [], lastExit: null, notice: null });
+    set({ phase: 'running', lines: [], reports: [], inlineConsole: [], inlineByLine: {}, resultByLine: {}, lastExit: null, notice: null });
     const response = await bridge.startRun({
       workspaceId: 'default',
       relPath: file.relPath,
       content: file.content,
       timeoutMs: 5000,
       // Per-workspace override (todo 12); falls back to system node in main.
-      runtimeVersion: useRuntimes.getState().selectedVersion ?? undefined
+      runtimeVersion: useRuntimes.getState().selectedVersion ?? undefined,
+      // Language override ('js' skips TS transpile in the main process).
+      lang: get().lang
     });
     if (!response.ok) {
       set({ phase: 'idle' });
@@ -153,9 +186,31 @@ export const useRun = create<RunState>((set, get) => ({
       case 'stderr':
         set({ lines: pushLine(state.lines, 'stderr', e.data.replace(/\n$/, '')) });
         break;
-      case 'result':
-        set({ reports: upsertReport(state.reports, e.index, e.value) });
+      case 'console': {
+        const entry: InlineConsoleEntry = {
+          line: e.line,
+          column: e.column,
+          level: e.level,
+          text: e.text,
+          args: e.args
+        };
+        const byLine = { ...state.inlineByLine };
+        const existing = byLine[entry.line] ?? [];
+        byLine[entry.line] = [...existing, entry];
+        set({ inlineConsole: [...state.inlineConsole, entry], inlineByLine: byLine });
+        // Classic console text arrives via the normal stdout pump (bootstrap
+        // echoes 'L{line}: {text}'), so no duplicate push here.
         break;
+      }
+      case 'result': {
+        const nextReports = upsertReport(state.reports, e.index, e.value);
+        const nextByLine = { ...state.resultByLine };
+        if (typeof e.line === 'number' && e.line > 0) {
+          nextByLine[e.line] = e.value;
+        }
+        set({ reports: nextReports, resultByLine: nextByLine });
+        break;
+      }
       case 'exit':
         set({
           phase: 'idle',
@@ -169,5 +224,5 @@ export const useRun = create<RunState>((set, get) => ({
     }
   },
 
-  clearConsole: () => set({ lines: [], notice: null })
+  clearConsole: () => set({ lines: [], inlineConsole: [], inlineByLine: {}, notice: null })
 }));
