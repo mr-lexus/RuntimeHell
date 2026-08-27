@@ -26,6 +26,19 @@ describe('buildAnalysisSnippet — expression', () => {
     const out = wrap('expression', 'a.b(c)');
     expect(out.usedFallbackRepr).toBe(true);
   });
+
+  it('binds a named expression to a const so V8 emits a named block', () => {
+    const out = buildAnalysisSnippet({ kindGuess: 'expression', text: '(n) => n * 2', targetName: 'double' });
+    expect(out.code).toContain('const double = (n) => n * 2;');
+    expect(out.code).toContain('__rh_out(__rh_repr(double));');
+    expect(out.functionName).toBe('double');
+  });
+
+  it('keeps anonymous expressions unwrapped when no target name', () => {
+    const out = buildAnalysisSnippet({ kindGuess: 'expression', text: 'a + b' });
+    expect(out.code).toContain('__rh_out(__rh_repr(a + b));');
+    expect(out.functionName).toBeNull();
+  });
 });
 
 describe('buildAnalysisSnippet — function/class definitions', () => {
@@ -34,6 +47,7 @@ describe('buildAnalysisSnippet — function/class definitions', () => {
     const out = wrap('function', src);
     expect(out.code).toContain(src);
     expect(out.functionName).toBe('sum');
+    expect(out.code).toContain('const __rh_force = sum;');
     expect(out.code).not.toContain('.apply(');
   });
 
@@ -67,6 +81,20 @@ describe('buildAnalysisSnippet — function/class definitions', () => {
 
   it('returns null name for anonymous function expressions', () => {
     expect(extractDefinitionName('(function () {})')).toBeNull();
+  });
+
+  it('appends a __rh_force reference for named classes so V8 emits the bytecode block in ESM mode', () => {
+    const src = 'class Klass {\n  m() {}\n}';
+    const out = wrap('class', src);
+    expect(out.functionName).toBe('Klass');
+    expect(out.code).toContain('const __rh_force = Klass;');
+  });
+
+  it('omits __rh_force for anonymous function expressions', () => {
+    const src = '(function () {})';
+    const out = wrap('function', src);
+    expect(out.functionName).toBeNull();
+    expect(out.code).not.toContain('__rh_force');
   });
 });
 

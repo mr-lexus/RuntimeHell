@@ -1,6 +1,7 @@
-﻿import { useEffect, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import type { AnalysisType } from '@rh/protocol';
 import type { SelectionInfo } from '../../editor/selection-service';
+import { scanFunctions, type ScannedFunction } from '../../editor/scan-functions';
 import { ANALYSIS_ALL_TYPES, useAnalysis, type TypeState } from '../../state/analysis';
 import { ResultViewer } from './ResultViewer';
 
@@ -21,6 +22,25 @@ function statusColor(s: TypeState): string {
   return '#888';
 }
 
+/** Stable identity for a scanned function — survives re-scans while the span is unchanged. */
+function functionKey(f: ScannedFunction): string {
+  return `${f.startOffset}:${f.endOffset}`;
+}
+
+/** Compact picker label, e.g. "function sum", "const double = () => {}", "(anonymous)". */
+function describeFunction(f: ScannedFunction): string {
+  switch (f.kind) {
+    case 'declaration':
+      return `function ${f.name}`;
+    case 'arrow':
+      return f.name === '(anonymous)' ? f.name : `const ${f.name} = () => {}`;
+    case 'expression':
+      return f.name === '(anonymous)' ? f.name : `function ${f.name}`;
+    case 'iife':
+      return '(IIFE)';
+  }
+}
+
 /**
  * Analysis drawer (plan todo 19): raw-first per-type results with
  * capability-aware actions. The selected engine gates the buttons; the
@@ -29,6 +49,8 @@ function statusColor(s: TypeState): string {
 export function AnalysisPanel({ code, selection, lang }: { code: string; selection: SelectionInfo | null; lang: 'js' | 'ts' }): React.JSX.Element {
   const state = useAnalysis();
   const [showWrapper, setShowWrapper] = useState(false);
+  const [selectedFunction, setSelectedFunction] = useState<ScannedFunction | null>(null);
+  const functions = useMemo(() => scanFunctions(code), [code]);
   const selected = state.engines.find((e) => e.id === state.engineId);
   const caps = selected?.capabilities ?? null;
   const doneTypes = ANALYSIS_ALL_TYPES.filter((t) => state.types[t].status === 'done');
@@ -37,6 +59,47 @@ export function AnalysisPanel({ code, selection, lang }: { code: string; selecti
     void state.refreshEngines();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Code changed → re-scan happened; drop the selection if its span vanished.
+  useEffect(() => {
+    if (selectedFunction === null) return;
+    const stillThere = functions.some(
+      (f) =>
+        f.name === selectedFunction.name &&
+        f.startOffset === selectedFunction.startOffset &&
+        f.endOffset === selectedFunction.endOffset
+    );
+    if (!stillThere) setSelectedFunction(null);
+  }, [functions, selectedFunction]);
+
+  // Track the last analysis type run so function changes can auto-retrigger.
+  const [lastAnalysisType, setLastAnalysisType] = useState<AnalysisType | null>(null);
+
+  // When the function selector changes AND there are already-done results, auto-retrigger.
+  useEffect(() => {
+    if (lastAnalysisType === null) return;
+    if (state.requestId !== null) return; // don't interrupt running analysis
+    runAnalysis(lastAnalysisType);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedFunction]);
+
+  const runAnalysis = (type: AnalysisType): void => {
+    setLastAnalysisType(type);
+    if (selectedFunction !== null) {
+      const syntheticSelection: SelectionInfo = {
+        text: selectedFunction.text,
+        startLine: selectedFunction.startLine,
+        startCol: 1,
+        endLine: selectedFunction.endLine,
+        endCol: 1,
+        kind: selectedFunction.kind === 'arrow' || selectedFunction.kind === 'expression' ? 'expression' : 'function'
+      };
+      const focusName = selectedFunction.name !== '(anonymous)' && selectedFunction.name !== '(IIFE)' ? selectedFunction.name : null;
+      state.requestFromSelection(syntheticSelection, code, [type], false, lang, focusName);
+      return;
+    }
+    state.requestFromSelection(selection, code, [type], false, lang);
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: '#bbb', minHeight: 0 }}>
@@ -61,9 +124,31 @@ export function AnalysisPanel({ code, selection, lang }: { code: string; selecti
             {Object.entries(caps)
               .filter(([k, v]) => k !== 'notes' && v === true)
               .map(([k]) => k)
-              .join(' В· ') || 'no capabilities probed'}
+              .join(' · ') || 'no capabilities probed'}
           </span>
         )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <label>
+          function:{' '}
+          <select
+            value={selectedFunction !== null ? functionKey(selectedFunction) : ''}
+            disabled={state.requestId !== null}
+            onChange={(e) => {
+              const key = e.target.value;
+              setSelectedFunction(key === '' ? null : functions.find((f) => functionKey(f) === key) ?? null);
+            }}
+            style={{ background: '#111', color: '#ddd', border: '1px solid #333', fontSize: 12, fontFamily: "'JetBrainsMono Nerd Font Mono', monospace" }}
+          >
+            <option value="">whole file (module)</option>
+            {functions.map((f) => (
+              <option key={functionKey(f)} value={functionKey(f)}>
+                line {f.startLine}: {describeFunction(f)}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -71,13 +156,13 @@ export function AnalysisPanel({ code, selection, lang }: { code: string; selecti
           const t = state.types[type];
           const capKey = `${type}` as keyof typeof caps;
           const supported = caps === null ? true : caps[capKey] !== false;
-          const tooltip = !supported ? `unsupported by this binary вЂ” ${selected?.reason ?? 'capability unavailable'}` : '';
+          const tooltip = !supported ? `unsupported by this binary — ${selected?.reason ?? 'capability unavailable'}` : '';
           return (
             <button
               key={type}
               title={tooltip}
               disabled={state.requestId !== null}
-              onClick={() => state.requestFromSelection(selection, code, [type], false, lang)}
+              onClick={() => runAnalysis(type)}
               style={{
                 background: t.status === 'running' ? '#3a3325' : '#2a2a2a',
                 color: supported ? '#ccc' : '#555',
@@ -89,7 +174,7 @@ export function AnalysisPanel({ code, selection, lang }: { code: string; selecti
               }}
             >
               {TYPE_LABEL[type]}
-              {t.status === 'running' ? 'вЂ¦' : ''}
+              {t.status === 'running' ? '…' : ''}
             </button>
           );
         })}
@@ -136,15 +221,15 @@ export function AnalysisPanel({ code, selection, lang }: { code: string; selecti
             <div key={type} style={{ border: '1px solid #222', padding: 6 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                 <strong style={{ color: statusColor(t) }}>{TYPE_LABEL[type]}</strong>
-                <span style={{ color: '#666', fontFamily: 'monospace', fontSize: 10 }}>
+                <span style={{ color: '#666', fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", fontSize: 10 }}>
                   {t.result !== null &&
-                    `${t.result.engine}@${t.result.engineVersion} В· ${t.result.metadata.durationMs}ms`}
+                    `${t.result.engine}@${t.result.engineVersion} · ${t.result.metadata.durationMs}ms`}
                 </span>
               </div>
-              {t.status === 'running' && <div style={{ color: '#dcdcaa' }}>runningвЂ¦</div>}
-              {t.status === 'unsupported' && <div style={{ color: '#f48771' }}>unsupported вЂ” {t.reason}</div>}
+              {t.status === 'running' && <div style={{ color: '#dcdcaa' }}>running…</div>}
+              {t.status === 'unsupported' && <div style={{ color: '#f48771' }}>unsupported — {t.reason}</div>}
               {t.status === 'error' && <div style={{ color: '#f48771' }}>{t.reason}</div>}
-              {t.result !== null && <ResultViewer result={t.result} />}
+              {t.result !== null && <ResultViewer result={t.result} focusFunction={state.focusFunction} />}
             </div>
           );
         })}

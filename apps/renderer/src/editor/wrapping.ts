@@ -16,6 +16,8 @@ export interface WrapInput {
   readonly text: string;
   /** Offer a sample invocation after function/class definitions. */
   readonly sampleInvocation?: boolean;
+  /** Name to bind an expression to so V8 emits a named bytecode block. */
+  readonly targetName?: string | null;
 }
 
 export interface WrappedSnippet {
@@ -74,13 +76,30 @@ export function buildAnalysisSnippet(input: WrapInput): WrappedSnippet {
     case 'expression': {
       // Single trailing semicolon is normalized away so report() owns it.
       const trimmed = text.trim().replace(/;\s*$/, '');
-      body = `__rh_out(__rh_repr(${trimmed}));`;
+      const targetName = typeof input.targetName === 'string' && input.targetName.trim() !== '' ? input.targetName : null;
+      if (targetName !== null) {
+        // Bind to a const so V8 emits a named bytecode block instead of
+        // an anonymous "(top level)" one for arrows / function expressions.
+        functionName = targetName;
+        body = `const ${targetName} = ${trimmed};\n__rh_out(__rh_repr(${targetName}));`;
+      } else {
+        body = `__rh_out(__rh_repr(${trimmed}));`;
+      }
       break;
     }
     case 'function':
     case 'class': {
       functionName = extractDefinitionName(text);
       body = text;
+      if (functionName !== null) {
+        // V8 in ES module mode (the adapter writes `snippet.mjs`) does NOT
+        // eagerly compile top-level function declarations even with
+        // `--no-lazy`. A bare `function sum(){}` snippet emits no `sum`
+        // bytecode block, so the renderer's focus filter falls back to all
+        // functions. A top-level reference `const __rh_force = sum;` forces
+        // V8 to compile the declaration without executing it.
+        body += `\nconst __rh_force = ${functionName};`;
+      }
       if (input.sampleInvocation === true && functionName !== null) {
         body += `\ntry {\n  ${functionName}.apply(null, Array.from({ length: ${functionName}.length }, () => undefined));\n} catch (e) {\n  __rh_out('[sample-invocation] ' + (e && e.message ? e.message : String(e)));\n}`;
       }
@@ -104,7 +123,7 @@ export function buildAnalysisSnippet(input: WrapInput): WrappedSnippet {
 
   return {
     code,
-    functionName: kind === 'expression' || kind === 'statement' || kind === 'block' || kind === 'module' ? null : functionName,
+    functionName: kind === 'statement' || kind === 'block' || kind === 'module' ? null : functionName,
     usedFallbackRepr: needsPrelude && kind === 'expression'
   };
 }
