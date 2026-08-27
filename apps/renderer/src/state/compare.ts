@@ -59,12 +59,34 @@ export const useCompare = create<CompareState>((set, get) => ({
     set({ running: true, entries: engines.map((id) => ({ engineId: id, version: null, status: 'running' as const, reason: null, rawOutput: '' })) });
 
     const requestIdBase = `cmp-${Date.now()}`;
+    // Track requestId -> engineId for event routing
+    const pending = new Map<string, string>();
+    const off = window.api.onAnalysisEvent((event) => {
+      const eng = pending.get(event.requestId);
+      if (!eng) return;
+      if (event.t === 'result' && event.result) {
+        const text = (event.result as { text?: string }).text ?? JSON.stringify(event.result).slice(0, 2000);
+        set((s) => ({
+          entries: s.entries.map((e) => (e.engineId === eng ? { ...e, status: 'done' as const, rawOutput: text } : e))
+        }));
+      } else if (event.t === 'error' || event.t === 'unsupported') {
+        const reason = (event as { reason?: string; message?: string }).reason ?? (event as { message?: string }).message ?? 'failed';
+        set((s) => ({
+          entries: s.entries.map((e) => (e.engineId === eng ? { ...e, status: event.t as 'error' | 'unsupported', reason } : e))
+        }));
+      } else if (event.t === 'done') {
+        set((s) => ({
+          entries: s.entries.map((e) => (e.engineId === eng && e.status === 'running' ? { ...e, status: 'done' as const } : e))
+        }));
+      }
+    });
     const promises = engines.map(async (engineId) => {
       const requestId = `${requestIdBase}-${engineId}`;
+      pending.set(requestId, engineId);
       try {
         await window.api.analyze({
           requestId,
-          engineId: engineId as 'v8' | 'd8-debug',
+          engineId: engineId as 'v8' | 'd8-debug' | 'spidermonkey' | 'javascriptcore',
           code,
           analysisTypes: ['bytecode'],
           timeoutMs: 30_000
@@ -78,7 +100,11 @@ export const useCompare = create<CompareState>((set, get) => ({
       }
     });
     await Promise.all(promises);
-    set({ running: false });
+    // Give engines time to stream results, then cleanup
+    setTimeout(() => {
+      off();
+      set({ running: false });
+    }, 8000);
   },
   cancelCompare: () => set({ running: false }),
   exportMarkdown: () => {
