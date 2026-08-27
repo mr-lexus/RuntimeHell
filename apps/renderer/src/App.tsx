@@ -1,14 +1,15 @@
 ﻿import { useEffect, useRef, useState } from 'react';
-import { exposeMonacoForTests } from './editor/monaco-setup';
+import { exposeMonacoForTests, setRhTheme, type RhTheme } from './editor/monaco-setup';
 import { CodeEditor } from './editor/CodeEditor';
 import { createAtaController, getAtaStatus, onAtaStatus, type AtaStatus } from './editor/ata';
 import { typescriptDefaults } from './editor/monaco-setup';
 import { AnalysisPanel } from './panels/analysis/AnalysisPanel';
 import { ConsolePanel } from './panels/console/ConsolePanel';
+import { LineOutputColumn, LINE_HEIGHT_PX } from './panels/console/LineOutputColumn';
 import { InspectorPanel } from './panels/inspector/InspectorPanel';
 import { RuntimesPanel } from './panels/runtimes/RuntimesPanel';
 import { PackagesPanel } from './panels/packages/PackagesPanel';
-import { emitRunRequested, onRunRequested, useActiveFile, useUi, type DrawerTab } from './state/ui';
+import { emitRunRequested, getActiveFile, onRunRequested, useActiveFile, useUi, type DrawerTab } from './state/ui';
 import type { SelectionInfo } from './editor/selection-service';
 import { useRun } from './state/run';
 import { ANALYSIS_ALL_TYPES } from './state/analysis';
@@ -21,7 +22,7 @@ const DEMO_FILE = {
   relPath: 'entry.ts',
   language: 'typescript',
   dirty: false,
-  content: `// RuntimeHell demo вЂ” Ctrl+Enter runs, Shift+Alt+F formats, Ctrl+S saves.
+  content: `// RuntimeHell demo — Ctrl+Enter runs, Shift+Alt+F formats, Ctrl+S saves.
 interface User { id: number; name: string; active: boolean }
 
 const users: User[] = [
@@ -47,6 +48,7 @@ export function App(): React.JSX.Element {
   const drawerTab = useUi((s) => s.drawerTab);
   const drawerRatio = useUi((s) => s.drawerRatio);
   const openFile = useUi((s) => s.openFile);
+  const closeFile = useUi((s) => s.closeFile);
   const setActive = useUi((s) => s.setActive);
   const updateContent = useUi((s) => s.updateContent);
   const markSaved = useUi((s) => s.markSaved);
@@ -60,6 +62,8 @@ export function App(): React.JSX.Element {
   const setAutoRun = useRun((s) => s.setAutoRun);
   const scheduleAutoRun = useRun((s) => s.scheduleAutoRun);
   const requestCancel = useRun((s) => s.requestCancel);
+  const lang = useRun((s) => s.lang);
+  const setLang = useRun((s) => s.setLang);
 
   const activeFile = useActiveFile();
   const analysisEngines = useAnalysis((s) => s.engines);
@@ -68,7 +72,7 @@ export function App(): React.JSX.Element {
     const caps = analysisEngines.find((e) => e.id === analysisEngineId)?.capabilities;
     const key = type as keyof typeof caps;
     const supported = typeof caps === 'object' && caps !== null ? caps[key] !== false : true;
-    return { type, label: `Analyze в–ё ${type}`, supported };
+    return { type, label: `Analyze ▸ ${type}`, supported };
   });
   const [status, setStatus] = useState<string>('ready');
   const splitRef = useRef<HTMLDivElement | null>(null);
@@ -118,7 +122,10 @@ export function App(): React.JSX.Element {
     })();
     // Real executor wiring (todo 11): Ctrl+Enter and toolbar both funnel into
     // the run store; streamed events update it via the preload bridge.
-    const offRun = onRunRequested(() => void useRun.getState().requestStart());
+    const offRun = onRunRequested(() => {
+      console.log('[ui] onRunRequested fired');
+      void useRun.getState().requestStart().then(() => console.log('[ui] requestStart finished', useRun.getState().phase));
+    });
     const offEvents = window.api?.onRunEvent((event) => useRun.getState().handleEvent(event));
     const offAnalysis = window.api?.onAnalysisEvent((event) => useAnalysis.getState().handleEvent(event));
     return () => {
@@ -132,6 +139,44 @@ export function App(): React.JSX.Element {
   // ATA (todo 14): debounced type acquisition for imports + status chip.
   const ataRef = useRef<ReturnType<typeof createAtaController> | null>(null);
   const [ataStatus, setAtaStatus] = useState<AtaStatus>(getAtaStatus());
+  const inlineByLine = useRun((s) => s.inlineByLine);
+  const resultByLine = useRun((s) => s.resultByLine);
+  const [showInspector, setShowInspector] = useState<boolean>(() => localStorage.getItem('rh.inspector') !== '0');
+  const [scrollTop, setScrollTop] = useState(0);
+  const [lineCount, setLineCount] = useState(1);
+  useEffect(() => {
+    localStorage.setItem('rh.inspector', showInspector ? '1' : '0');
+  }, [showInspector]);
+  const [theme, setTheme] = useState<RhTheme>(() => ((localStorage.getItem('rh.theme') as RhTheme) ?? 'rh-dark'));
+  useEffect(() => {
+    setRhTheme(theme);
+    document.documentElement.setAttribute('data-theme', theme === 'rh-light' ? 'light' : 'dark');
+    localStorage.setItem('rh.theme', theme);
+  }, [theme]);
+  // Restore persisted lang override once on mount. After mount, the user
+  // toggles it freely and the useEffect below auto-tracks file extensions.
+  const langHydratedRef = useRef(false);
+  useEffect(() => {
+    if (langHydratedRef.current) return;
+    const stored = localStorage.getItem('rh.lang');
+    if (stored === 'js' || stored === 'ts') useRun.getState().setLang(stored);
+    langHydratedRef.current = true;
+  }, []);
+  useEffect(() => {
+    if (!langHydratedRef.current) return;
+    localStorage.setItem('rh.lang', lang);
+  }, [lang]);
+  // Auto-detect lang from file extension when the active file changes. The
+  // extension drives the default; the explicit toggle in the tab bar overrides.
+  useEffect(() => {
+    const path = activeFile?.relPath ?? '';
+    const lower = path.toLowerCase();
+    const detected: 'js' | 'ts' =
+      lower.endsWith('.ts') || lower.endsWith('.tsx') || lower.endsWith('.mts') ? 'ts' : 'js';
+    if (useRun.getState().lang !== detected) useRun.getState().setLang(detected);
+    // We only want this to re-run when the active file's path changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeFile?.relPath]);
   useEffect(() => {
     ataRef.current ??= createAtaController({
       spawnWorker: () => {
@@ -181,7 +226,7 @@ export function App(): React.JSX.Element {
       void window.api?.settingsSet({
         session: {
           tabs: files.map((f) => ({ workspaceId: WORKSPACE_ID, relPath: f.relPath })),
-          activeRelPath: useUi.getState().activeFileId !== null ? (useActiveFile()?.relPath ?? null) : null
+          activeRelPath: getActiveFile()?.relPath ?? null
         }
       });
     }, 500);
@@ -197,6 +242,24 @@ export function App(): React.JSX.Element {
         setStatus(`saved ${file.relPath}`);
       })
       .catch((err: unknown) => setStatus(`save failed: ${String(err)}`));
+  };
+
+  // Tab management: create a fresh untitled tab, close existing ones.
+  const createTab = (): void => {
+    const files = useUi.getState().files;
+    let n = files.length + 1;
+    let id = `${WORKSPACE_ID}:untitled-${n}.ts`;
+    while (files.some((f) => f.id === id)) {
+      n += 1;
+      id = `${WORKSPACE_ID}:untitled-${n}.ts`;
+    }
+    openFile({
+      id,
+      relPath: `untitled-${n}.ts`,
+      language: 'typescript',
+      content: `// untitled-${n}.ts — Ctrl+Enter runs\nconsole.log('hello from tab ${n}');\n`,
+      dirty: false
+    });
   };
 
   const startDrag = (e: React.MouseEvent): void => {
@@ -219,80 +282,184 @@ export function App(): React.JSX.Element {
   const badge = [
     phase === 'idle' ? (runtimeVersion !== null ? `node v${runtimeVersion}` : 'ready') : phase,
     lastExit !== null
-      ? `exit ${lastExit.code ?? 'вЂ”'} В· ${lastExit.durationMs}ms${lastExit.killedBy !== null ? ` В· ${lastExit.killedBy}` : ''}`
+      ? `exit ${lastExit.code ?? '—'} · ${lastExit.durationMs}ms${lastExit.killedBy !== null ? ` · ${lastExit.killedBy}` : ''}`
       : null
   ]
     .filter(Boolean)
-    .join(' В· ');
+    .join(' · ');
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontSize: 13 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontSize: 13, background: 'var(--bg-app)', color: 'var(--text)' }}>
       {/* tab bar */}
-      <div style={{ display: 'flex', gap: 2, background: '#1e1e1e', padding: '4px 6px' }}>
+      <div style={{ display: 'flex', gap: 2, alignItems: 'center', background: 'var(--bg-bar)', padding: '4px 6px' }}>
+        <button
+          onClick={() => {
+            console.log('[ui] Run clicked', { file: activeFile?.relPath, hasContent: !!activeFile?.content });
+            emitRunRequested();
+          }}
+          style={{ background: 'var(--accent)', color: '#fff', border: 'none', padding: '4px 12px', cursor: 'pointer', marginRight: 8 }}
+        >
+          ▶ Run (Ctrl+Enter)
+        </button>
+        <select
+          value={theme}
+          onChange={(e) => setTheme(e.target.value as RhTheme)}
+          style={{ background: 'var(--bg-panel)', color: 'var(--text)', border: '1px solid var(--border)', fontSize: 11, padding: '3px 6px', marginRight: 4 }}
+        >
+          <option value="rh-dark">🌙 dark</option>
+          <option value="rh-light">☀️ light</option>
+        </select>
+        <button
+          onClick={() => setShowInspector((v) => !v)}
+          title="Toggle inspector tree in inline panel"
+          style={{
+            background: showInspector ? 'var(--bg-chip)' : 'transparent',
+            color: showInspector ? 'var(--text)' : 'var(--text-dim)',
+            border: '1px solid var(--border)',
+            padding: '3px 8px',
+            cursor: 'pointer',
+            fontSize: 11,
+            marginRight: 8
+          }}
+        >
+          🔍 inspector {showInspector ? 'on' : 'off'}
+        </button>
+        <span
+          title="Force JS passthrough (Node 22+ strips types) or TS transpile via esbuild"
+          style={{
+            display: 'inline-flex',
+            border: '1px solid var(--border)',
+            borderRadius: 3,
+            overflow: 'hidden',
+            marginRight: 8,
+            fontSize: 11
+          }}
+        >
+          {(['js', 'ts'] as const).map((opt) => {
+            const active = lang === opt;
+            return (
+              <button
+                key={opt}
+                onClick={() => setLang(opt)}
+                aria-pressed={active}
+                style={{
+                  background: active ? 'var(--result)' : 'transparent',
+                  color: active ? 'var(--bg-app)' : 'var(--text-dim)',
+                  border: 'none',
+                  padding: '3px 8px',
+                  cursor: 'pointer',
+                  fontWeight: active ? 600 : 400,
+                  fontSize: 11,
+                  letterSpacing: 0.5
+                }}
+              >
+                {opt.toUpperCase()}
+              </button>
+            );
+          })}
+        </span>
         {files.map((f) => (
-          <button
+          <span
             key={f.id}
             onClick={() => setActive(f.id)}
             style={{
-              background: f.id === activeFileId ? '#333' : 'transparent',
-              color: '#ddd',
-              border: 'none',
-              padding: '4px 10px',
-              cursor: 'pointer'
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              background: f.id === activeFileId ? 'var(--bg-chip)' : 'transparent',
+              color: 'var(--text)',
+              padding: '4px 6px 4px 10px',
+              cursor: 'pointer',
+              borderRadius: 3,
+              userSelect: 'none'
             }}
           >
             {f.relPath}
-            {f.dirty ? ' вЂў' : ''}
-          </button>
+            {f.dirty ? ' •' : ''}
+            <button
+              title="Close tab"
+              onClick={(e) => {
+                e.stopPropagation();
+                closeFile(f.id);
+              }}
+              style={{ background: 'transparent', color: 'var(--text-dim)', border: 'none', cursor: 'pointer', fontSize: 11, lineHeight: 1, padding: '0 2px' }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--err)')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-dim)')}
+            >
+              ✕
+            </button>
+          </span>
         ))}
-        <span style={{ marginLeft: 'auto', color: '#888', alignSelf: 'center', display: 'flex', gap: 10 }}>
-          {ataStatus === 'loading' && <span>typesвЂ¦</span>}
-          {ataStatus === 'ready' && <span style={{ color: '#6a9955' }}>types ready</span>}
-          {ataStatus === 'offline' && <span style={{ color: '#dcdcaa' }}>types unavailable (offline)</span>}
+        <button
+          title="New tab"
+          onClick={createTab}
+          style={{ background: 'transparent', color: 'var(--text-dim)', border: '1px dashed var(--border)', borderRadius: 3, cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '2px 8px', marginLeft: 2 }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text)')}
+          onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-dim)')}
+        >
+          +
+        </button>
+        <span style={{ marginLeft: 'auto', color: 'var(--text-dim)', alignSelf: 'center', display: 'flex', gap: 10 }}>
+          {ataStatus === 'loading' && <span>types…</span>}
+          {ataStatus === 'ready' && <span style={{ color: 'var(--ok)' }}>types ready</span>}
+          {ataStatus === 'offline' && <span style={{ color: 'var(--warn)' }}>types unavailable (offline)</span>}
           {badge || status}
         </span>
       </div>
 
       {/* editor / drawer split */}
       <div ref={splitRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <div style={{ flex: `${1 - drawerRatio} 1 0`, minHeight: 0 }}>
-          {activeFile ? (
-            <CodeEditor
-              path={activeFile.relPath}
-              value={activeFile.content}
-              language={activeFile.language}
-              onChange={(v) => {
-                updateContent(activeFile.id, v);
-                scheduleAutoRun();
-                scheduleAta(v);
-              }}
-              onSave={onSave}
-              onRun={() => emitRunRequested()}
-              onFormatError={(m) => setStatus(`format error: ${m}`)}
-              onSelectionChanged={(info) => {
-                lastSelectionRef.current = info;
-              }}
-              analyzeActions={analyzeActions}
-              onAnalyze={(type, _code, info) => {
-                const lang = activeFile?.language === 'typescript' ? 'ts' : 'js';
-                useAnalysis.getState().requestFromSelection(info ?? null, activeFile?.content ?? '', [type], false, lang);
-                setDrawerTab('analysis');
-              }}
+        <div style={{ flex: `${1 - drawerRatio} 1 0`, minHeight: 0, display: 'flex' }}>
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            {activeFile ? (
+              <CodeEditor
+                path={activeFile.relPath}
+                value={activeFile.content}
+                language={activeFile.language}
+                onChange={(v) => {
+                  updateContent(activeFile.id, v);
+                  scheduleAutoRun();
+                  scheduleAta(v);
+                }}
+                onSave={onSave}
+                onRun={() => emitRunRequested()}
+                onFormatError={(m) => setStatus(`format error: ${m}`)}
+                onSelectionChanged={(info) => {
+                  lastSelectionRef.current = info;
+                }}
+                onScrollTop={setScrollTop}
+                onLineCount={setLineCount}
+                analyzeActions={analyzeActions}
+                inlineOutputs={inlineByLine}
+                inlineResults={resultByLine}
+                onAnalyze={(type, _code, info) => {
+                  const lang = activeFile?.language === 'typescript' ? 'ts' : 'js';
+                  useAnalysis.getState().requestFromSelection(info ?? null, activeFile?.content ?? '', [type], false, lang);
+                  setDrawerTab('analysis');
+                }}
+              />
+            ) : (
+              <div style={{ color: 'var(--text-dim)', padding: 20 }}>No file open</div>
+            )}
+          </div>
+          {activeFile && (
+            <LineOutputColumn
+              lineCount={lineCount}
+              scrollTop={scrollTop}
+              allowExpand={showInspector}
             />
-          ) : (
-            <div style={{ color: '#888', padding: 20 }}>No file open</div>
           )}
         </div>
-        <div onMouseDown={startDrag} style={{ height: 4, cursor: 'row-resize', background: '#444' }} />
+        <div onMouseDown={startDrag} style={{ height: 4, cursor: 'row-resize', background: 'var(--border)' }} />
         <div style={{ flex: `${drawerRatio} 1 0`, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ display: 'flex', gap: 2, background: '#181818', padding: '3px 6px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 2, background: 'var(--bg-bar)', padding: '3px 6px', alignItems: 'center' }}>
             {DRAWER_TABS.map((tab) => (
               <button
                 key={tab}
                 onClick={() => setDrawerTab(tab)}
                 style={{
-                  background: tab === drawerTab ? '#333' : 'transparent',
-                  color: '#ccc',
+                  background: tab === drawerTab ? 'var(--bg-chip)' : 'transparent',
+                  color: 'var(--text)',
                   border: 'none',
                   padding: '3px 10px',
                   cursor: 'pointer'
@@ -302,15 +469,15 @@ export function App(): React.JSX.Element {
               </button>
             ))}
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-              <label style={{ color: '#999', fontSize: 11, display: 'flex', gap: 4, alignItems: 'center' }}>
+              <label style={{ color: 'var(--text-dim)', fontSize: 11, display: 'flex', gap: 4, alignItems: 'center' }}>
                 <input type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} /> auto-run
               </label>
               <button
                 onClick={() => void requestCancel()}
                 disabled={phase === 'idle'}
                 style={{
-                  background: phase === 'cancelling' ? '#5a1d1d' : '#444',
-                  color: phase === 'idle' ? '#666' : '#f48771',
+                  background: phase === 'cancelling' ? '#5a1d1d' : 'var(--bg-hover)',
+                  color: phase === 'idle' ? 'var(--text-faint)' : 'var(--err)',
                   border: 'none',
                   padding: '2px 10px',
                   cursor: phase === 'idle' ? 'default' : 'pointer',
@@ -321,7 +488,7 @@ export function App(): React.JSX.Element {
               </button>
             </span>
           </div>
-          <div style={{ flex: 1, overflow: 'auto', padding: 8, color: '#bbb', minHeight: 0 }}>
+          <div style={{ flex: 1, overflow: 'auto', padding: 8, color: 'var(--text)', minHeight: 0 }}>
             {drawerTab === 'console' && <ConsolePanel />}
             {drawerTab === 'inspector' && <InspectorPanel />}
             {drawerTab === 'analysis' && (

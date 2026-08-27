@@ -21,9 +21,15 @@ export interface CodeEditorProps {
   onRun?: () => void;
   onFormatError?: (message: string) => void;
   onSelectionChanged?: (info: SelectionInfo | null) => void;
+  /** Fires when editor scrolls; value is scrollTop in px. */
+  onScrollTop?: (scrollTop: number) => void;
+  /** Total line count of the current model (for the output column). */
+  onLineCount?: (lineCount: number) => void;
   /** Context-menu Analyze actions; disabled entries render with tooltips. */
   onAnalyze?: (type: AnalyzeType, code: string, info: SelectionInfo | null) => void;
   analyzeActions?: readonly AnalyzeActionState[];
+  inlineOutputs?: Record<number, { text: string; level: string }[]>;
+  inlineResults?: Record<number, import('@rh/protocol').SerializedValue>;
 }
 
 let prettierWorker: Worker | null = null;
@@ -44,6 +50,7 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const capKeysRef = useRef<Map<AnalyzeType, monaco.editor.IContextKey<boolean>>>(new Map());
+  const modelsRef = useRef<Map<string, monaco.editor.ITextModel>>(new Map());
   const propsRef = useRef(props);
   propsRef.current = props;
 
@@ -52,10 +59,16 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     const editor = monaco.editor.create(containerRef.current, {
       value: propsRef.current.value,
       language: propsRef.current.language,
+      theme: 'rh-dark',
       automaticLayout: true,
       minimap: { enabled: false },
       fontSize: 13,
-      tabSize: 2
+      lineHeight: 20,
+      tabSize: 2,
+      fontFamily: "'JetBrainsMono Nerd Font Mono', 'Cascadia Mono', Consolas, monospace",
+      fontLigatures: true,
+      bracketPairColorization: { enabled: true },
+      stickyScroll: { enabled: false }
     });
     editorRef.current = editor;
 
@@ -104,6 +117,20 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
       propsRef.current.onChange?.(editor.getValue());
     });
 
+    // Expose scroll position for the line-aligned output column.
+    editor.onDidScrollChange((e) => {
+      propsRef.current.onScrollTop?.(e.scrollTop);
+    });
+
+    // Notify parent of line count whenever the model changes.
+    const notifyLineCount = (): void => {
+      const model = editor.getModel();
+      if (model) propsRef.current.onLineCount?.(model.getLineCount());
+    };
+    editor.onDidChangeModelContent(() => notifyLineCount());
+    // Initial notification after first model set.
+    notifyLineCount();
+
     editor.onDidChangeCursorSelection(() => {
       const sel = editor.getSelection();
       const model = editor.getModel();
@@ -123,6 +150,9 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
       propsRef.current.onSave?.(editor.getValue());
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+      propsRef.current.onRun?.();
+    });
+    editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.Enter, () => {
       propsRef.current.onRun?.();
     });
 
@@ -178,18 +208,30 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     return () => {
       editor.dispose();
       editorRef.current = null;
+      for (const m of modelsRef.current.values()) m.dispose();
+      modelsRef.current.clear();
     };
   }, []);
 
-  // Swap models when the open file changes.
+  // Tab switching: one Monaco model per file path; external content updates
+  // (history restore, initial open) are pushed into the existing model.
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    const model = editor.getModel();
-    if (model && model.getLanguageId() !== props.language) {
+    let model = modelsRef.current.get(props.path);
+    if (!model || model.isDisposed()) {
+      model = monaco.editor.createModel(props.value, props.language);
+      modelsRef.current.set(props.path, model);
+    }
+    if (editor.getModel() !== model) {
+      editor.setModel(model);
+    } else if (model.getValue() !== props.value) {
+      model.pushEditOperations([], [{ range: model.getFullModelRange(), text: props.value }], () => null);
+    }
+    if (model.getLanguageId() !== props.language) {
       monaco.editor.setModelLanguage(model, props.language);
     }
-  }, [props.language]);
+  }, [props.path, props.value, props.language]);
 
   // Reflect capability probe verdicts into the context-menu keys (todo 19).
   useEffect(() => {
@@ -197,6 +239,56 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
       capKeysRef.current.get(action.type)?.set(action.supported);
     }
   }, [props.analyzeActions]);
+
+  // Inline glyph markers — lightweight overview-ruler + glyph margin indicators.
+  // The actual text output lives in the LineOutputColumn; these are just
+  // visual breadcrumbs on the editor scrollbar and gutter.
+  const inlineDecorationsRef = useRef<string[]>([]);
+  function formatSerialized(v: import('@rh/protocol').SerializedValue): string {
+    if (v.t === 'string') return JSON.stringify(v.prim ?? '');
+    if (v.t === 'number' || v.t === 'boolean' || v.t === 'null' || v.t === 'undefined' || v.t === 'bigint') return v.prim ?? v.t;
+    if (v.label) return v.label + (v.prim ? ` ${v.prim}` : '');
+    if (v.prim) return v.prim;
+    return v.t;
+  }
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const outputs = props.inlineOutputs ?? {};
+    const results = props.inlineResults ?? {};
+    const allLines = new Set<number>([...Object.keys(outputs).map(Number), ...Object.keys(results).map(Number)]);
+    const newDecorations: monaco.editor.IModelDeltaDecoration[] = [];
+    for (const line of allLines) {
+      if (!Number.isFinite(line) || line < 1) continue;
+      const consoleItems = outputs[line] ?? [];
+      const resultVal = (results as Record<number, import('@rh/protocol').SerializedValue>)[line];
+      const isError = consoleItems.some((it) => it.level === 'error');
+      const isWarn = consoleItems.some((it) => it.level === 'warn');
+      newDecorations.push({
+        range: new monaco.Range(line, 1, line, 1),
+        options: {
+          overviewRuler: {
+            color: isError ? '#f48771' : isWarn ? '#dcdcaa' : resultVal ? '#569cd6' : '#6a9955',
+            position: monaco.editor.OverviewRulerLane.Right
+          },
+          glyphMarginClassName: isError ? 'rh-glyph-error' : isWarn ? 'rh-glyph-warn' : resultVal ? 'rh-glyph-result' : 'rh-glyph-log'
+        }
+      });
+    }
+    inlineDecorationsRef.current = editor.deltaDecorations(inlineDecorationsRef.current, newDecorations);
+    // Inject glyph styles once
+    if (!document.getElementById('rh-inline-styles')) {
+      const style = document.createElement('style');
+      style.id = 'rh-inline-styles';
+      style.textContent = `
+        .rh-glyph-log { background: #6a9955; width: 4px !important; }
+        .rh-glyph-warn { background: #dcdcaa; width: 4px !important; }
+        .rh-glyph-error { background: #f48771; width: 4px !important; }
+        .rh-glyph-result { background: #569cd6; width: 4px !important; }
+      `;
+      document.head.appendChild(style);
+    }
+  }, [props.inlineOutputs, props.inlineResults]);
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
 }

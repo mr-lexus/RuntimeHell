@@ -37,7 +37,7 @@ export function InspectorPanel(): React.JSX.Element {
   };
 
   if (reports.length === 0) {
-    return <div style={{ color: '#777', fontFamily: 'monospace' }}>No captured values yet — run the file.</div>;
+    return <div style={{ color: '#777', fontFamily: "'JetBrainsMono Nerd Font Mono', monospace" }}>No captured values yet — run the file.</div>;
   }
 
   const allRows: { rootIndex: number; row: (typeof rowsByRoot extends Map<number, infer R> ? R : never)[number] }[] = [];
@@ -50,14 +50,14 @@ export function InspectorPanel(): React.JSX.Element {
   const Row = ({ index, style }: ListChildComponentProps): React.JSX.Element => {
     const item = allRows[index];
     if (!item) return <div style={style} />;
-    const arrow = item.row.hasChildren ? '▸' : '';
+    const arrow = item.row.hasChildren ? '\uf054' : '';
     return (
       <div
         style={{
           ...style,
           display: 'flex',
           alignItems: 'center',
-          fontFamily: 'monospace',
+          fontFamily: "'JetBrainsMono Nerd Font Mono', monospace",
           fontSize: 12,
           whiteSpace: 'pre',
           cursor: item.row.hasChildren ? 'pointer' : 'default',

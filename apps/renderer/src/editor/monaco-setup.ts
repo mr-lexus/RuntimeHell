@@ -53,4 +53,32 @@ export function exposeMonacoForTests(): void {
   (window as unknown as Record<string, unknown>)['__rh_monaco'] = monaco;
 }
 
+// --- Themes (Wave 3): custom dark/light tuned for inline results ----------
+monaco.editor.defineTheme('rh-dark', {
+  base: 'vs-dark',
+  inherit: true,
+  rules: [
+    { token: 'comment', foreground: '6a9955', fontStyle: 'italic' },
+    { token: 'keyword', foreground: '569cd6' },
+    { token: 'string', foreground: 'ce9178' }
+  ],
+  colors: {
+    'editor.background': '#1e1e1e',
+    'editorGutter.background': '#1a1a1a',
+    'editorLineNumber.foreground': '#555',
+    'editorLineNumber.activeForeground': '#aaa'
+  }
+});
+monaco.editor.defineTheme('rh-light', {
+  base: 'vs',
+  inherit: true,
+  rules: [{ token: 'comment', foreground: '2d7d46', fontStyle: 'italic' }],
+  colors: { 'editor.background': '#ffffff' }
+});
+
+export type RhTheme = 'rh-dark' | 'rh-light';
+export function setRhTheme(theme: RhTheme): void {
+  monaco.editor.setTheme(theme);
+}
+
 export { monaco, typescriptDefaults };

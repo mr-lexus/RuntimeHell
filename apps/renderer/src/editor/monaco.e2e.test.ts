@@ -32,6 +32,12 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
   step('firstWindow');
   await page.waitForSelector('#root', { timeout: 20000 });
   step('#root');
+  // #root is static HTML — wait for the editor test hook so React has actually
+  // mounted and the workspace bootstrap (settingsGet → openFile) has finished.
+  await page.waitForFunction(() => Boolean((window as unknown as Record<string, unknown>)['__rh_editor']), undefined, {
+    timeout: 20000
+  });
+  step('editor-hook');
   return { app, page };
 }
 
