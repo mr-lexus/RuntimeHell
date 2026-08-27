@@ -5,8 +5,15 @@
  */
 import { create } from 'zustand';
 import type { BinaryProgressEvent, ManifestEntry, NodeVersionRow, SystemRuntimeInfo } from '@rh/protocol';
+import { RUNTIME_CATALOG, type RuntimeCatalogEntry } from '../panels/runtimes/runtime-catalog';
 
 const SELECT_KEY = 'rh.runtime.selectedVersion';
+
+/** Per-runtime system detection outcome, keyed by catalog entry id. */
+export interface RuntimeDetection {
+  installed: boolean;
+  version?: string;
+}
 
 interface RuntimesState {
   loadedOnce: boolean;
@@ -19,11 +26,17 @@ interface RuntimesState {
   progress: { version: string; receivedBytes: number; totalBytes: number | null } | null;
   selectedVersion: string | null;
   notice: string | null;
+  /** Static catalog of all known JS runtimes/engines/polyfills. */
+  catalog: RuntimeCatalogEntry[];
+  /** System-detection results for catalog entries, keyed by entry id. */
+  detectionResults: Record<string, RuntimeDetection>;
   refresh: () => Promise<void>;
   bindEvents: () => (() => void) | undefined;
   install: (version: string) => Promise<void>;
   remove: (version: string) => Promise<void>;
   select: (version: string | null) => void;
+  /** Probe the system for catalog runtimes (stub until backend IPC lands). */
+  detectRuntimes: () => Promise<void>;
 }
 
 function loadSelected(): string | null {
@@ -44,6 +57,8 @@ export const useRuntimes = create<RuntimesState>((set, get) => ({
   progress: null,
   selectedVersion: loadSelected(),
   notice: null,
+  catalog: RUNTIME_CATALOG,
+  detectionResults: {},
 
   refresh: async () => {
     if (!window.api) return;
@@ -114,5 +129,15 @@ export const useRuntimes = create<RuntimesState>((set, get) => ({
       /* storage unavailable — session-only selection */
     }
     set({ selectedVersion: version });
+  },
+
+  detectRuntimes: async () => {
+    // STUB: binary probing requires backend IPC (spawn `<cmd>` per detectCommand).
+    // Until that channel lands, report what we already know: Node via the
+    // binaries list refresh, everything else as not-yet-detected.
+    const results: Record<string, RuntimeDetection> = {};
+    const sys = get().system;
+    if (sys !== null) results.node = { installed: true, version: sys.version };
+    set({ detectionResults: results });
   }
 }));
