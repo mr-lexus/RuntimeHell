@@ -1,6 +1,6 @@
 ﻿/**
  * BinariesController unit tests (plan todo 12): list assembly, install
- * progress emission, remove idempotence вЂ” BinaryManager itself is exercised
+ * progress emission, remove idempotence — BinaryManager itself is exercised
  * by its own suite (network installs skip without RH_NETWORK_E2E).
  */
 import { mkdtemp, rm } from 'node:fs/promises';

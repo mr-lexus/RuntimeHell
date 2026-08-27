@@ -1,6 +1,6 @@
 ﻿/**
  * BinariesController (plan todo 12): assembles the Runtimes panel payload and
- * drives installs with streamed progress. Pure of electron imports вЂ” the
+ * drives installs with streamed progress. Pure of electron imports — the
  * progress sink is injected (index.ts binds webContents.send).
  */
 import type {

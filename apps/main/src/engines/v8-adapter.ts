@@ -89,7 +89,7 @@ function buildFlags(
     // would print nothing. Eager-compile everything.
     //
     // NOTE (drift, V8 15.x): --print-bytecode-filter=<name> no longer matches
-    // eagerly-compiled functions вЂ” their SharedFunctionInfo names are still
+    // eagerly-compiled functions — their SharedFunctionInfo names are still
     // empty at dump time, so the filter yields ZERO output. We dump ALL blocks
     // and let the normalized view / caller locate the relevant ones.
     flags.push('--no-lazy');
@@ -107,7 +107,7 @@ async function collectJsonArtifacts(dir: string): Promise<{ name: string; path: 
 export interface V8AdapterDeps {
   /** Isolated execution (plain runner by default). */
   readonly runIsolated?: IsolatedRun;
-  /** Capability source вЂ” the sha-keyed registry cache supplies this. */
+  /** Capability source — the sha-keyed registry cache supplies this. */
   readonly capabilitiesOf: (binaryPath: string) => Promise<EngineCapabilities>;
   /** Simple executor for metadata probes (--version). */
   readonly execute?: typeof realExecutor;

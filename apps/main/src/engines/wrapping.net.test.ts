@@ -1,9 +1,9 @@
 ﻿/**
  * Wrapping strategies network integration (plan todo 20 QA).
  * Gated by RH_NET_TESTS=1. Happy: bare expression `users.filter(...)` with
- * `users` defined above в†’ wrapped standalone snippet produces bytecode for
+ * `users` defined above → wrapped standalone snippet produces bytecode for
  * the filter callback + repr output. Failure: selection referencing an
- * undefined identifier в†’ ReferenceError surfaced in rawOutput, no crash.
+ * undefined identifier → ReferenceError surfaced in rawOutput, no crash.
  */
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

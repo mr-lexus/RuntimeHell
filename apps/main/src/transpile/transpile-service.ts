@@ -1,5 +1,5 @@
 ﻿/**
- * TranspileService (plan todo 9, D5): TS/TSX в†’ CJS via esbuild API in the main
+ * TranspileService (plan todo 9, D5): TS/TSX → CJS via esbuild API in the main
  * process, with external source maps for stack remapping. Non-TS files pass
  * through unchanged. Transform failures return structured diagnostics; the
  * runner is never invoked for broken sources.

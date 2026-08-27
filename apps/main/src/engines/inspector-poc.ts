@@ -1,7 +1,7 @@
 ﻿/**
  * Inspector plumbing PoC (plan todo 30): launches node --inspect=0, parses
  * the WebSocket URL from stderr, and verifies CDP attach. This is PLUMBING
- * ONLY вЂ” no breakpoint UI. Proves the transport works for future debugger UX.
+ * ONLY — no breakpoint UI. Proves the transport works for future debugger UX.
  */
 import { spawn } from 'node:child_process';
 

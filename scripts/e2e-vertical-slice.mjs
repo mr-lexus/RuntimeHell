@@ -1,10 +1,10 @@
 ﻿#!/usr/bin/env node
 /**
- * v0.1 vertical-slice E2E (plan todo 22) вЂ” Playwright _electron.
+ * v0.1 vertical-slice E2E (plan todo 22) — Playwright _electron.
  *
- * Journey: clean cache в†’ launch built app в†’ type TS program using lodash в†’
- * run в†’ inspect Map result в†’ select sum() в†’ cold-start install d8-debug в†’
- * Analyze Bytecode в†’ normalized rows + raw non-empty. Green twice in a row
+ * Journey: clean cache → launch built app → type TS program using lodash →
+ * run → inspect Map result → select sum() → cold-start install d8-debug →
+ * Analyze Bytecode → normalized rows + raw non-empty. Green twice in a row
  * proves recovery; first run logs the cold-start duration (--warm skips it).
  *
  * Run:  pnpm build && node scripts/e2e-vertical-slice.mjs [--warm]
@@ -42,7 +42,7 @@ await writeFile(
   JSON.stringify({ name: 'playground', private: true, type: 'commonjs', dependencies: {} }, null, 2),
   'utf8'
 );
-log('npm install lodash into fresh workspaceвЂ¦');
+log('npm install lodash into fresh workspace…');
 {
   const { execFileSync } = await import('node:child_process');
   execFileSync('cmd.exe', ['/d', '/s', '/c', 'npm i --no-audit --no-fund --ignore-scripts lodash'], {
@@ -52,7 +52,7 @@ log('npm install lodash into fresh workspaceвЂ¦');
   });
 }
 
-log('launching electron (built app)вЂ¦');
+log('launching electron (built app)…');
 const app = await electron.launch({ args: ['.'], env: { ...process.env }, timeout: 60_000 });
 const win = await app.firstWindow();
 win.on('console', (msg) => {
@@ -108,7 +108,7 @@ log('inspector shows Map(2)');
 const t0 = Date.now();
 await win.evaluate(() => window.__rh_editor.setSelection(10, 1, 12, 2));
 if (!WARM) {
-  log('cold-start: installing d8-debug via managed downloaderвЂ¦');
+  log('cold-start: installing d8-debug via managed downloader…');
   const install = await win.evaluate(() => window.api.installEngine('d8-debug'));
   assert.equal(install.ok, true);
   log(`d8-debug ${install.entry.version} installed`);

@@ -1,7 +1,7 @@
 ﻿/**
  * EngineAdapter (plan todo 23): abstraction extracted from the proven V8
  * implementation. SpiderMonkey/JSC adapters (todos 24/25) register here;
- * AnalysisManager dispatches through the registry вЂ” never concrete classes.
+ * AnalysisManager dispatches through the registry — never concrete classes.
  */
 import type { AnalysisEvent, AnalysisStartRequest, AnalysisType, EngineCapabilities, EngineId } from '@rh/protocol';
 
@@ -18,7 +18,7 @@ export interface AnalysisContext {
   emit: (e: AnalysisEvent) => void;
   /** Register a kill-hook for the currently running engine process. */
   registerCancel: (fn: () => Promise<void>) => void;
-  /** False once the request was cancelled вЂ” adapters stop between types. */
+  /** False once the request was cancelled — adapters stop between types. */
   isLive: (requestId: string) => boolean;
 }
 

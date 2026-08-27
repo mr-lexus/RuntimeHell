@@ -1,7 +1,7 @@
 ﻿/**
  * EngineRegistry (plan todo 16): id-keyed engine descriptions backed by the
  * binary manifest, with sha256-keyed capability caching. analyze() dispatch
- * is a stub here вЂ” concrete adapters land in todos 17/24/25 and register
+ * is a stub here — concrete adapters land in todos 17/24/25 and register
  * themselves; the registry NEVER contains per-engine flag strings beyond the
  * probe module.
  */
@@ -87,7 +87,7 @@ export class EngineRegistry {
         version: null,
         binaryPath: null,
         capabilities: null,
-        reason: `${id} is not installed вЂ” install it from the Runtimes/engines panel`
+        reason: `${id} is not installed — install it from the Runtimes/engines panel`
       };
     }
     const exists = await import('node:fs').then((fs) =>

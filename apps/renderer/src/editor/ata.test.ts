@@ -1,6 +1,6 @@
 ﻿/**
  * ATA controller unit tests (plan todo 14): debounce coalescing, extraLib
- * path policy, status transitions incl. offline вЂ” with a FAKE worker channel
+ * path policy, status transitions incl. offline — with a FAKE worker channel
  * so no network/TS compiler is involved.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
