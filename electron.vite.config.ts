@@ -1,5 +1,17 @@
-﻿import { resolve } from 'node:path';
+﻿import { cpSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+
+function copyTemplatesPlugin() {
+  return {
+    name: 'copy-templates',
+    closeBundle() {
+      cpSync(resolve(process.cwd(), 'apps/main/src/execution/templates'), resolve(process.cwd(), 'out/main/templates'), {
+        recursive: true,
+      });
+    },
+  };
+}
 
 const protocolAlias = resolve(process.cwd(), 'packages/protocol/src/index.ts');
 
@@ -9,10 +21,11 @@ export default defineConfig({
     // (todo 22 discovery), so both runtime externals are declared together:
     //  - 'electron' must stay the runtime API, never the npm path shim
     //  - 'esbuild' resolves its platform binary relative to its own package
-    plugins: [],
+    plugins: [copyTemplatesPlugin()],
     resolve: { alias: { '@rh/protocol': protocolAlias } },
     build: {
       outDir: 'out/main',
+      emptyOutDir: false,
       lib: { entry: 'apps/main/src/index.ts' },
       rollupOptions: { external: ['electron', 'esbuild'] },
     }
@@ -28,6 +41,10 @@ export default defineConfig({
   renderer: {
     root: 'apps/renderer',
     plugins: [],
+    server: {
+      port: 5189,
+      strictPort: true,
+    },
     resolve: {
       alias: { '@rh/protocol': protocolAlias },
       dedupe: ['react', 'react-dom'],
