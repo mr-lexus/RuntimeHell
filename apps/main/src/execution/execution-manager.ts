@@ -111,7 +111,12 @@ export class ExecutionManager {
 
     let entryPath: string;
     let mapPath: string | null = null;
-    if (needsTranspile(req.relPath)) {
+    // `lang === 'js'` forces passthrough even for .ts/.tsx/.mts so Node 22+
+    // can `--experimental-strip-types` the source unchanged. `undefined`/`'ts'`
+    // preserves the original esbuild-on-extension behavior.
+    const forcePassthrough = req.lang === 'js';
+    const shouldTranspile = !forcePassthrough && needsTranspile(req.relPath);
+    if (shouldTranspile) {
       const result = await transpileTo(buildDir, req.relPath, captured.code);
       if (!result.ok) return { ok: false, stage: 'transpile', errors: result.errors };
       entryPath = result.outputPath;

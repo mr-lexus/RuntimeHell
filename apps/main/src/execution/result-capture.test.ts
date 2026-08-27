@@ -12,8 +12,8 @@ describe('injectCapture', () => {
     expect(out.reportCount).toBe(2);
     // retainLines may wrap long calls — compare whitespace-insensitively.
     const flat = out.code.replace(/\s+/g, ' ');
-    expect(flat).toContain('__rh.report(0, foo())');
-    expect(flat).toContain('__rh.report(1, bar(1))');
+    expect(flat).toContain('__rh.report(0, foo(), 1)');
+    expect(flat).toContain('__rh.report(1, bar(1), 2)');
   });
 
   it('captures variable declaration bindings by default', () => {
@@ -23,8 +23,8 @@ describe('injectCapture', () => {
     // y has no initializer and no meaningful value; still reported per spec
     // (binding capture reports every top-level binding).
     expect(out.reportCount).toBe(2);
-    expect(out.code).toContain('__rh.report(0, x)');
-    expect(out.code).toContain('__rh.report(1, y)');
+    expect(out.code).toContain('__rh.report(0, x, 1)');
+    expect(out.code).toContain('__rh.report(1, y, 2)');
   });
 
   it('captureDeclarations:false skips declaration reports', () => {
@@ -33,8 +33,8 @@ describe('injectCapture', () => {
     if (!out.ok) return;
     expect(out.reportCount).toBe(1);
     const flat = out.code.replace(/\s+/g, ' ');
-    expect(flat).not.toContain('__rh.report(0, x)');
-    expect(flat).toContain('__rh.report(0, sideEffect())');
+    expect(flat).not.toContain('__rh.report(0, x, 1)');
+    expect(flat).toContain('__rh.report(0, sideEffect(), 2)');
   });
 
   it('leaves nested statements untouched', () => {

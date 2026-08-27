@@ -76,7 +76,22 @@ export type RunRequest = z.infer<typeof RunRequestSchema>;
 export const RunEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('stdout'), runId: z.string(), data: z.string() }),
   z.object({ type: z.literal('stderr'), runId: z.string(), data: z.string() }),
-  z.object({ type: z.literal('result'), runId: z.string(), index: z.number().int().nonnegative(), value: SerializedValueSchema }),
+  z.object({
+    type: z.literal('result'),
+    runId: z.string(),
+    index: z.number().int().nonnegative(),
+    value: SerializedValueSchema,
+    line: z.number().int().nonnegative().optional()
+  }),
+  z.object({
+    type: z.literal('console'),
+    runId: z.string(),
+    line: z.number().int().nonnegative(),
+    column: z.number().int().nonnegative().optional(),
+    level: z.enum(['log', 'error', 'warn', 'info', 'debug', 'table', 'dir', 'trace']),
+    text: z.string(),
+    args: z.array(SerializedValueSchema).optional()
+  }),
   z.object({
     type: z.literal('exit'),
     runId: z.string(),
@@ -115,7 +130,9 @@ export const RunStartRequestSchema = z
     content: z.string(),
     timeoutMs: z.number().int().positive(),
     /** Requested MANAGED node version; falls back to system when absent/uninstalled. */
-    runtimeVersion: z.string().min(1).optional()
+    runtimeVersion: z.string().min(1).optional(),
+    /** Language flavor override from the editor toggle ('js' skips TS transpile). */
+    lang: z.enum(['js', 'ts']).optional()
   })
   .strict();
 export type RunStartRequest = z.infer<typeof RunStartRequestSchema>;

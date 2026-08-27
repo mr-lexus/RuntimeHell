@@ -14,7 +14,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import type { RunEvent, RunResult, SerializedValue } from '@rh/protocol';
-import { SentinelLineSplitter, parseReportFrame } from './report-transport.js';
+import { parseConsoleFrame, parseReportFrame, SentinelLineSplitter } from './report-transport.js';
 import type { ReportTransport } from './report-transport.js';
 import { isAlive, readJournal, treeKill, writeJournal } from './run-journal.js';
 
@@ -139,10 +139,29 @@ export class ProcessRunner {
       }
       if (frame.phase === 'error' || frame.value === undefined) return;
       reports.set(frame.index, frame.value);
-      this.emit({ type: 'result', runId, index: frame.index, value: frame.value });
+      this.emit({ type: 'result', runId, index: frame.index, value: frame.value, line: frame.line });
+    };
+    const seenConsoleNonces = new Set<number>();
+    const handleConsoleJson = (jsonPayload: string): void => {
+      const frame = parseConsoleFrame(jsonPayload);
+      if (frame === null) return;
+      if (frame.nonce !== undefined) {
+        if (seenConsoleNonces.has(frame.nonce)) return;
+        seenConsoleNonces.add(frame.nonce);
+      }
+      this.emit({
+        type: 'console',
+        runId,
+        line: frame.line,
+        column: frame.column,
+        level: frame.level,
+        text: frame.text,
+        args: frame.args
+      });
     };
     const stderrRouter = new SentinelLineSplitter({
       onSentinel: handleFrameJson,
+      onConsole: handleConsoleJson,
       onText: (text) => stderrPump.push(Buffer.from(text, 'utf8'))
     });
     let fd3Router: SentinelLineSplitter | null = null;
@@ -223,7 +242,7 @@ export class ProcessRunner {
       // stderr carries user output AND sentinel frames; the router separates them.
       child.stderr?.on('data', (c: Buffer) => stderrRouter.push(c.toString('utf8')));
       if (options.reportTransport === 'fd3') {
-        fd3Router = new SentinelLineSplitter({ onSentinel: handleFrameJson, onText: () => undefined });
+        fd3Router = new SentinelLineSplitter({ onSentinel: handleFrameJson, onConsole: handleConsoleJson, onText: () => undefined });
         const fd3 = child.stdio[3];
         fd3?.on('data', (c: Buffer) => fd3Router?.push(c.toString('utf8')));
       }

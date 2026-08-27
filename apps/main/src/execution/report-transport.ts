@@ -21,9 +21,20 @@ export interface ReportFrame {
   readonly nonce?: number;
   readonly value?: SerializedValue;
   readonly err?: string;
+  readonly line?: number;
 }
 
 export const SENTINEL_PREFIX = '__RH__' as const;
+export const CONSOLE_SENTINEL = '__RH_CONSOLE__' as const;
+
+export interface ConsoleFrame {
+  readonly line: number;
+  readonly column?: number;
+  readonly level: 'log' | 'error' | 'warn' | 'info' | 'debug' | 'table' | 'dir' | 'trace';
+  readonly text: string;
+  readonly args?: SerializedValue[];
+  readonly nonce?: number;
+}
 
 const REPORT_PHASES: readonly ReportPhase[] = ['immediate', 'fulfilled', 'rejected', 'error'];
 
@@ -33,6 +44,7 @@ interface RawFrame {
   readonly n?: number;
   readonly v?: SerializedValue;
   readonly err?: string;
+  readonly line?: number;
 }
 
 function isRawFrame(value: unknown): value is RawFrame {
@@ -44,6 +56,27 @@ function isRawFrame(value: unknown): value is RawFrame {
     record['i'] >= 0 &&
     typeof record['phase'] === 'string'
   );
+}
+
+export function parseConsoleFrame(json: string): ConsoleFrame | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const r = parsed as Record<string, unknown>;
+  if (typeof r['line'] !== 'number' || typeof r['level'] !== 'string' || typeof r['text'] !== 'string') return null;
+  if (!['log', 'error', 'warn', 'info', 'debug', 'table', 'dir', 'trace'].includes(r['level'] as string)) return null;
+  return {
+    line: r['line'] as number,
+    column: typeof r['column'] === 'number' ? (r['column'] as number) : undefined,
+    level: r['level'] as ConsoleFrame['level'],
+    text: r['text'] as string,
+    args: Array.isArray(r['args']) ? (r['args'] as SerializedValue[]) : undefined,
+    nonce: typeof r['n'] === 'number' ? (r['n'] as number) : undefined
+  };
 }
 
 /** Parse one sentinel payload (JSON after the prefix). Returns null on garbage. */
@@ -62,13 +95,15 @@ export function parseReportFrame(json: string): ReportFrame | null {
     phase,
     nonce: typeof parsed.n === 'number' ? parsed.n : undefined,
     value: parsed.v,
-    err: typeof parsed.err === 'string' ? parsed.err : undefined
+    err: typeof parsed.err === 'string' ? parsed.err : undefined,
+    line: typeof parsed.line === 'number' ? parsed.line : undefined
   };
 }
 
 export interface SentinelSplitterHandlers {
   /** Called with the JSON payload of every complete sentinel line. */
   readonly onSentinel: (jsonPayload: string) => void;
+  readonly onConsole?: (jsonPayload: string) => void;
   /** Called with non-protocol text (line boundaries normalized to `\n`). */
   readonly onText: (text: string) => void;
 }
@@ -102,6 +137,16 @@ export class SentinelLineSplitter {
   }
 
   private route(line: string, terminated: boolean): void {
+    if (line.startsWith(CONSOLE_SENTINEL)) {
+      const payload = line.slice(CONSOLE_SENTINEL.length);
+      if (parseConsoleFrame(payload) === null) {
+        this.handlers.onText(terminated ? line + '\n' : line);
+        return;
+      }
+      if (this.handlers.onConsole) this.handlers.onConsole(payload);
+      else this.handlers.onSentinel(payload);
+      return;
+    }
     if (!line.startsWith(SENTINEL_PREFIX)) {
       this.handlers.onText(terminated ? line + '\n' : line);
       return;

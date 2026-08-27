@@ -163,7 +163,8 @@ function makeSerializer(userCaps) {
     }
 
     // Plain objects / class instances.
-    var objNode = { t: 'object', label: value.constructor && value.constructor.name !== 'Object' ? value.constructor.name : undefined, children: [] };
+    var ctorName = value.constructor && value.constructor.name !== 'Object' ? value.constructor.name : undefined;
+    var objNode = { t: 'object', label: ctorName, children: [] };
     ancestors.push(value);
     var keys;
     try {
@@ -186,6 +187,46 @@ function makeSerializer(userCaps) {
       state.nodeCount++;
       objNode.children.push({ k: key, node: serializeValue(childVal, depth + 1, ancestors, state) });
     }
+    // [[Prototype]] — serialize one level up the chain so the inspector can
+    // show inherited properties and the constructor name.  We only walk one
+    // extra depth level inside the prototype (its own keys) to keep the tree
+    // compact; deeper chains are represented by label only.
+    try {
+      var proto = Object.getPrototypeOf(value);
+      if (proto !== null && proto !== Object.prototype && proto !== Function.prototype) {
+        var protoLabel = proto.constructor && proto.constructor.name !== 'Object' ? proto.constructor.name : undefined;
+        var protoNode = { t: 'object', label: protoLabel, children: [] };
+        var protoKeys;
+        try {
+          protoKeys = Object.getOwnPropertyNames(proto);
+        } catch (pe) {
+          protoKeys = [];
+        }
+        // Skip noisy internal keys (length, name, caller, arguments for functions).
+        var SKIP = { length: 1, name: 1, caller: 1, arguments: 1, prototype: 1, __proto__: 1, constructor: 1 };
+        for (var pi = 0; pi < protoKeys.length && protoKeys.length < 200; pi++) {
+          var pk = protoKeys[pi];
+          if (SKIP[pk]) continue;
+          if (state.nodeCount >= caps.maxNodes) {
+            protoNode.truncated = true;
+            break;
+          }
+          var pVal;
+          try {
+            pVal = proto[pk];
+          } catch (e) {
+            pVal = '<threw>';
+          }
+          // Skip functions that are just built-in no-ops (toString, hasOwnProperty, etc.)
+          // to keep the tree useful — we still show them as labels.
+          state.nodeCount++;
+          protoNode.children.push({ k: pk, node: serializeValue(pVal, depth + 2, ancestors, state) });
+        }
+        if (protoNode.children.length > 0 || protoLabel) {
+          objNode.children.push({ k: '[[Prototype]]', node: protoNode });
+        }
+      }
+    } catch (_) {}
     ancestors.pop();
     return objNode;
   }

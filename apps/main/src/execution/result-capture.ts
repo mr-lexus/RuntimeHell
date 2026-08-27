@@ -39,22 +39,53 @@ export function injectCapture(
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 
+  // Wrap console.* calls with line-aware __rh.console for RunJS inline
+  const CONSOLE_LEVELS = new Set(['log', 'error', 'warn', 'info', 'debug', 'table', 'dir', 'trace']);
+  traverse(ast, {
+    CallExpression(path) {
+      const callee = path.node.callee;
+      if (
+        t.isMemberExpression(callee) &&
+        t.isIdentifier(callee.object, { name: 'console' }) &&
+        t.isIdentifier(callee.property) &&
+        CONSOLE_LEVELS.has(callee.property.name) &&
+        !callee.computed
+      ) {
+        const line = path.node.loc?.start.line ?? 0;
+        const level = callee.property.name;
+        // Preserve original call, prepend __rh.console(line, level, args)
+        const argsArray = t.arrayExpression(path.node.arguments as t.Expression[]);
+        const rhConsoleCall = t.callExpression(t.memberExpression(t.identifier('__rh'), t.identifier('console')), [
+          t.numericLiteral(line),
+          t.stringLiteral(level),
+          argsArray
+        ]);
+        // Replace entirely: __rh.console renders the line itself (inline panel +
+        // L-prefixed classic console), so the original would double-print.
+        path.replaceWith(rhConsoleCall);
+        path.skip();
+      }
+    }
+  });
+
   const statements: t.Statement[] = [];
   let reportCount = 0;
 
-  const reportCall = (valueExpr: t.Expression): t.ExpressionStatement => {
+  const reportCall = (valueExpr: t.Expression, line: number): t.ExpressionStatement => {
     const id = t.identifier('__rh');
     const call = t.callExpression(t.memberExpression(id, t.identifier('report')), [
       t.numericLiteral(reportCount),
-      valueExpr
+      valueExpr,
+      t.numericLiteral(line)
     ]);
     reportCount++;
     return t.expressionStatement(call);
   };
 
   for (const stmt of ast.program.body) {
+    const line = stmt.loc?.start.line ?? 0;
     if (t.isExpressionStatement(stmt) && t.isExpression(stmt.expression)) {
-      statements.push(reportCall(stmt.expression));
+      statements.push(reportCall(stmt.expression, line));
       continue;
     }
     if (t.isVariableDeclaration(stmt)) {
@@ -62,7 +93,8 @@ export function injectCapture(
       if (opts.captureDeclarations) {
         for (const decl of stmt.declarations) {
           if (t.isIdentifier(decl.id)) {
-            statements.push(reportCall(t.identifier(decl.id.name)));
+            const declLine = decl.loc?.start.line ?? line;
+            statements.push(reportCall(t.identifier(decl.id.name), declLine));
           }
         }
       }

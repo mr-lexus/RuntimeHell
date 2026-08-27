@@ -62,7 +62,7 @@ const api = {
     return ListFilesResponseSchema.parse(await ipcRenderer.invoke(IPC.wsListFiles, ListFilesRequestSchema.parse(req)));
   },
   // --- execution (todo 11) -------------------------------------------------
-  startRun: async (req: { workspaceId: string; relPath: string; content: string; timeoutMs: number; runtimeVersion?: string }): Promise<RunStartResponse> => {
+  startRun: async (req: { workspaceId: string; relPath: string; content: string; timeoutMs: number; runtimeVersion?: string; lang?: 'js' | 'ts' }): Promise<RunStartResponse> => {
     return RunStartResponseSchema.parse(
       await ipcRenderer.invoke(IPC.runStart, RunStartRequestSchema.parse(req))
     );
