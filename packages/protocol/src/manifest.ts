@@ -20,7 +20,7 @@ export const ManifestEntrySchema = z
     url: z.string().url(),
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
     license: z.string().min(1),
-    source: z.enum(['official-dist', 'official-canary', 'taskcluster', 'webkit-requirements']),
+    source: z.enum(['official-dist', 'official-canary', 'taskcluster', 'webkit-requirements', 'local-import']),
     installedPath: z.string().optional(),
     addedAt: z.string().datetime().optional(),
     // true entries never appear here — they live ONLY in the C-lane catalog
@@ -67,16 +67,50 @@ export const SystemRuntimeInfoSchema = z
   .strict();
 export type SystemRuntimeInfo = z.infer<typeof SystemRuntimeInfoSchema>;
 
+/** One row in a runtime's available-version list (nodejs.org / GitHub releases). */
+export const RuntimeVersionRowSchema = z
+  .object({
+    version: z.string().min(1), // '22.17.0' (no leading v)
+    date: z.string(), // ISO date or ''
+    lts: z.boolean().optional() // node only
+  })
+  .strict();
+export type RuntimeVersionRow = z.infer<typeof RuntimeVersionRowSchema>;
+
+/** One nvm-windows installed Node version. */
+export const NvmVersionInfoSchema = z
+  .object({
+    version: z.string().min(1), // '22.17.0'
+    exePath: z.string().min(1), // absolute path to node.exe
+    active: z.boolean() // is this the nvm-active version (symlink target)
+  })
+  .strict();
+export type NvmVersionInfo = z.infer<typeof NvmVersionInfoSchema>;
+
+/** nvm-windows detection result (null when nvm is not installed). */
+export const NvmInfoSchema = z
+  .object({
+    root: z.string().min(1), // nvm root dir (NVM_HOME or %APPDATA%\nvm)
+    versions: z.array(NvmVersionInfoSchema)
+  })
+  .strict();
+export type NvmInfo = z.infer<typeof NvmInfoSchema>;
+
 export const BinariesListRequestSchema = z.object({}).strict();
 export type BinariesListRequest = z.infer<typeof BinariesListRequestSchema>;
 
 export const BinariesListResponseSchema = z
   .object({
-    system: SystemRuntimeInfoSchema.nullable(),
+    /** System-wide (PATH) detection per runtime id: 'node' | 'deno' | 'bun'. */
+    systemRuntimes: z.record(z.string(), SystemRuntimeInfoSchema.nullable()),
+    /** nvm-windows Node versions (null when nvm absent). */
+    nvm: NvmInfoSchema.nullable(),
+    /** Managed runtime, engine, and support binaries currently installed. */
     installed: z.array(ManifestEntrySchema),
-    available: z.array(NodeVersionRowSchema),
-    /** Non-fatal index-fetch failure surfaced to the UI. */
-    availableError: z.string().optional()
+    /** Available versions per runtime id (bounded slice for node). */
+    availableVersions: z.record(z.string(), z.array(RuntimeVersionRowSchema)),
+    /** Non-fatal per-runtime index-fetch failures surfaced to the UI. */
+    availableErrors: z.record(z.string(), z.string())
   })
   .strict();
 export type BinariesListResponse = z.infer<typeof BinariesListResponseSchema>;
@@ -85,7 +119,9 @@ export const BinaryInstallRequestSchema = z
   .object({
     kind: z.enum(['runtime', 'engine']),
     id: z.string().min(1),
-    version: z.string().min(1).optional()
+    version: z.string().min(1).optional(),
+    /** Optional existing executable/directory copied into the RuntimeHell sandbox. */
+    sourcePath: z.string().min(1).optional()
   })
   .strict();
 export type BinaryInstallRequest = z.infer<typeof BinaryInstallRequestSchema>;

@@ -9,11 +9,17 @@ import { LineOutputColumn, LINE_HEIGHT_PX } from './panels/console/LineOutputCol
 import { InspectorPanel } from './panels/inspector/InspectorPanel';
 import { RuntimesPanel } from './panels/runtimes/RuntimesPanel';
 import { PackagesPanel } from './panels/packages/PackagesPanel';
-import { emitRunRequested, getActiveFile, onRunRequested, useActiveFile, useUi, type DrawerTab } from './state/ui';
+import { emitRunRequested, getActiveFile, onRunRequested, useActiveFile, useUi, type DrawerTab, type OpenFile } from './state/ui';
 import type { SelectionInfo } from './editor/selection-service';
 import { useRun } from './state/run';
+import { useRuntimes } from './state/runtimes';
 import { ANALYSIS_ALL_TYPES } from './state/analysis';
 import { useAnalysis } from './state/analysis';
+import { useSettings, DEFAULT_RENDERER_SETTINGS } from './state/settings';
+import type { PaletteCommand } from './ui/CommandPalette';
+import { WorkbenchShell } from './ui/WorkbenchShell';
+import type { SettingsPatch } from '@rh/protocol';
+import { ANALYSIS_DEMO_CODE } from './panels/analysis/analysis-demo';
 
 const WORKSPACE_ID = 'default';
 
@@ -22,22 +28,7 @@ const DEMO_FILE = {
   relPath: 'entry.ts',
   language: 'typescript',
   dirty: false,
-  content: `// RuntimeHell demo — Ctrl+Enter runs, Shift+Alt+F formats, Ctrl+S saves.
-interface User { id: number; name: string; active: boolean }
-
-const users: User[] = [
-  { id: 1, name: 'Alex', active: true },
-  { id: 2, name: 'Sam', active: false }
-];
-
-function sum(a: number, b: number): number {
-  return a + b;
-}
-
-const active = users.filter((u) => u.active);
-console.log('active users:', active);
-sum(40, 2);
-`
+  content: ANALYSIS_DEMO_CODE
 };
 
 const DRAWER_TABS: DrawerTab[] = ['console', 'inspector', 'analysis', 'packages', 'runtimes'];
@@ -49,14 +40,52 @@ export function App(): React.JSX.Element {
   const drawerRatio = useUi((s) => s.drawerRatio);
   const openFile = useUi((s) => s.openFile);
   const closeFile = useUi((s) => s.closeFile);
+  const renameFile = useUi((s) => s.renameFile);
   const setActive = useUi((s) => s.setActive);
   const updateContent = useUi((s) => s.updateContent);
   const markSaved = useUi((s) => s.markSaved);
   const setDrawerTab = useUi((s) => s.setDrawerTab);
   const setDrawerRatio = useUi((s) => s.setDrawerRatio);
+  const appSettings = useSettings((s) => s.settings);
+  const settingsHydrated = useSettings((s) => s.hydrated);
+  const hydrateSettings = useSettings((s) => s.hydrate);
+  const patchSettings = useSettings((s) => s.patch);
+  const resetAppearance = useSettings((s) => s.resetAppearance);
+  const resetAllSettings = useSettings((s) => s.resetAll);
+  const [workspaceView, setWorkspaceView] = useState<'editor' | 'settings'>('editor');
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(true);
+  const [systemThemeTick, setSystemThemeTick] = useState(0);
+  const runtimeSettingsReadyRef = useRef(false);
+  const activeRuntime = useRuntimes((s) => s.activeRuntime);
+
+  useEffect(() => {
+    if (!settingsHydrated) return;
+    // The first hydrated render applies the persisted preference to the
+    // runtime store; do not immediately write the store's pre-hydration
+    // default back over that preference.
+    if (!runtimeSettingsReadyRef.current) {
+      runtimeSettingsReadyRef.current = true;
+      return;
+    }
+    if (appSettings.prefs.defaultRuntime !== activeRuntime) {
+      void patchSettings({ prefs: { defaultRuntime: activeRuntime } });
+    }
+  }, [activeRuntime, appSettings.prefs.defaultRuntime, patchSettings, settingsHydrated]);
+
+  // Keep execution state live even when settings arrive from persistence or
+  // another settings action rather than through the local toolbar callback.
+  useEffect(() => {
+    useRun.getState().setTimeoutMs(appSettings.prefs.timeoutMs);
+    useRun.getState().setAutoRun(appSettings.prefs.autorun);
+    if (useRuntimes.getState().activeRuntime !== appSettings.prefs.defaultRuntime) {
+      useRuntimes.getState().setActiveRuntime(appSettings.prefs.defaultRuntime);
+    }
+  }, [appSettings.prefs.autorun, appSettings.prefs.defaultRuntime, appSettings.prefs.timeoutMs]);
 
   const phase = useRun((s) => s.phase);
   const runtimeVersion = useRun((s) => s.runtimeVersion);
+  const lastRuntimeId = useRun((s) => s.lastRuntimeId);
   const lastExit = useRun((s) => s.lastExit);
   const autoRun = useRun((s) => s.autoRun);
   const setAutoRun = useRun((s) => s.setAutoRun);
@@ -68,6 +97,9 @@ export function App(): React.JSX.Element {
   const activeFile = useActiveFile();
   const analysisEngines = useAnalysis((s) => s.engines);
   const analysisEngineId = useAnalysis((s) => s.engineId);
+  const analysisRequestId = useAnalysis((s) => s.requestId);
+  const analysisAutoKeyRef = useRef<string | null>(null);
+  const analysisAutoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const analyzeActions = ANALYSIS_ALL_TYPES.map((type) => {
     const caps = analysisEngines.find((e) => e.id === analysisEngineId)?.capabilities;
     const key = type as keyof typeof caps;
@@ -78,8 +110,43 @@ export function App(): React.JSX.Element {
   const splitRef = useRef<HTMLDivElement | null>(null);
   const lastSelectionRef = useRef<SelectionInfo | null>(null);
 
+  // Keep analysis in sync with source tabs. A short debounce matters during
+  // session restore, where several tabs can become active in quick succession.
+  // The request still contains all analysis types; the backend marks types
+  // unsupported when the selected engine cannot provide them.
+  useEffect(() => {
+    if (analysisAutoTimerRef.current !== null) clearTimeout(analysisAutoTimerRef.current);
+    if (activeFile === null || activeFile.content.trim() === '') {
+      analysisAutoKeyRef.current = null;
+      return;
+    }
+    if (analysisRequestId !== null) return;
+    const engine = analysisEngines.find((item) => item.id === analysisEngineId);
+    const hasCapability = engine?.capabilities !== null && engine?.capabilities !== undefined &&
+      Object.entries(engine.capabilities).some(([key, value]) => key !== 'notes' && value === true);
+    if (!hasCapability) return;
+    const autoKey = `${activeFile.id}:${analysisEngineId}`;
+    if (analysisAutoKeyRef.current === autoKey) return;
+    analysisAutoTimerRef.current = setTimeout(() => {
+      analysisAutoTimerRef.current = null;
+      if (useAnalysis.getState().requestId !== null) return;
+      analysisAutoKeyRef.current = autoKey;
+      const language = activeFile.language === 'typescript' ? 'ts' : 'js';
+      useAnalysis.getState().requestFromSelection(null, activeFile.content, [...ANALYSIS_ALL_TYPES], false, language);
+    }, 250);
+    return () => {
+      if (analysisAutoTimerRef.current !== null) {
+        clearTimeout(analysisAutoTimerRef.current);
+        analysisAutoTimerRef.current = null;
+      }
+    };
+  }, [activeFile, activeFileId, analysisEngineId, analysisEngines, analysisRequestId]);
+
   useEffect(() => {
     exposeMonacoForTests();
+    // Analysis may be requested while the drawer is on another tab, so the
+    // engine catalogue must be available outside AnalysisPanel as well.
+    void useAnalysis.getState().refreshEngines();
     // Temporary e2e diagnostics (todo 22): expose store snapshots.
     (window as unknown as Record<string, unknown>)['__rh_debug'] = {
       drawerTab: () => useUi.getState().drawerTab,
@@ -98,25 +165,24 @@ export function App(): React.JSX.Element {
     // Session restore (todo 21): settings-driven tabs/prefs; demo file only
     // when nothing was previously open.
     void (async () => {
-      const settings = (await window.api?.settingsGet()) as
-        | { prefs: { timeoutMs: number; autorun: boolean }; session: { tabs: { workspaceId: string; relPath: string }[]; activeRelPath: string | null } }
-        | undefined;
+      await hydrateSettings();
+      const settings = useSettings.getState().settings;
       if (disposed) return;
-      if (settings !== undefined) {
-        useRun.getState().setTimeoutMs(settings.prefs.timeoutMs);
-        useRun.getState().setAutoRun(settings.prefs.autorun);
-        for (const tab of settings.session.tabs) {
-          const read = (await window.api?.readFile({ workspaceId: tab.workspaceId, relPath: tab.relPath })) as
-            | { ok: boolean; content?: string }
-            | undefined;
-          const content = read?.ok === true && typeof read.content === 'string' ? read.content : '';
-          const language = tab.relPath.endsWith('.ts') ? 'typescript' : tab.relPath.endsWith('.tsx') ? 'typescript' : 'javascript';
-          openFile({ id: `${tab.workspaceId}:${tab.relPath}`, relPath: tab.relPath, language, content, dirty: false });
-        }
-        if (settings.session.activeRelPath !== null) {
-          const match = useUi.getState().files.find((f) => f.relPath === settings.session.activeRelPath);
-          if (match !== undefined) useUi.getState().setActive(match.id);
-        }
+      useRun.getState().setTimeoutMs(settings.prefs.timeoutMs);
+      useRun.getState().setAutoRun(settings.prefs.autorun);
+      setDrawerOpen(settings.layout.drawerOpen);
+      setDrawerRatio(settings.layout.drawerRatio);
+      setDrawerTab(settings.layout.drawerTab);
+      useRuntimes.getState().setActiveRuntime(settings.prefs.defaultRuntime);
+      for (const tab of settings.session.tabs) {
+        const read = (await window.api?.readFile({ workspaceId: tab.workspaceId, relPath: tab.relPath })) as { ok: boolean; content?: string } | undefined;
+        const content = read?.ok === true && typeof read.content === 'string' ? read.content : '';
+        const language = tab.relPath.endsWith('.ts') || tab.relPath.endsWith('.tsx') ? 'typescript' : 'javascript';
+        openFile({ id: `${tab.workspaceId}:${tab.relPath}`, relPath: tab.relPath, language, content, dirty: false });
+      }
+      if (settings.session.activeRelPath !== null) {
+        const match = useUi.getState().files.find((f) => f.relPath === settings.session.activeRelPath);
+        if (match !== undefined) useUi.getState().setActive(match.id);
       }
       if (!disposed && useUi.getState().files.length === 0) openFile(DEMO_FILE);
     })();
@@ -141,18 +207,49 @@ export function App(): React.JSX.Element {
   const [ataStatus, setAtaStatus] = useState<AtaStatus>(getAtaStatus());
   const inlineByLine = useRun((s) => s.inlineByLine);
   const resultByLine = useRun((s) => s.resultByLine);
-  const [showInspector, setShowInspector] = useState<boolean>(() => localStorage.getItem('rh.inspector') !== '0');
+  const [showInspector, setShowInspector] = useState<boolean>(DEFAULT_RENDERER_SETTINGS.editor.inlineInspector);
   const [scrollTop, setScrollTop] = useState(0);
   const [lineCount, setLineCount] = useState(1);
   useEffect(() => {
-    localStorage.setItem('rh.inspector', showInspector ? '1' : '0');
-  }, [showInspector]);
-  const [theme, setTheme] = useState<RhTheme>(() => ((localStorage.getItem('rh.theme') as RhTheme) ?? 'rh-dark'));
+    setShowInspector(appSettings.editor.inlineInspector);
+    setDrawerOpen(appSettings.layout.drawerOpen);
+    if (useUi.getState().drawerRatio !== appSettings.layout.drawerRatio) setDrawerRatio(appSettings.layout.drawerRatio);
+  }, [appSettings.editor.inlineInspector, appSettings.layout.drawerOpen, appSettings.layout.drawerRatio, setDrawerRatio]);
   useEffect(() => {
-    setRhTheme(theme);
-    document.documentElement.setAttribute('data-theme', theme === 'rh-light' ? 'light' : 'dark');
-    localStorage.setItem('rh.theme', theme);
-  }, [theme]);
+    if (appSettings.appearance.theme !== 'system') return;
+    const media = window.matchMedia('(prefers-color-scheme: light)');
+    const onChange = (): void => setSystemThemeTick((value) => value + 1);
+    media.addEventListener?.('change', onChange);
+    return () => media.removeEventListener?.('change', onChange);
+  }, [appSettings.appearance.theme]);
+  const resolvedTheme = appSettings.appearance.theme === 'system'
+    ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+    : appSettings.appearance.theme;
+  void systemThemeTick;
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', resolvedTheme);
+    document.documentElement.setAttribute('data-accent', appSettings.appearance.accent);
+    const customAccent = /^#[0-9a-fA-F]{6}$/.test(appSettings.appearance.accent);
+    if (customAccent) {
+      document.documentElement.style.setProperty('--accent', appSettings.appearance.accent);
+      document.documentElement.style.setProperty(
+        '--accent-strong',
+        `color-mix(in srgb, ${appSettings.appearance.accent} 70%, ${resolvedTheme === 'light' ? '#000000' : '#ffffff'})`
+      );
+    } else {
+      // Built-in accent selectors own these values; remove any inline custom
+      // override when the user returns to a preset.
+      document.documentElement.style.removeProperty('--accent');
+      document.documentElement.style.removeProperty('--accent-strong');
+    }
+    document.documentElement.setAttribute('data-density', appSettings.appearance.density);
+    document.documentElement.setAttribute('data-intensity', appSettings.appearance.intensity);
+    document.documentElement.setAttribute('data-motion', appSettings.appearance.motion);
+    document.documentElement.setAttribute('data-ui-scale', String(appSettings.appearance.uiScale));
+    // Resolve Monaco colors after the document tokens are updated so the
+    // editor matches the selected theme and accent immediately.
+    setRhTheme(resolvedTheme === 'light' ? 'rh-light' : 'rh-dark');
+  }, [resolvedTheme, appSettings.appearance.accent, appSettings.appearance.density, appSettings.appearance.intensity, appSettings.appearance.motion, appSettings.appearance.uiScale]);
   // Restore persisted lang override once on mount. After mount, the user
   // toggles it freely and the useEffect below auto-tracks file extensions.
   const langHydratedRef = useRef(false);
@@ -232,8 +329,7 @@ export function App(): React.JSX.Element {
     }, 500);
   }, [files, activeFile, markSaved]);
 
-  const onSave = (content: string): void => {
-    const file = activeFile;
+  const saveFile = (file: OpenFile, content = file.content): void => {
     if (!file) return;
     void window.api
       .saveFile({ workspaceId: WORKSPACE_ID, relPath: file.relPath, content })
@@ -242,6 +338,29 @@ export function App(): React.JSX.Element {
         setStatus(`saved ${file.relPath}`);
       })
       .catch((err: unknown) => setStatus(`save failed: ${String(err)}`));
+  };
+  const onSave = (content: string): void => {
+    if (activeFile) saveFile(activeFile, content);
+  };
+
+  const loadAnalysisDemo = (): void => {
+    const demoId = `${WORKSPACE_ID}:analysis-demo.ts`;
+    const existing = useUi.getState().files.find((file) => file.id === demoId);
+    if (existing !== undefined) {
+      updateContent(existing.id, ANALYSIS_DEMO_CODE);
+      setActive(existing.id);
+    } else {
+      openFile({
+        id: demoId,
+        relPath: 'analysis-demo.ts',
+        language: 'typescript',
+        content: ANALYSIS_DEMO_CODE,
+        dirty: true
+      });
+    }
+    useRun.getState().setLang('js');
+    setDrawerTab('analysis');
+    setDrawerOpen(true);
   };
 
   // Tab management: create a fresh untitled tab, close existing ones.
@@ -280,13 +399,54 @@ export function App(): React.JSX.Element {
   };
 
   const badge = [
-    phase === 'idle' ? (runtimeVersion !== null ? `node v${runtimeVersion}` : 'ready') : phase,
+    phase === 'idle' ? (runtimeVersion !== null ? `${lastRuntimeId ?? 'node'} v${runtimeVersion}` : 'ready') : phase,
     lastExit !== null
       ? `exit ${lastExit.code ?? '—'} · ${lastExit.durationMs}ms${lastExit.killedBy !== null ? ` · ${lastExit.killedBy}` : ''}`
       : null
   ]
     .filter(Boolean)
     .join(' · ');
+
+  const theme: RhTheme = resolvedTheme === 'light' ? 'rh-light' : 'rh-dark';
+  const setTheme = (next: RhTheme): void => { void patchSettings({ appearance: { theme: next === 'rh-light' ? 'light' : 'dark' } }); };
+  const applySettingsPatch = (patch: SettingsPatch): void => {
+    void patchSettings(patch);
+    if (patch.prefs?.timeoutMs !== undefined) useRun.getState().setTimeoutMs(patch.prefs.timeoutMs);
+    if (patch.prefs?.autorun !== undefined) setAutoRun(patch.prefs.autorun);
+    if (patch.prefs?.defaultRuntime !== undefined) useRuntimes.getState().setActiveRuntime(patch.prefs.defaultRuntime);
+    if (patch.editor?.inlineInspector !== undefined) setShowInspector(patch.editor.inlineInspector);
+    if (patch.layout?.drawerOpen !== undefined) setDrawerOpen(patch.layout.drawerOpen);
+    if (patch.layout?.drawerRatio !== undefined) setDrawerRatio(patch.layout.drawerRatio);
+  };
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const key = event.key.toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && key === 'p') { event.preventDefault(); setPaletteOpen(true); }
+      else if (event.key === 'F1') { event.preventDefault(); setPaletteOpen(true); }
+      else if ((event.ctrlKey || event.metaKey) && key === ',') { event.preventDefault(); setWorkspaceView('settings'); }
+      else if ((event.ctrlKey || event.metaKey) && key === 'j') { event.preventDefault(); setDrawerOpen((value) => !value); }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, []);
+  const commands: readonly PaletteCommand[] = [
+    { id: 'run', label: 'Run current file', category: 'Execution', shortcut: 'Ctrl+Enter', enabled: Boolean(activeFile) && phase === 'idle', run: () => emitRunRequested() },
+    { id: 'cancel', label: 'Cancel active run', category: 'Execution', enabled: phase !== 'idle', run: () => void requestCancel() },
+    { id: 'save', label: 'Save current file', category: 'File', shortcut: 'Ctrl+S', enabled: Boolean(activeFile), run: () => { if (activeFile) onSave(activeFile.content); } },
+    { id: 'new-tab', label: 'New untitled tab', category: 'File', shortcut: 'Ctrl+N', run: createTab },
+    ...DRAWER_TABS.map((tab) => ({ id: `tool-${tab}`, label: `Focus ${tab}`, category: 'View', run: () => { setDrawerTab(tab); setDrawerOpen(true); } })),
+    { id: 'settings', label: 'Open Settings', category: 'View', shortcut: 'Ctrl+,', run: () => setWorkspaceView('settings') },
+    { id: 'vim-mode', label: appSettings.editor.vimMode ? 'Disable Vim mode' : 'Enable Vim mode', category: 'Editor', keywords: 'vim neovim modal normal insert', run: () => applySettingsPatch({ editor: { vimMode: !appSettings.editor.vimMode } }) },
+    { id: 'theme-dark', label: 'Use dark theme', category: 'Appearance', run: () => applySettingsPatch({ appearance: { theme: 'dark' } }) },
+    { id: 'theme-light', label: 'Use light theme', category: 'Appearance', run: () => applySettingsPatch({ appearance: { theme: 'light' } }) },
+    { id: 'bg-topology', label: 'Background: topology', category: 'Appearance', run: () => applySettingsPatch({ appearance: { background: 'topology' } }) },
+    { id: 'bg-signal', label: 'Background: signal', category: 'Appearance', run: () => applySettingsPatch({ appearance: { background: 'signal' } }) },
+    { id: 'bg-blueprint', label: 'Background: blueprint', category: 'Appearance', run: () => applySettingsPatch({ appearance: { background: 'blueprint' } }) },
+    { id: 'bg-off', label: 'Disable animated background', category: 'Appearance', run: () => applySettingsPatch({ appearance: { background: 'off' } }) },
+    { id: 'autorun', label: autoRun ? 'Disable auto-run' : 'Enable auto-run', category: 'Execution', run: () => applySettingsPatch({ prefs: { autorun: !autoRun } }) }
+  ];
+
+  return <WorkbenchShell settings={appSettings} files={files} activeFileId={activeFileId} activeFile={activeFile} drawerTab={drawerTab} drawerRatio={drawerRatio} drawerOpen={drawerOpen} showInspector={showInspector} phase={phase} runtimeVersion={runtimeVersion} lastRuntimeId={lastRuntimeId} activeRuntime={activeRuntime} lastExit={lastExit} autoRun={autoRun} lang={lang} ataStatus={ataStatus} status={status} lineCount={lineCount} scrollTop={scrollTop} inlineByLine={inlineByLine} resultByLine={resultByLine} analyzeActions={analyzeActions} paletteOpen={paletteOpen} settingsViewActive={workspaceView === 'settings'} commands={commands} onClosePalette={() => setPaletteOpen(false)} onOpenPalette={() => setPaletteOpen(true)} onOpenSettings={() => setWorkspaceView('settings')} onSetWorkspaceView={setWorkspaceView} onSetActive={setActive} onCloseFile={closeFile} onRenameFile={renameFile} onCreateTab={createTab} onRun={() => emitRunRequested()} onSave={onSave} onSaveFile={(file) => saveFile(file)} onChange={(value) => { if (activeFile) { updateContent(activeFile.id, value); scheduleAutoRun(); scheduleAta(value); } }} onFormatError={(message) => setStatus(`format error: ${message}`)} onSelectionChanged={(info) => { lastSelectionRef.current = info; }} onScrollTop={setScrollTop} onLineCount={setLineCount} onAnalyze={(type, code, info) => { const language = activeFile?.language === 'typescript' ? 'ts' : 'js'; useAnalysis.getState().requestFromSelection(info ?? null, code || activeFile?.content || '', [type], false, language); setDrawerTab('analysis'); setDrawerOpen(true); }} onLoadAnalysisDemo={loadAnalysisDemo} onSetDrawerTab={(tab) => { setDrawerTab(tab); applySettingsPatch({ layout: { drawerTab: tab } }); }} onSetDrawerOpen={(open) => { setDrawerOpen(open); applySettingsPatch({ layout: { drawerOpen: open } }); }} onSetDrawerRatio={(ratio) => { setDrawerRatio(ratio); applySettingsPatch({ layout: { drawerRatio: ratio } }); }} onSetAutoRun={(value) => applySettingsPatch({ prefs: { autorun: value } })} onCancel={() => void requestCancel()} onSetLang={setLang} onSetInspector={(value) => applySettingsPatch({ editor: { inlineInspector: value } })} onPatchSettings={applySettingsPatch} onResetAppearance={() => void resetAppearance()} onResetAll={() => void resetAllSettings()} />;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontSize: 13, background: 'var(--bg-app)', color: 'var(--text)' }}>
@@ -413,11 +573,11 @@ export function App(): React.JSX.Element {
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
             {activeFile ? (
               <CodeEditor
-                path={activeFile.relPath}
-                value={activeFile.content}
-                language={activeFile.language}
+                path={activeFile!.relPath}
+                value={activeFile!.content}
+                language={activeFile!.language}
                 onChange={(v) => {
-                  updateContent(activeFile.id, v);
+                  updateContent(activeFile!.id, v);
                   scheduleAutoRun();
                   scheduleAta(v);
                 }}
@@ -444,6 +604,7 @@ export function App(): React.JSX.Element {
           </div>
           {activeFile && (
             <LineOutputColumn
+              fileId={activeFileId}
               lineCount={lineCount}
               scrollTop={scrollTop}
               allowExpand={showInspector}
@@ -470,7 +631,7 @@ export function App(): React.JSX.Element {
             ))}
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
               <label style={{ color: 'var(--text-dim)', fontSize: 11, display: 'flex', gap: 4, alignItems: 'center' }}>
-                <input type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} /> auto-run
+                <input className="rh-native-checkbox" type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} /> auto-run
               </label>
               <button
                 onClick={() => void requestCancel()}
@@ -496,6 +657,7 @@ export function App(): React.JSX.Element {
                 code={activeFile?.content ?? ''}
                 selection={lastSelectionRef.current}
                 lang={activeFile?.language === 'typescript' ? 'ts' : 'js'}
+                onLoadDemo={loadAnalysisDemo}
               />
             )}
             {drawerTab === 'packages' && <PackagesPanel />}

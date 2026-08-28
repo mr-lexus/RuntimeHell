@@ -7,6 +7,12 @@ export const IPC = {
   // liveness
   ping: 'app:ping',
 
+  // renderer-owned titlebar controls
+  windowMinimize: 'window:minimize',
+  windowToggleMaximize: 'window:toggle-maximize',
+  windowClose: 'window:close',
+  windowState: 'window:state',
+
   // execution
   runStart: 'run:start',
   runEvent: 'run:event', // main -> renderer stream

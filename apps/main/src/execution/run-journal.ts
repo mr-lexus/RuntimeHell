@@ -4,7 +4,8 @@
  *
  * Every spawned run is journaled so a crashed parent can sweep orphaned
  * children on startup. Cancellation uses `taskkill /pid <pid> /T /F` on
- * Windows so the whole tree dies; idempotent.
+ * Windows so the whole tree dies; idempotent, with a direct TerminateProcess
+ * fallback when taskkill is stalled or blocked.
  */
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
@@ -22,9 +23,43 @@ export function treeKill(pid: number): Promise<void> {
       resolve();
       return;
     }
+    // Windows: taskkill /T /F kills the whole tree. Some environments stall
+    // or block taskkill (security policy, degraded system); fall back to a
+    // direct TerminateProcess so cancellation still works. The fallback kills
+    // only the target process (not its children) — best effort when taskkill
+    // is unavailable.
     const tk = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
-    tk.on('error', () => resolve());
-    tk.on('close', () => resolve());
+    let settled = false;
+    let timer: NodeJS.Timeout | null = null;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      resolve();
+    };
+    const fallback = (): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      try {
+        process.kill(pid);
+      } catch {
+        /* already dead */
+      }
+      resolve();
+    };
+    timer = setTimeout(fallback, 2000);
+    tk.on('error', () => fallback());
+    tk.on('close', () => {
+      if (settled) return;
+      // taskkill can exit without killing (blocked/stalled); verify liveness.
+      try {
+        process.kill(pid, 0);
+        fallback();
+      } catch {
+        finish();
+      }
+    });
   });
 }
 

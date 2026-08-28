@@ -38,8 +38,8 @@ describe.skipIf(!RUN)('runtimes panel install cycle (network)', () => {
     const controller = new BinariesController({ emitProgress: (e) => events.push(e) });
 
     const list = await controller.list();
-    expect(list.system === null || typeof list.system.version === 'string').toBe(true);
-    expect(list.available.length).toBeGreaterThan(0);
+    expect(list.systemRuntimes.node === null || typeof list.systemRuntimes.node?.version === 'string').toBe(true);
+    expect(list.availableVersions.node?.length ?? 0).toBeGreaterThan(0);
 
     const install = await controller.install('runtime', 'node', VERSION);
     expect(install.ok).toBe(true);

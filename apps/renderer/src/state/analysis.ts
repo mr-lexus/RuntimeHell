@@ -78,10 +78,27 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
 
   refreshEngines: async () => {
     if (!window.api?.enginesList) return;
-    const engines = (await window.api.enginesList()) as unknown as EngineChoice[];
-    set({
-      engines: engines.filter((e) => e.id === 'v8' || e.id === 'd8-debug')
-    });
+    try {
+      const engines = (await window.api.enginesList()) as unknown as EngineChoice[];
+      const available = engines.filter((e) => e.id === 'v8' || e.id === 'd8-debug');
+      const current = get().engineId;
+      // Keep the user's current choice when it is usable; otherwise select a
+      // concrete installed engine instead of leaving the drawer pointed at a
+      // missing d8-debug entry.
+      const preferred =
+        available.find((e) => e.id === current && e.binaryPath !== null && e.capabilities !== null) ??
+        available.find((e) => e.binaryPath !== null && e.capabilities !== null) ??
+        available.find((e) => e.binaryPath !== null) ??
+        available[0];
+      set({
+        engines: available,
+        ...(preferred !== undefined ? { engineId: preferred.id as 'v8' | 'd8-debug' } : {})
+      });
+    } catch (error) {
+      // A missing local engine must not turn an optional analysis probe into
+      // an unhandled rejection that makes the workbench feel frozen.
+      set({ engines: [], lastError: error instanceof Error ? error.message : String(error) });
+    }
   },
 
   requestFromSelection: (info, fullText, types, sampleInvocation = false, lang, focusName = null) => {
@@ -108,13 +125,29 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
         engineId: get().engineId,
         code: snippet.code,
         analysisTypes: types,
-        ...(snippet.functionName !== null && (kind === 'function' || kind === 'class')
-          ? { functionName: snippet.functionName }
-          : {}),
+        ...(snippet.functionName !== null ? { functionName: snippet.functionName } : {}),
         workspaceId: 'default',
         ...(lang !== undefined ? { lang } : {})
       })
-      .catch(() => set({ requestId: null }));
+      .catch((error: unknown) =>
+        set((s) => {
+          const next = { ...s.types };
+          for (const type of types) {
+            if (next[type].status === 'running') {
+              next[type] = {
+                status: 'error',
+                reason: error instanceof Error ? error.message : String(error),
+                result: null
+              };
+            }
+          }
+          return {
+            types: next,
+            requestId: null,
+            lastError: error instanceof Error ? error.message : String(error)
+          };
+        })
+      );
   },
 
   cancel: async () => {

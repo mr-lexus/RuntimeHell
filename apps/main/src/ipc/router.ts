@@ -14,6 +14,7 @@ import {
   PingResponseSchema,
   RunCancelRequestSchema,
   RunStartRequestSchema,
+  SettingsPatchSchema,
   type PingResponse
 } from '@rh/protocol';
 import { listFiles, readFile, saveFile } from '../workspace/files.js';
@@ -60,6 +61,9 @@ export function registerBinariesHandlers(register: Register, controller: Binarie
   });
   register(IPC.binariesInstall, async (payload) => {
     const req = BinaryInstallRequestSchema.parse(payload);
+    if (req.sourcePath !== undefined) {
+      return controller.importLocal(req.kind, req.id, req.sourcePath, req.version);
+    }
     return controller.install(req.kind, req.id, req.version);
   });
   register(IPC.binariesRemove, async (payload) => {
@@ -72,11 +76,11 @@ export function registerBinariesHandlers(register: Register, controller: Binarie
 export function registerPackageHandlers(register: Register, service: PackageService): void {
   register(IPC.packagesInstall, async (payload) => {
     const req = PkgOpRequestSchema.parse(payload);
-    return service.install(req.workspaceId, req.name, req.versionRange, true, undefined, req.managedNodeVersion ?? null);
+    return service.install(req.workspaceId, req.name, req.versionRange, req.ignoreScripts, undefined, req.managedNodeVersion ?? null);
   });
   register(IPC.packagesRemove, async (payload) => {
     const req = PkgOpRequestSchema.parse(payload);
-    return service.uninstall(req.workspaceId, req.name, true, undefined, req.managedNodeVersion ?? null);
+    return service.uninstall(req.workspaceId, req.name, req.ignoreScripts, undefined, req.managedNodeVersion ?? null);
   });
   register(IPC.packagesList, async (payload) => {
     const req = PkgListRequestSchema.parse(payload);
@@ -118,7 +122,7 @@ export function registerPersistenceHandlers(register: Register): void {
     return { ok: true as const };
   });
   register(IPC.settingsGet, async () => (await loadSettings()).settings);
-  register(IPC.settingsSet, async (payload) => updateSettings((payload ?? {}) as never));
+  register(IPC.settingsSet, async (payload) => updateSettings(SettingsPatchSchema.parse(payload ?? {})));
   register(IPC.historyList, async (payload) => {
     const req = (payload ?? {}) as { workspaceId?: string };
     if (typeof req.workspaceId !== 'string') throw new Error('workspaceId required');

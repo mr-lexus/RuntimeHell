@@ -36,11 +36,18 @@ export function outputNameFor(relPath: string): string {
 /**
  * Transpile `source` (from workspace file `relPath`) into the build dir.
  * Returns the runnable .cjs path plus a sourcemap for remapping.
+ *
+ * `opts.banner` (runtime switching): contents prepended to the OUTPUT file —
+ * used to inject the self-contained capture prelude for Deno/Bun. esbuild
+ * keeps banner lines OUT of the source map (verified: `mappings` starts at
+ * the first real source line), so stack remapping stays offset-correct even
+ * though the prelude shifts generated line numbers.
  */
 export async function transpileTo(
   buildDir: string,
   relPath: string,
-  source: string
+  source: string,
+  opts: { banner?: string } = {}
 ): Promise<TranspileResult> {
   const outName = outputNameFor(relPath);
   const outputPath = join(buildDir, outName);
@@ -53,7 +60,8 @@ export async function transpileTo(
       target: 'node22',
       sourcemap: true,
       sourcefile: relPath,
-      jsx: 'transform'
+      jsx: 'transform',
+      ...(opts.banner !== undefined && opts.banner !== '' ? { banner: opts.banner } : {})
     });
     await fs.mkdir(dirname(outputPath), { recursive: true });
     await fs.writeFile(outputPath, result.code, 'utf8');

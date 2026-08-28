@@ -17,6 +17,7 @@ interface UiState {
   drawerRatio: number; // 0..1 height fraction of the bottom drawer
   openFile: (file: OpenFile) => void;
   closeFile: (id: string) => void;
+  renameFile: (id: string, relPath: string) => void;
   setActive: (id: string) => void;
   updateContent: (id: string, content: string) => void;
   markSaved: (id: string) => void;
@@ -51,6 +52,7 @@ export const useUi = create<UiState>((set, get) => ({
       const files = s.files.filter((f) => f.id !== id);
       return { files, activeFileId: s.activeFileId === id ? (files[0]?.id ?? null) : s.activeFileId };
     }),
+  renameFile: (id, relPath) => set((s) => ({ files: s.files.map((f) => (f.id === id ? { ...f, relPath, dirty: true } : f)) })),
   setActive: (id) => set({ activeFileId: id }),
   updateContent: (id, content) =>
     set((s) => ({ files: s.files.map((f) => (f.id === id ? { ...f, content, dirty: true } : f)) })),

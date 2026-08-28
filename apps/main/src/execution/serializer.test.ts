@@ -134,12 +134,35 @@ describe('structural serializer', () => {
     expect(s({ a: 1 }).children?.[0]?.k).toBe('a');
   });
 
+  it('serializes the complete prototype chain through null', () => {
+    const s = makeSerializer();
+    class Base {
+      baseMethod(): void {}
+    }
+    class Child extends Base {
+      childMethod(): void {}
+    }
+
+    const node = s(new Child());
+    const childProto = node.children?.find((c) => c.k === '[[Prototype]]')?.node;
+    const baseProto = childProto?.children?.find((c) => c.k === '[[Prototype]]')?.node;
+    const objectProto = baseProto?.children?.find((c) => c.k === '[[Prototype]]')?.node;
+    const nullProto = objectProto?.children?.find((c) => c.k === '[[Prototype]]')?.node;
+
+    expect(childProto?.label).toBe('Child');
+    expect(childProto?.children?.some((c) => c.k === 'childMethod')).toBe(true);
+    expect(baseProto?.label).toBe('Base');
+    expect(baseProto?.children?.some((c) => c.k === 'baseMethod')).toBe(true);
+    expect(objectProto?.label).toBe('Object');
+    expect(nullProto).toEqual({ t: 'null' });
+  });
+
   it('emits refId back-edges for circular references', () => {
     const s = makeSerializer();
     const root: Record<string, unknown> = { name: 'root' };
     root['self'] = root;
     const node = s(root);
-    expect(node.children?.length).toBe(2);
+    expect(node.children?.filter((c) => c.k !== '[[Prototype]]').length).toBe(2);
     const selfEdge = node.children?.find((c) => c.k === 'self')?.node;
     expect(selfEdge?.refId).toBe(0);
 

@@ -7,7 +7,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { BinaryProgressEvent, NodeVersionRow } from '@rh/protocol';
+import type { BinaryProgressEvent, NvmInfo, RuntimeVersionRow } from '@rh/protocol';
 import { BinariesController } from './binaries-controller.js';
 
 let homeBackup: string | undefined;
@@ -27,41 +27,61 @@ afterAll(async () => {
   await rm(sandbox, { recursive: true, force: true });
 });
 
-const AVAILABLE: NodeVersionRow[] = [
-  { version: '22.17.0', lts: true, date: '2025-01-01' },
-  { version: '24.18.0', lts: false, date: '2026-01-01' }
-];
+const AVAILABLE: Record<string, RuntimeVersionRow[]> = {
+  node: [
+    { version: '22.17.0', lts: true, date: '2025-01-01' },
+    { version: '24.18.0', lts: false, date: '2026-01-01' }
+  ],
+  deno: [{ version: '2.3.4', date: '2026-01-01' }],
+  bun: [{ version: '1.2.3', date: '2026-01-01' }]
+};
 
-function makeController(events: BinaryProgressEvent[], system: { exePath: string; version: string } | null = null) {
+const NVM: NvmInfo = {
+  root: 'C:/nvm',
+  versions: [{ version: '20.11.0', exePath: 'C:/nvm/v20.11.0/node.exe', active: true }]
+};
+
+function makeController(
+  events: BinaryProgressEvent[],
+  system: { exePath: string; version: string } | null = null,
+  nvm: NvmInfo | null = null
+) {
   return new BinariesController({
     emitProgress: (e) => events.push(e),
-    fetchAvailable: () => Promise.resolve(AVAILABLE),
-    detectSystem: () => Promise.resolve(system)
+    fetchAvailable: (id) => Promise.resolve(AVAILABLE[id] ?? []),
+    // Only 'node' carries the injected system detection; deno/bun stay absent.
+    detectSystem: (id) => Promise.resolve(id === 'node' ? system : null),
+    detectNvm: () => Promise.resolve(nvm)
   });
 }
 
 describe('BinariesController.list', () => {
-  it('returns bounded available slice + detected system + installed entries', async () => {
-    const controller = makeController([], { exePath: 'C:/n.exe', version: '24.18.0' });
+  it('returns per-runtime system detection + nvm + bounded available slice', async () => {
+    const controller = makeController([], { exePath: 'C:/n.exe', version: '24.18.0' }, NVM);
     const list = await controller.list();
-    expect(list.system).toEqual({ exePath: 'C:/n.exe', version: '24.18.0' });
-    // LTS rows first (в‰¤8), then current (в‰¤3).
-    expect(list.available[0]?.lts).toBe(true);
-    expect(list.available.length).toBeLessThanOrEqual(11);
+    expect(list.systemRuntimes.node).toEqual({ exePath: 'C:/n.exe', version: '24.18.0' });
+    expect(list.systemRuntimes.deno).toBeNull();
+    expect(list.nvm).toEqual(NVM);
+    // LTS rows first (≤8), then current (≤3).
+    expect(list.availableVersions.node?.[0]?.lts).toBe(true);
+    expect(list.availableVersions.node?.length).toBeLessThanOrEqual(11);
+    expect(list.availableVersions.deno).toEqual([{ version: '2.3.4', date: '2026-01-01' }]);
     expect(list.installed).toEqual([]);
-    expect(list.availableError).toBeUndefined();
+    expect(list.availableErrors).toEqual({});
   });
 
-  it('survives index-fetch failure with availableError set', async () => {
+  it('survives index-fetch failure with per-runtime availableError set', async () => {
     const controller = new BinariesController({
       emitProgress: () => {},
-      fetchAvailable: () => Promise.reject(new Error('network down')),
-      detectSystem: () => Promise.resolve(null)
+      fetchAvailable: (id) => (id === 'node' ? Promise.reject(new Error('network down')) : Promise.resolve([])),
+      detectSystem: () => Promise.resolve(null),
+      detectNvm: () => Promise.resolve(null)
     });
     const list = await controller.list();
-    expect(list.available).toEqual([]);
-    expect(list.availableError).toContain('network down');
-    expect(list.system).toBeNull();
+    expect(list.availableVersions.node).toEqual([]);
+    expect(list.availableErrors.node).toContain('network down');
+    expect(list.systemRuntimes.node).toBeNull();
+    expect(list.nvm).toBeNull();
   });
 });
 

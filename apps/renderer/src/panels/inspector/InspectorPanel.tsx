@@ -11,18 +11,27 @@ const GUTTER = '  ';
  * as an expandable tree. Rows are windowed so 5000-node serializations stay
  * smooth; expansion state lives per root index.
  */
-export function InspectorPanel(): React.JSX.Element {
+interface InspectorPanelProps {
+  /** Source slot whose captured values are currently being inspected. */
+  fileId?: string | null;
+}
+
+export function InspectorPanel({ fileId }: InspectorPanelProps): React.JSX.Element {
   const reports = useRun((s) => s.reports);
+  const runFileId = useRun((s) => s.runFileId);
+  // Reports belong to a run/source slot. Do not show the previous tab's
+  // captures after the user switches source tabs.
+  const visibleReports = fileId === undefined || (fileId !== null && runFileId === fileId) ? reports : [];
   const [expandedByRoot, setExpanded] = useState<Record<number, ReadonlySet<string>>>({});
 
   const rowsByRoot = useMemo(() => {
     const map = new Map<number, ReturnType<typeof flattenValue>>();
-    for (const report of reports) {
+    for (const report of visibleReports) {
       const expanded = expandedByRoot[report.index] ?? new Set<string>(['root']);
       map.set(report.index, flattenValue(report.value, expanded));
     }
     return map;
-  }, [reports, expandedByRoot]);
+  }, [visibleReports, expandedByRoot]);
 
   const toggle = (rootIndex: number, key: string): void => {
     setExpanded((prev) => {
@@ -36,12 +45,12 @@ export function InspectorPanel(): React.JSX.Element {
     });
   };
 
-  if (reports.length === 0) {
-    return <div style={{ color: '#777', fontFamily: "'JetBrainsMono Nerd Font Mono', monospace" }}>No captured values yet — run the file.</div>;
+  if (visibleReports.length === 0) {
+    return <div className="rh-inspector-empty">No captured values yet — run the file.</div>;
   }
 
   const allRows: { rootIndex: number; row: (typeof rowsByRoot extends Map<number, infer R> ? R : never)[number] }[] = [];
-  for (const report of reports) {
+  for (const report of visibleReports) {
     for (const row of rowsByRoot.get(report.index) ?? []) {
       allRows.push({ rootIndex: report.index, row });
     }
@@ -50,7 +59,7 @@ export function InspectorPanel(): React.JSX.Element {
   const Row = ({ index, style }: ListChildComponentProps): React.JSX.Element => {
     const item = allRows[index];
     if (!item) return <div style={style} />;
-    const arrow = item.row.hasChildren ? '\uf054' : '';
+    const arrow = item.row.hasChildren ? '›' : '';
     return (
       <div
         style={{
@@ -61,14 +70,14 @@ export function InspectorPanel(): React.JSX.Element {
           fontSize: 12,
           whiteSpace: 'pre',
           cursor: item.row.hasChildren ? 'pointer' : 'default',
-          color: item.row.depth === 0 ? '#9cdcfe' : '#bbb'
+          color: item.row.depth === 0 ? 'var(--accent-strong)' : 'var(--text-secondary)'
         }}
         onClick={() => item.row.hasChildren && toggle(item.rootIndex, item.row.key)}
       >
-        <span style={{ width: 34, color: '#569cd6', textAlign: 'right', marginRight: 8 }}>
+        <span style={{ width: 34, color: 'var(--accent)', textAlign: 'right', marginRight: 8 }}>
           {item.row.depth === 0 ? `#${item.rootIndex}` : ''}
         </span>
-        <span style={{ width: 12, color: '#666' }}>{arrow}</span>
+        <span style={{ width: 12, color: 'var(--text-faint)' }}>{arrow}</span>
         <span>
           {item.row.depth > 0 ? `${GUTTER.repeat(item.row.depth - 1)}${item.row.childKey}: ` : ''}
           {item.row.label}

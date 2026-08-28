@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as monaco from 'monaco-editor';
 import { getSelectionInfo, type SelectionInfo } from './selection-service';
+import { VimModeController } from './vim-mode';
 
 export type AnalyzeType = 'ast' | 'bytecode' | 'optcode' | 'ir-graph' | 'deopts' | 'gc';
 
@@ -30,6 +31,10 @@ export interface CodeEditorProps {
   analyzeActions?: readonly AnalyzeActionState[];
   inlineOutputs?: Record<number, { text: string; level: string }[]>;
   inlineResults?: Record<number, import('@rh/protocol').SerializedValue>;
+  theme?: 'rh-dark' | 'rh-light';
+  fontSize?: number;
+  /** Opt-in modal Vim/Neovim-style keybindings. */
+  vimMode?: boolean;
 }
 
 let prettierWorker: Worker | null = null;
@@ -59,11 +64,11 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     const editor = monaco.editor.create(containerRef.current, {
       value: propsRef.current.value,
       language: propsRef.current.language,
-      theme: 'rh-dark',
+      theme: propsRef.current.theme ?? 'rh-dark',
       automaticLayout: true,
       minimap: { enabled: false },
-      fontSize: 13,
-      lineHeight: 20,
+      fontSize: propsRef.current.fontSize ?? 13,
+      lineHeight: Math.max(18, Math.round((propsRef.current.fontSize ?? 13) * 1.5)),
       tabSize: 2,
       fontFamily: "'JetBrainsMono Nerd Font Mono', 'Cascadia Mono', Consolas, monospace",
       fontLigatures: true,
@@ -119,7 +124,10 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
 
     // Expose scroll position for the line-aligned output column.
     editor.onDidScrollChange((e) => {
-      propsRef.current.onScrollTop?.(e.scrollTop);
+      // Monaco also emits this event for horizontal/layout changes. Only
+      // publish vertical movement so the inline inspector follows the same
+      // scroll surface without needless render churn.
+      if (e.scrollTopChanged) propsRef.current.onScrollTop?.(e.scrollTop);
     });
 
     // Notify parent of line count whenever the model changes.
@@ -130,6 +138,7 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     editor.onDidChangeModelContent(() => notifyLineCount());
     // Initial notification after first model set.
     notifyLineCount();
+    propsRef.current.onScrollTop?.(editor.getScrollTop());
 
     editor.onDidChangeCursorSelection(() => {
       const sel = editor.getSelection();
@@ -213,6 +222,20 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     };
   }, []);
 
+  useEffect(() => {
+    if (editorRef.current && props.theme) monaco.editor.setTheme(props.theme);
+    if (editorRef.current && props.fontSize) {
+      editorRef.current.updateOptions({ fontSize: props.fontSize, lineHeight: Math.max(18, Math.round(props.fontSize * 1.5)) });
+    }
+  }, [props.theme, props.fontSize]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !props.vimMode) return;
+    const vim = new VimModeController({ editor });
+    return () => vim.dispose();
+  }, [props.vimMode]);
+
   // Tab switching: one Monaco model per file path; external content updates
   // (history restore, initial open) are pushed into the existing model.
   useEffect(() => {
@@ -254,6 +277,10 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
+    // Monaco's overview ruler consumes a concrete color value (it does not
+    // resolve CSS custom properties). Read the active design token so the
+    // source/result marker follows the selected theme and accent.
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#7ec8e3';
     const outputs = props.inlineOutputs ?? {};
     const results = props.inlineResults ?? {};
     const allLines = new Set<number>([...Object.keys(outputs).map(Number), ...Object.keys(results).map(Number)]);
@@ -268,7 +295,7 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
         range: new monaco.Range(line, 1, line, 1),
         options: {
           overviewRuler: {
-            color: isError ? '#f48771' : isWarn ? '#dcdcaa' : resultVal ? '#569cd6' : '#6a9955',
+            color: isError ? '#f48771' : isWarn ? '#dcdcaa' : resultVal ? accent : '#6a9955',
             position: monaco.editor.OverviewRulerLane.Right
           },
           glyphMarginClassName: isError ? 'rh-glyph-error' : isWarn ? 'rh-glyph-warn' : resultVal ? 'rh-glyph-result' : 'rh-glyph-log'
@@ -284,7 +311,7 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
         .rh-glyph-log { background: #6a9955; width: 4px !important; }
         .rh-glyph-warn { background: #dcdcaa; width: 4px !important; }
         .rh-glyph-error { background: #f48771; width: 4px !important; }
-        .rh-glyph-result { background: #569cd6; width: 4px !important; }
+        .rh-glyph-result { background: var(--accent); width: 4px !important; }
       `;
       document.head.appendChild(style);
     }

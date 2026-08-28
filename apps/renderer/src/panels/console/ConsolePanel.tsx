@@ -2,38 +2,40 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRun, type InlineConsoleEntry } from '../../state/run';
 import { useUi } from '../../state/ui';
 import type { SerializedValue } from '@rh/protocol';
+import { detectTable, type TableShape } from './table-shape';
 
 /* ── colour palette ──────────────────────────────────────────────────── */
 
 const C = {
-  str: '#ce9178',
-  num: '#b5cea8',
-  bool: '#569cd6',
-  nil: '#569cd6',
-  sym: '#c586c0',
-  fn: '#dcdcaa',
-  cls: '#4ec9b0',
-  err: '#f48771',
-  date: '#ce9178',
-  re: '#d16969',
-  coll: '#9cdcfe',
-  key: '#9cdcfe',
-  proto: '#569cd6',
+  str: 'var(--rh-value-string, #ce9178)',
+  num: 'var(--rh-value-number, #b5cea8)',
+  bool: 'var(--rh-value-bool, var(--accent-strong))',
+  nil: 'var(--rh-value-null, var(--accent-strong))',
+  sym: 'var(--rh-value-symbol, #c586c0)',
+  fn: 'var(--rh-value-function, var(--warn))',
+  cls: 'var(--rh-value-class, #4ec9b0)',
+  err: 'var(--err)',
+  date: 'var(--rh-value-date, #ce9178)',
+  re: 'var(--rh-value-regexp, #d16969)',
+  coll: 'var(--rh-value-collection, var(--accent))',
+  key: 'var(--rh-value-key, var(--accent-strong))',
+  proto: 'var(--accent)',
+  protoBorder: 'color-mix(in srgb, var(--accent) 40%, transparent)',
   dim: 'var(--text-dim)',
   ok: 'var(--ok)',
   warn: 'var(--warn)',
-  errBg: 'rgba(244,135,113,0.12)',
-  warnBg: 'rgba(220,220,170,0.12)',
-  infoBg: 'rgba(86,156,214,0.10)',
-  hover: 'rgba(255,255,255,0.04)',
-  border: 'var(--border)',
+  errBg: 'color-mix(in srgb, var(--err) 12%, transparent)',
+  warnBg: 'color-mix(in srgb, var(--warn) 12%, transparent)',
+  infoBg: 'color-mix(in srgb, var(--accent) 10%, transparent)',
+  hover: 'color-mix(in srgb, var(--bg-hover) 70%, transparent)',
+  border: 'var(--frame-weak)',
   panel: 'var(--bg-panel)',
   result: 'var(--result)',
-  tblHead: 'rgba(86,156,214,0.10)',
-  tblAlt: 'rgba(255,255,255,0.025)',
-  logBorder: 'rgba(86,156,214,0.25)',
-  warnBorder: 'rgba(220,220,170,0.35)',
-  errBorder: 'rgba(244,135,113,0.35)',
+  tblHead: 'color-mix(in srgb, var(--accent) 10%, transparent)',
+  tblAlt: 'color-mix(in srgb, var(--bg-hover) 35%, transparent)',
+  logBorder: 'color-mix(in srgb, var(--accent) 35%, transparent)',
+  warnBorder: 'color-mix(in srgb, var(--warn) 45%, transparent)',
+  errBorder: 'color-mix(in srgb, var(--err) 45%, transparent)',
 };
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
@@ -152,23 +154,6 @@ const BOOTSTRAP_ECHO_RE = /^L(\d+): /;
 
 /* ── table detection ─────────────────────────────────────────────────── */
 
-interface TableShape { headers: string[]; rows: { k: string; node: SerializedValue }[][] }
-
-function detectTable(v: SerializedValue): TableShape | null {
-  if (v.t !== 'array' || !v.children || v.children.length < 1) return null;
-  const objKids = v.children.filter((c) => c.node.t === 'object' || c.node.t === 'array');
-  if (objKids.length < 1) return null;
-  const headerSet = new Map<string, number>();
-  for (const c of objKids) {
-    for (const child of c.node.children ?? []) {
-      if (child.k === '[[Prototype]]') continue;
-      if (!headerSet.has(child.k)) headerSet.set(child.k, headerSet.size);
-    }
-  }
-  if (headerSet.size === 0) return null;
-  return { headers: Array.from(headerSet.keys()), rows: objKids.map((c) => c.node.children ?? []) };
-}
-
 /* ── table renderer ──────────────────────────────────────────────────── */
 
 const CELL_BORDER = '1px solid rgba(255,255,255,0.06)';
@@ -244,7 +229,7 @@ function TreeChild({ k, node, inMap }: { k: string; node: SerializedValue; inMap
         onMouseEnter={(e) => { e.currentTarget.style.background = C.hover; }}
         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
       >
-        <span style={{ color: C.dim, display: 'inline-block', width: 14, textAlign: 'center', fontSize: 10, userSelect: 'none' }}>{open ? '\uf078' : '\uf054'}</span>
+        <span style={{ color: C.dim, display: 'inline-block', width: 14, textAlign: 'center', fontSize: 10, userSelect: 'none' }}>{open ? '⌄' : '›'}</span>
         {keySpan}
         {open
           ? <span style={{ color: C.dim, opacity: 0.6, fontSize: 10, fontStyle: 'italic' }}>{typeTag(node) ?? previewText(node)}</span>
@@ -252,7 +237,7 @@ function TreeChild({ k, node, inMap }: { k: string; node: SerializedValue; inMap
         {node.truncated && !open && <span style={{ color: C.warn, fontSize: 10, marginLeft: 4 }}>…truncated</span>}
       </div>
       {open && (
-        <div style={{ borderLeft: `1px solid ${proto ? `${C.proto}66` : C.border}`, marginLeft: 6, paddingLeft: 14 }}>
+        <div style={{ borderLeft: `1px solid ${proto ? C.protoBorder : C.border}`, marginLeft: 6, paddingLeft: 14 }}>
           {tbl
             ? <TableView shape={tbl} />
             : kids.map((ck, ci) => <TreeChild key={`${ck.k}-${ci}`} k={ck.k} node={ck.node} inMap={node.t === 'map'} />)}
@@ -316,10 +301,10 @@ function ConsoleEntryRow({
   const isDebug = entry?.level === 'debug';
   const isResult = entry === null;
 
-  const accentColor = isError ? C.err : isWarn ? C.warn : isInfo ? '#569cd6' : isDebug ? '#c586c0' : C.ok;
+  const accentColor = isError ? C.err : isWarn ? C.warn : isInfo ? 'var(--accent-strong)' : isDebug ? '#c586c0' : C.ok;
   const accentBg = isError ? C.errBg : isWarn ? C.warnBg : isInfo ? C.infoBg : 'transparent';
   const borderColor = isError ? C.errBorder : isWarn ? C.warnBorder : C.logBorder;
-  const icon = isError ? '\uf00d' : isWarn ? '\uf071' : isInfo ? '\uf129' : isResult ? '\uf061' : null;
+  const icon = isError ? '×' : isWarn ? '!' : isInfo ? 'i' : isResult ? '→' : null;
 
   return (
     <div style={{
@@ -345,7 +330,7 @@ function ConsoleEntryRow({
         {/* expand arrow */}
         {hasExpand && (
           <span style={{ color: C.dim, fontSize: 9, flexShrink: 0, width: 12, textAlign: 'center', userSelect: 'none' }}>
-            {expanded ? '\uf078' : '\uf054'}
+            {expanded ? '⌄' : '›'}
           </span>
         )}
         {!hasExpand && <span style={{ width: 12, flexShrink: 0 }} />}
@@ -423,19 +408,34 @@ interface HistoryRow {
  * already have structured entries, so the user sees exactly one row per
  * console call.
  */
-export function ConsolePanel(): React.JSX.Element {
+interface ConsolePanelProps {
+  /** Source slot whose run output is currently being inspected. */
+  fileId?: string | null;
+}
+
+export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
   const lines = useRun((s) => s.lines);
   const inlineByLine = useRun((s) => s.inlineByLine);
   const resultByLine = useRun((s) => s.resultByLine);
   const notice = useRun((s) => s.notice);
+  const runFileId = useRun((s) => s.runFileId);
   const clearConsole = useRun((s) => s.clearConsole);
+  // Run output is scoped to the source slot that produced it. Without this
+  // guard, switching source tabs leaves the previous file's console visible.
+  // An omitted fileId keeps the panel usable in isolated/legacy mounts; the
+  // workbench always passes its active source id (including null).
+  const isCurrentSource = fileId === undefined || (fileId !== null && runFileId === fileId);
+  const visibleLines = isCurrentSource ? lines : [];
+  const visibleInlineByLine = isCurrentSource ? inlineByLine : {};
+  const visibleResultByLine = isCurrentSource ? resultByLine : {};
+  const visibleNotice = isCurrentSource ? notice : null;
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' });
-  }, [lines.length, Object.keys(inlineByLine).length, Object.keys(resultByLine).length]);
+  }, [visibleLines.length, Object.keys(visibleInlineByLine).length, Object.keys(visibleResultByLine).length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -446,19 +446,19 @@ export function ConsolePanel(): React.JSX.Element {
       if (!cancelled && response?.ok === true) setHistory(response.records.slice().reverse());
     })();
     return () => { cancelled = true; };
-  }, [lines.length]);
+  }, [visibleLines.length]);
 
   // Build an ordered list of all source lines that have structured output
   const structuredLineSet = useMemo(() => {
     const s = new Set<number>();
-    for (const ln of Object.keys(inlineByLine).map(Number)) {
+    for (const ln of Object.keys(visibleInlineByLine).map(Number)) {
       if (Number.isFinite(ln) && ln > 0) s.add(ln);
     }
-    for (const ln of Object.keys(resultByLine).map(Number)) {
+    for (const ln of Object.keys(visibleResultByLine).map(Number)) {
       if (Number.isFinite(ln) && ln > 0) s.add(ln);
     }
     return s;
-  }, [inlineByLine, resultByLine]);
+  }, [visibleInlineByLine, visibleResultByLine]);
 
   // Sort all line numbers with structured output
   const structuredLineNums = useMemo(
@@ -469,14 +469,14 @@ export function ConsolePanel(): React.JSX.Element {
   // Filter raw stdout lines: suppress bootstrap echo lines ("L{N}: ...") when
   // structured entries already exist for that line number.
   const filteredLines = useMemo(() => {
-    return lines.filter((line) => {
+    return visibleLines.filter((line) => {
       if (line.stream === 'stderr') return true; // always show stderr
       const m = BOOTSTRAP_ECHO_RE.exec(line.text);
       if (!m) return true; // not a bootstrap echo — keep it
       const ln = Number(m[1]);
       return !structuredLineSet.has(ln); // suppress only if structured covers it
     });
-  }, [lines, structuredLineSet]);
+  }, [visibleLines, structuredLineSet]);
 
   const hasStructured = structuredLineNums.length > 0;
 
@@ -484,7 +484,7 @@ export function ConsolePanel(): React.JSX.Element {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       {/* ── toolbar ── */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, paddingBottom: 4, flexShrink: 0 }}>
-        {notice !== null && <span style={{ color: '#dcdcaa', fontSize: 11 }}>{notice}</span>}
+        {visibleNotice !== null && <span style={{ color: 'var(--warn)', fontSize: 11 }}>{visibleNotice}</span>}
         <button onClick={() => setShowHistory((v) => !v)} style={btnStyle}>
           history ({history.length})
         </button>
@@ -509,9 +509,9 @@ export function ConsolePanel(): React.JSX.Element {
                 }
               }}
               title="Click to restore snapshot"
-              style={{ fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", fontSize: 11, color: '#888', cursor: 'pointer', padding: '2px 4px', borderRadius: 2 }}
-              onMouseEnter={(e) => ((e.currentTarget.style.background = '#2a2a2a'), (e.currentTarget.style.color = '#ccc'))}
-              onMouseLeave={(e) => ((e.currentTarget.style.background = 'transparent'), (e.currentTarget.style.color = '#888'))}
+              style={{ fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", fontSize: 11, color: 'var(--text-dim)', cursor: 'pointer', padding: '2px 4px', borderRadius: 0 }}
+              onMouseEnter={(e) => ((e.currentTarget.style.background = 'var(--bg-hover)'), (e.currentTarget.style.color = 'var(--text)'))}
+              onMouseLeave={(e) => ((e.currentTarget.style.background = 'transparent'), (e.currentTarget.style.color = 'var(--text-dim)'))}
             >
               {new Date(h.finishedAt).toLocaleTimeString()} · {h.status} · {h.durationMs}ms
               {h.killedBy !== null ? ` · ${h.killedBy}` : ''} · {(h as unknown as { relPath?: string }).relPath ?? ''} — restore
@@ -524,8 +524,8 @@ export function ConsolePanel(): React.JSX.Element {
       <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
         {/* Structured console entries + expression results */}
         {hasStructured && structuredLineNums.map((ln) => {
-          const entries = inlineByLine[ln] ?? [];
-          const result = resultByLine[ln];
+          const entries = visibleInlineByLine[ln] ?? [];
+          const result = visibleResultByLine[ln];
           const isMeaningfulResult = result !== undefined && result.t !== 'undefined';
           if (entries.length === 0 && !isMeaningfulResult) return null;
           return (
@@ -561,7 +561,7 @@ export function ConsolePanel(): React.JSX.Element {
         {/* Empty state */}
         {!hasStructured && filteredLines.length === 0 && (
           <div style={{ padding: 16, color: C.dim, fontSize: 12, fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", textAlign: 'center', marginTop: 8 }}>
-            <div style={{ fontSize: 20, marginBottom: 6, opacity: 0.3 }}>{'\uf15c'}</div>
+            <div style={{ fontSize: 20, marginBottom: 6, opacity: 0.3 }}>◇</div>
             No output yet — run the file (Ctrl+Enter)
           </div>
         )}
@@ -573,9 +573,9 @@ export function ConsolePanel(): React.JSX.Element {
 }
 
 const btnStyle: React.CSSProperties = {
-  background: '#2a2a2a',
-  color: '#ccc',
-  border: 'none',
+  background: 'transparent',
+  color: 'var(--text-secondary)',
+  border: '1px solid var(--frame-normal)',
   padding: '2px 8px',
   cursor: 'pointer',
   fontSize: 11

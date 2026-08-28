@@ -1,0 +1,68 @@
+import { create } from 'zustand';
+import type { AppSettings, SettingsPatch } from '@rh/protocol';
+
+export const DEFAULT_RENDERER_SETTINGS: AppSettings = {
+  schemaVersion: 2,
+  prefs: { timeoutMs: 5000, autorun: false, ignoreScripts: true, defaultRuntime: 'node' },
+  appearance: { theme: 'dark', accent: 'cyan', background: 'topology', intensity: 'standard', motion: 'system', density: 'compact', uiScale: 100 },
+  editor: { fontSize: 13, inlineInspector: true, vimMode: false },
+  layout: { drawerOpen: true, drawerRatio: 0.35, drawerTab: 'console', inlineOutputWidth: 320 },
+  session: { tabs: [], activeRelPath: null }
+};
+
+interface SettingsState {
+  settings: AppSettings;
+  hydrated: boolean;
+  hydrate: () => Promise<void>;
+  patch: (patch: SettingsPatch) => Promise<void>;
+  resetAppearance: () => Promise<void>;
+  resetAll: () => Promise<void>;
+}
+
+function legacyPatch(): SettingsPatch {
+  const patch: SettingsPatch = {};
+  const theme = localStorage.getItem('rh.theme');
+  if (theme === 'rh-light' || theme === 'rh-dark') patch.appearance = { theme: theme === 'rh-light' ? 'light' : 'dark' };
+  const inspector = localStorage.getItem('rh.inspector');
+  if (inspector !== null) patch.editor = { inlineInspector: inspector !== '0' };
+  const ratio = Number(localStorage.getItem('rh.ui.drawerRatio'));
+  if (Number.isFinite(ratio) && ratio > 0.05 && ratio < 0.9) patch.layout = { drawerRatio: ratio };
+  const width = Number(localStorage.getItem('rh.inspector-width'));
+  if (Number.isFinite(width) && width >= 180 && width <= 720) patch.layout = { ...patch.layout, inlineOutputWidth: Math.round(width) };
+  return patch;
+}
+
+export const useSettings = create<SettingsState>((set, get) => ({
+  settings: DEFAULT_RENDERER_SETTINGS,
+  hydrated: false,
+  hydrate: async () => {
+    if (get().hydrated) return;
+    const remote = await window.api?.settingsGet().catch(() => undefined);
+    let settings = remote ?? DEFAULT_RENDERER_SETTINGS;
+    if (localStorage.getItem('rh.settings-v2-imported') !== '1') {
+      const patch = legacyPatch();
+      if (Object.keys(patch).length > 0 && window.api) {
+        settings = await window.api.settingsSet(patch).catch(() => settings);
+      }
+      localStorage.setItem('rh.settings-v2-imported', '1');
+    }
+    set({ settings, hydrated: true });
+  },
+  patch: async (patch) => {
+    set((state) => ({ settings: {
+      ...state.settings,
+      prefs: { ...state.settings.prefs, ...patch.prefs },
+      appearance: { ...state.settings.appearance, ...patch.appearance },
+      editor: { ...state.settings.editor, ...patch.editor },
+      layout: { ...state.settings.layout, ...patch.layout },
+      session: { ...state.settings.session, ...patch.session }
+    } }));
+    const next = await window.api?.settingsSet(patch).catch(() => undefined);
+    if (next) set({ settings: next });
+  },
+  resetAppearance: async () => get().patch({ appearance: DEFAULT_RENDERER_SETTINGS.appearance }),
+  resetAll: async () => {
+    const next = await window.api?.settingsSet({ appearance: DEFAULT_RENDERER_SETTINGS.appearance, editor: DEFAULT_RENDERER_SETTINGS.editor }).catch(() => undefined);
+    set({ settings: next ?? { ...get().settings, appearance: DEFAULT_RENDERER_SETTINGS.appearance, editor: DEFAULT_RENDERER_SETTINGS.editor } });
+  }
+}));

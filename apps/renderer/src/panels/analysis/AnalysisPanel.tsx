@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
-import type { AnalysisType } from '@rh/protocol';
+import type { AnalysisType, EngineCapabilities } from '@rh/protocol';
+import { useRef } from 'react';
 import type { SelectionInfo } from '../../editor/selection-service';
 import { scanFunctions, type ScannedFunction } from '../../editor/scan-functions';
 import { ANALYSIS_ALL_TYPES, useAnalysis, type TypeState } from '../../state/analysis';
@@ -14,12 +15,24 @@ const TYPE_LABEL: Record<AnalysisType, string> = {
   gc: 'GC'
 };
 
+// Protocol capability names are intentionally descriptive, while the panel
+// actions use compact analysis ids. Keep the mapping explicit so an engine
+// that lacks (for example) bytecodeDump is disabled before a request is sent.
+const CAPABILITY_FOR_TYPE: Record<AnalysisType, keyof Omit<EngineCapabilities, 'notes'>> = {
+  ast: 'astDump',
+  bytecode: 'bytecodeDump',
+  optcode: 'optCodeDisasm',
+  'ir-graph': 'irGraphDump',
+  deopts: 'deoptTrace',
+  gc: 'gcLog'
+};
+
 function statusColor(s: TypeState): string {
-  if (s.status === 'running') return '#dcdcaa';
-  if (s.status === 'done') return '#6a9955';
-  if (s.status === 'unsupported') return '#777';
-  if (s.status === 'error') return '#f48771';
-  return '#888';
+  if (s.status === 'running') return 'var(--warn)';
+  if (s.status === 'done') return 'var(--ok)';
+  if (s.status === 'unsupported') return 'var(--text-faint)';
+  if (s.status === 'error') return 'var(--err)';
+  return 'var(--text-dim)';
 }
 
 /** Stable identity for a scanned function — survives re-scans while the span is unchanged. */
@@ -46,14 +59,13 @@ function describeFunction(f: ScannedFunction): string {
  * capability-aware actions. The selected engine gates the buttons; the
  * backend probe re-verifies before spawning.
  */
-export function AnalysisPanel({ code, selection, lang }: { code: string; selection: SelectionInfo | null; lang: 'js' | 'ts' }): React.JSX.Element {
+export function AnalysisPanel({ code, selection, lang, onLoadDemo }: { code: string; selection: SelectionInfo | null; lang: 'js' | 'ts'; onLoadDemo: () => void }): React.JSX.Element {
   const state = useAnalysis();
   const [showWrapper, setShowWrapper] = useState(false);
   const [selectedFunction, setSelectedFunction] = useState<ScannedFunction | null>(null);
   const functions = useMemo(() => scanFunctions(code), [code]);
   const selected = state.engines.find((e) => e.id === state.engineId);
   const caps = selected?.capabilities ?? null;
-  const doneTypes = ANALYSIS_ALL_TYPES.filter((t) => state.types[t].status === 'done');
 
   useEffect(() => {
     void state.refreshEngines();
@@ -72,19 +84,22 @@ export function AnalysisPanel({ code, selection, lang }: { code: string; selecti
     if (!stillThere) setSelectedFunction(null);
   }, [functions, selectedFunction]);
 
-  // Track the last analysis type run so function changes can auto-retrigger.
-  const [lastAnalysisType, setLastAnalysisType] = useState<AnalysisType | null>(null);
+  // Keep the last explicit scope so changing the function selector reruns the
+  // same analysis set. Automatic tab analysis starts with the full set.
+  const [lastAnalysisTypes, setLastAnalysisTypes] = useState<AnalysisType[]>([...ANALYSIS_ALL_TYPES]);
+  const previousSelectedFunctionRef = useRef<ScannedFunction | null>(selectedFunction);
 
-  // When the function selector changes AND there are already-done results, auto-retrigger.
+  // When the function selector changes, immediately recalculate its results.
   useEffect(() => {
-    if (lastAnalysisType === null) return;
+    if (previousSelectedFunctionRef.current === selectedFunction) return;
+    previousSelectedFunctionRef.current = selectedFunction;
     if (state.requestId !== null) return; // don't interrupt running analysis
-    runAnalysis(lastAnalysisType);
+    runAnalysis(lastAnalysisTypes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFunction]);
 
-  const runAnalysis = (type: AnalysisType): void => {
-    setLastAnalysisType(type);
+  const runAnalysis = (types: AnalysisType[]): void => {
+    setLastAnalysisTypes(types);
     if (selectedFunction !== null) {
       const syntheticSelection: SelectionInfo = {
         text: selectedFunction.text,
@@ -95,21 +110,26 @@ export function AnalysisPanel({ code, selection, lang }: { code: string; selecti
         kind: selectedFunction.kind === 'arrow' || selectedFunction.kind === 'expression' ? 'expression' : 'function'
       };
       const focusName = selectedFunction.name !== '(anonymous)' && selectedFunction.name !== '(IIFE)' ? selectedFunction.name : null;
-      state.requestFromSelection(syntheticSelection, code, [type], false, lang, focusName);
+      const needsExecution = types.some((type) => type === 'optcode' || type === 'ir-graph' || type === 'deopts' || type === 'gc');
+      state.requestFromSelection(syntheticSelection, code, types, needsExecution, lang, focusName);
       return;
     }
-    state.requestFromSelection(selection, code, [type], false, lang);
+    state.requestFromSelection(selection, code, types, false, lang);
   };
 
+  const supportedCount = selected !== undefined && caps !== null
+    ? ANALYSIS_ALL_TYPES.filter((type) => caps[CAPABILITY_FOR_TYPE[type]] === true).length
+    : 0;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: '#bbb', minHeight: 0 }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+    <div className="rh-analysis-panel" style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: 'var(--text-secondary)', minHeight: 0 }}>
+      <div className="rh-analysis-controls">
         <label>
           engine:{' '}
           <select
             value={state.engineId}
             onChange={(e) => state.setEngine(e.target.value as 'v8' | 'd8-debug')}
-            style={{ background: '#111', color: '#ddd', border: '1px solid #333', fontSize: 12 }}
+            className="rh-panel-input"
           >
             {state.engines.map((e) => (
               <option key={e.id} value={e.id}>
@@ -119,17 +139,18 @@ export function AnalysisPanel({ code, selection, lang }: { code: string; selecti
             ))}
           </select>
         </label>
-        {caps !== null && (
-          <span style={{ color: '#666' }}>
-            {Object.entries(caps)
-              .filter(([k, v]) => k !== 'notes' && v === true)
-              .map(([k]) => k)
-              .join(' · ') || 'no capabilities probed'}
-          </span>
-        )}
       </div>
 
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div className="rh-analysis-controls">
+        <button className="rh-analysis-action" onClick={onLoadDemo} disabled={state.requestId !== null} title="Open a V8 workload with warmup, optimization, deoptimization and allocations">
+          load analysis demo
+        </button>
+        <button className="rh-analysis-action" onClick={() => runAnalysis([...ANALYSIS_ALL_TYPES])} disabled={state.requestId !== null || supportedCount === 0} title="Run AST, bytecode, optimized code, IR graph, deopts and GC">
+          run all
+        </button>
+      </div>
+
+      <div className="rh-analysis-controls">
         <label>
           function:{' '}
           <select
@@ -139,7 +160,7 @@ export function AnalysisPanel({ code, selection, lang }: { code: string; selecti
               const key = e.target.value;
               setSelectedFunction(key === '' ? null : functions.find((f) => functionKey(f) === key) ?? null);
             }}
-            style={{ background: '#111', color: '#ddd', border: '1px solid #333', fontSize: 12, fontFamily: "'JetBrainsMono Nerd Font Mono', monospace" }}
+            className="rh-panel-input"
           >
             <option value="">whole file (module)</option>
             {functions.map((f) => (
@@ -151,27 +172,21 @@ export function AnalysisPanel({ code, selection, lang }: { code: string; selecti
         </label>
       </div>
 
-      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+      <div className="rh-analysis-actions">
         {ANALYSIS_ALL_TYPES.map((type) => {
           const t = state.types[type];
-          const capKey = `${type}` as keyof typeof caps;
-          const supported = caps === null ? true : caps[capKey] !== false;
-          const tooltip = !supported ? `unsupported by this binary — ${selected?.reason ?? 'capability unavailable'}` : '';
+          const capKey = CAPABILITY_FOR_TYPE[type];
+          const supported = selected !== undefined && caps !== null && caps[capKey] === true;
+          const tooltip = !supported
+            ? `unsupported by this binary — ${selected?.reason ?? 'capability unavailable or engine not installed'}`
+            : '';
           return (
             <button
               key={type}
               title={tooltip}
-              disabled={state.requestId !== null}
-              onClick={() => runAnalysis(type)}
-              style={{
-                background: t.status === 'running' ? '#3a3325' : '#2a2a2a',
-                color: supported ? '#ccc' : '#555',
-                border: 'none',
-                padding: '3px 10px',
-                cursor: state.requestId !== null ? 'wait' : 'pointer',
-                fontSize: 11,
-                textDecoration: supported ? 'none' : 'line-through'
-              }}
+              disabled={state.requestId !== null || !supported}
+              onClick={() => runAnalysis([type])}
+              className={`rh-analysis-action ${t.status === 'running' ? 'is-running' : ''}`}
             >
               {TYPE_LABEL[type]}
               {t.status === 'running' ? '…' : ''}
@@ -179,35 +194,23 @@ export function AnalysisPanel({ code, selection, lang }: { code: string; selecti
           );
         })}
         {state.requestId !== null && (
-          <button onClick={() => void state.cancel()} style={{ background: '#5a1d1d', color: '#f48771', border: 'none', padding: '3px 10px', cursor: 'pointer', fontSize: 11 }}>
+          <button className="rh-analysis-action is-cancel" onClick={() => void state.cancel()}>
             cancel
           </button>
         )}
       </div>
 
-      {state.lastError !== null && <div style={{ color: '#f48771' }}>{state.lastError}</div>}
-      {state.cancelledNotice && <div style={{ color: '#dcdcaa' }}>analysis cancelled</div>}
+      {state.lastError !== null && <div className="rh-analysis-notice is-error">{state.lastError}</div>}
+      {state.cancelledNotice && <div className="rh-analysis-notice is-warning">analysis cancelled</div>}
 
       {state.generatedCode !== null && (
         <div>
           <label style={{ color: '#888', fontSize: 11, display: 'flex', gap: 4, alignItems: 'center' }}>
-            <input type="checkbox" checked={showWrapper} onChange={(e) => setShowWrapper(e.target.checked)} /> show
+            <input className="rh-native-checkbox" type="checkbox" checked={showWrapper} onChange={(e) => setShowWrapper(e.target.checked)} /> show
             generated wrapper
           </label>
           {showWrapper && (
-            <pre
-              style={{
-                margin: 0,
-                background: '#111',
-                border: '1px solid #222',
-                padding: 6,
-                maxHeight: 160,
-                overflow: 'auto',
-                fontSize: 11,
-                whiteSpace: 'pre-wrap',
-                color: '#9cdcfe'
-              }}
-            >
+            <pre className="rh-analysis-generated">
               {state.generatedCode}
             </pre>
           )}
@@ -218,17 +221,17 @@ export function AnalysisPanel({ code, selection, lang }: { code: string; selecti
         {ANALYSIS_ALL_TYPES.filter((t) => state.types[t].status !== 'idle').map((type) => {
           const t = state.types[type];
           return (
-            <div key={type} style={{ border: '1px solid #222', padding: 6 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+            <div key={type} className="rh-analysis-result">
+              <div className="rh-analysis-result-header">
                 <strong style={{ color: statusColor(t) }}>{TYPE_LABEL[type]}</strong>
-                <span style={{ color: '#666', fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", fontSize: 10 }}>
+                <span className="rh-analysis-result-meta">
                   {t.result !== null &&
                     `${t.result.engine}@${t.result.engineVersion} · ${t.result.metadata.durationMs}ms`}
                 </span>
               </div>
-              {t.status === 'running' && <div style={{ color: '#dcdcaa' }}>running…</div>}
-              {t.status === 'unsupported' && <div style={{ color: '#f48771' }}>unsupported — {t.reason}</div>}
-              {t.status === 'error' && <div style={{ color: '#f48771' }}>{t.reason}</div>}
+              {t.status === 'running' && <div className="rh-analysis-notice is-warning">running…</div>}
+              {t.status === 'unsupported' && <div className="rh-analysis-notice is-error">unsupported — {t.reason}</div>}
+              {t.status === 'error' && <div className="rh-analysis-notice is-error">{t.reason}</div>}
               {t.result !== null && <ResultViewer result={t.result} focusFunction={state.focusFunction} />}
             </div>
           );

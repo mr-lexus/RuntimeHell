@@ -26,7 +26,7 @@ function ValueNode({ node, depth }: { node: SerializedValue; depth: number }): R
           padding: '1px 0'
         }}
       >
-        {hasKids ? (open ? '\uf078 ' : '\uf054 ') : ''}
+        {hasKids ? (open ? '⌄ ' : '› ') : ''}
         {formatValue(node)}
         {hasKids && !open ? ` (${kids.length})` : ''}
       </div>

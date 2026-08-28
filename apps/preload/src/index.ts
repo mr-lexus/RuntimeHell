@@ -44,13 +44,32 @@ import {
   type PkgSearchResponse,
   type RunCancelResponse,
   type RunEvent,
-  type RunStartResponse
+  type RuntimeId,
+  type RunStartResponse,
+  AppSettingsSchema,
+  SettingsPatchSchema,
+  type AppSettings,
+  type SettingsPatch
 } from '@rh/protocol';
 
 const api = {
   ping: async (sentAt: number): Promise<unknown> => {
     const req = PingRequestSchema.parse({ sentAt });
     return PingResponseSchema.parse(await ipcRenderer.invoke(IPC.ping, req));
+  },
+  windowMinimize: async (): Promise<void> => {
+    await ipcRenderer.invoke(IPC.windowMinimize);
+  },
+  windowToggleMaximize: async (): Promise<boolean> => {
+    const result = (await ipcRenderer.invoke(IPC.windowToggleMaximize)) as { maximized?: unknown };
+    return result.maximized === true;
+  },
+  windowClose: async (): Promise<void> => {
+    await ipcRenderer.invoke(IPC.windowClose);
+  },
+  windowState: async (): Promise<{ maximized: boolean }> => {
+    const result = (await ipcRenderer.invoke(IPC.windowState)) as { maximized?: unknown };
+    return { maximized: result.maximized === true };
   },
   saveFile: async (req: { workspaceId: string; relPath: string; content: string }): Promise<unknown> => {
     return SaveFileResponseSchema.parse(await ipcRenderer.invoke(IPC.wsSaveFile, SaveFileRequestSchema.parse(req)));
@@ -62,7 +81,7 @@ const api = {
     return ListFilesResponseSchema.parse(await ipcRenderer.invoke(IPC.wsListFiles, ListFilesRequestSchema.parse(req)));
   },
   // --- execution (todo 11) -------------------------------------------------
-  startRun: async (req: { workspaceId: string; relPath: string; content: string; timeoutMs: number; runtimeVersion?: string; lang?: 'js' | 'ts' }): Promise<RunStartResponse> => {
+  startRun: async (req: { workspaceId: string; relPath: string; content: string; timeoutMs: number; runtimeId?: RuntimeId; runtimeVersion?: string; lang?: 'js' | 'ts' }): Promise<RunStartResponse> => {
     return RunStartResponseSchema.parse(
       await ipcRenderer.invoke(IPC.runStart, RunStartRequestSchema.parse(req))
     );
@@ -87,15 +106,16 @@ const api = {
       await ipcRenderer.invoke(IPC.binariesList, BinariesListRequestSchema.parse({}))
     );
   },
-  installRuntime: async (version: string): Promise<BinaryInstallResponse> => {
+  installRuntime: async (id: string, version: string): Promise<BinaryInstallResponse> => {
     return BinaryInstallResponseSchema.parse(
       await ipcRenderer.invoke(
         IPC.binariesInstall,
-        BinaryInstallRequestSchema.parse({ kind: 'runtime', id: 'node', version })
+        BinaryInstallRequestSchema.parse({ kind: 'runtime', id, version })
       )
     );
   },
-  installEngine: async (id: 'v8' | 'd8-debug', version?: string): Promise<BinaryInstallResponse> => {
+  /** Install a managed engine. The main process validates the concrete id. */
+  installEngine: async (id: string, version?: string): Promise<BinaryInstallResponse> => {
     return BinaryInstallResponseSchema.parse(
       await ipcRenderer.invoke(
         IPC.binariesInstall,
@@ -103,11 +123,34 @@ const api = {
       )
     );
   },
-  removeRuntime: async (version: string): Promise<BinaryRemoveResponse> => {
+  /** Copy an existing Windows executable/folder into the private sandbox. */
+  importLocalBinary: async (
+    kind: 'runtime' | 'engine',
+    id: string,
+    sourcePath: string,
+    version: string
+  ): Promise<BinaryInstallResponse> => {
+    return BinaryInstallResponseSchema.parse(
+      await ipcRenderer.invoke(
+        IPC.binariesInstall,
+        BinaryInstallRequestSchema.parse({ kind, id, sourcePath, version })
+      )
+    );
+  },
+  removeRuntime: async (id: string, version: string): Promise<BinaryRemoveResponse> => {
     return BinaryRemoveResponseSchema.parse(
       await ipcRenderer.invoke(
         IPC.binariesRemove,
-        BinaryRemoveRequestSchema.parse({ kind: 'runtime', id: 'node', version })
+        BinaryRemoveRequestSchema.parse({ kind: 'runtime', id, version })
+      )
+    );
+  },
+  /** Remove one managed engine version from the binary manifest/cache. */
+  removeEngine: async (id: string, version: string): Promise<BinaryRemoveResponse> => {
+    return BinaryRemoveResponseSchema.parse(
+      await ipcRenderer.invoke(
+        IPC.binariesRemove,
+        BinaryRemoveRequestSchema.parse({ kind: 'engine', id, version })
       )
     );
   },
@@ -122,10 +165,10 @@ const api = {
     };
   },
   // --- packages panel (todo 13) ---------------------------------------------
-  pkgInstall: async (req: { workspaceId: string; name: string; versionRange?: string; managedNodeVersion?: string }): Promise<PkgOpResponse> => {
+  pkgInstall: async (req: { workspaceId: string; name: string; versionRange?: string; managedNodeVersion?: string; ignoreScripts?: boolean }): Promise<PkgOpResponse> => {
     return PkgOpResponseSchema.parse(await ipcRenderer.invoke(IPC.packagesInstall, PkgOpRequestSchema.parse(req)));
   },
-  pkgRemove: async (req: { workspaceId: string; name: string; managedNodeVersion?: string }): Promise<PkgOpResponse> => {
+  pkgRemove: async (req: { workspaceId: string; name: string; managedNodeVersion?: string; ignoreScripts?: boolean }): Promise<PkgOpResponse> => {
     return PkgOpResponseSchema.parse(await ipcRenderer.invoke(IPC.packagesRemove, PkgOpRequestSchema.parse(req)));
   },
   pkgList: async (workspaceId: string): Promise<PkgListResponse> => {
@@ -180,11 +223,11 @@ const api = {
     };
   },
   // --- persistence (todo 21) --------------------------------------------------
-  settingsGet: async (): Promise<unknown> => {
-    return ipcRenderer.invoke(IPC.settingsGet, {});
+  settingsGet: async (): Promise<AppSettings> => {
+    return AppSettingsSchema.parse(await ipcRenderer.invoke(IPC.settingsGet, {}));
   },
-  settingsSet: async (patch: unknown): Promise<unknown> => {
-    return ipcRenderer.invoke(IPC.settingsSet, patch);
+  settingsSet: async (patch: SettingsPatch): Promise<AppSettings> => {
+    return AppSettingsSchema.parse(await ipcRenderer.invoke(IPC.settingsSet, SettingsPatchSchema.parse(patch)));
   },
   listWorkspaces: async (): Promise<unknown> => {
     return ipcRenderer.invoke(IPC.wsListWorkspaces, {});

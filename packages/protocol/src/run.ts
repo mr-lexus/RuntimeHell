@@ -129,6 +129,12 @@ export const RunStartRequestSchema = z
     relPath: z.string().min(1),
     content: z.string(),
     timeoutMs: z.number().int().positive(),
+    /**
+     * Runtime to execute with. Optional for backward compatibility: when
+     * omitted the main process treats the run as 'node' (the historical
+     * default), so pre-runtime-switching renderers behave exactly as before.
+     */
+    runtimeId: RuntimeIdSchema.optional(),
     /** Requested MANAGED node version; falls back to system when absent/uninstalled. */
     runtimeVersion: z.string().min(1).optional(),
     /** Language flavor override from the editor toggle ('js' skips TS transpile). */

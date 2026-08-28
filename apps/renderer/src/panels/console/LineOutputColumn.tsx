@@ -1,44 +1,45 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRun, type InlineConsoleEntry } from '../../state/run';
 import type { SerializedValue } from '@rh/protocol';
+import { detectTable, type TableShape } from './table-shape';
 
-/** Must match CodeEditor's monaco lineHeight option. */
+/** Default line step used when the column is rendered outside WorkbenchShell. */
 export const LINE_HEIGHT_PX = 20;
 
 /* ── colour palette (VSCode-dark-inspired) ───────────────────────────── */
 
 const C = {
-  str: '#ce9178',
-  num: '#b5cea8',
-  bool: '#569cd6',
-  nil: '#569cd6',
-  sym: '#c586c0',
-  fn: '#dcdcaa',
-  cls: '#4ec9b0',
-  err: '#f48771',
-  date: '#ce9178',
-  re: '#d16969',
-  coll: '#9cdcfe',
-  key: '#9cdcfe',
-  proto: '#569cd6',
+  str: 'var(--rh-value-string, #d99a78)',
+  num: 'var(--rh-value-number, #9fca9f)',
+  bool: 'var(--rh-value-bool, var(--accent-strong))',
+  nil: 'var(--rh-value-null, var(--accent-strong))',
+  sym: 'var(--rh-value-symbol, #c5a0d8)',
+  fn: 'var(--rh-value-function, var(--warn))',
+  cls: 'var(--rh-value-class, #72c5b3)',
+  err: 'var(--err)',
+  date: 'var(--rh-value-date, #d99a78)',
+  re: 'var(--rh-value-regexp, #d47a87)',
+  coll: 'var(--rh-value-collection, var(--accent))',
+  key: 'var(--rh-value-key, var(--accent-strong))',
+  proto: 'var(--accent)',
+  protoBorder: 'color-mix(in srgb, var(--accent) 40%, transparent)',
   dim: 'var(--text-dim)',
   ok: 'var(--ok)',
   warn: 'var(--warn)',
-  errBg: 'rgba(244,135,113,0.12)',
-  warnBg: 'rgba(220,220,170,0.12)',
-  hover: 'rgba(255,255,255,0.04)',
+  errBg: 'color-mix(in srgb, var(--err) 12%, transparent)',
+  warnBg: 'color-mix(in srgb, var(--warn) 12%, transparent)',
+  hover: 'color-mix(in srgb, var(--bg-hover) 70%, transparent)',
   border: 'var(--border)',
   panel: 'var(--bg-panel)',
   result: 'var(--result)',
-  rowBg: 'rgba(86,156,214,0.06)',
-  tblHead: 'rgba(86,156,214,0.10)',
-  tblAlt: 'rgba(255,255,255,0.025)',
+  rowBg: 'color-mix(in srgb, var(--accent) 6%, transparent)',
+  tblHead: 'color-mix(in srgb, var(--accent) 10%, transparent)',
+  tblAlt: 'color-mix(in srgb, var(--text) 2.5%, transparent)',
 };
 
 /* ── column width (draggable) ────────────────────────────────────────── */
 
-const WIDTH_MIN = 200;
-const WIDTH_MAX = 1200;
+const WIDTH_MIN = 96;
 const WIDTH_DEFAULT = 340;
 const WIDTH_STORAGE_KEY = 'rh.inspector-width';
 
@@ -46,11 +47,19 @@ function readStoredWidth(): number {
   try {
     const raw = localStorage.getItem(WIDTH_STORAGE_KEY);
     const n = raw === null ? NaN : Number(raw);
-    if (Number.isFinite(n)) return Math.min(WIDTH_MAX, Math.max(WIDTH_MIN, n));
+    if (Number.isFinite(n)) return Math.max(WIDTH_MIN, n);
   } catch {
     /* storage unavailable — fall through to default */
   }
   return WIDTH_DEFAULT;
+}
+
+function maxWidthForRegion(element: HTMLElement | null): number {
+  const region = element?.closest<HTMLElement>('.rh-editor-region');
+  if (!region) return Number.POSITIVE_INFINITY;
+  // Keep a small usable slice for the editor, but do not impose a fixed
+  // inspector maximum: the available width changes with the window.
+  return Math.max(WIDTH_MIN, region.clientWidth - WIDTH_MIN);
 }
 
 function colorOf(v: SerializedValue): string {
@@ -163,23 +172,6 @@ function typeTag(v: SerializedValue): string | null {
 
 /* ── table detection (array of objects with uniform keys) ─────────────── */
 
-interface TableShape { headers: string[]; rows: { k: string; node: SerializedValue }[][] }
-
-function detectTable(v: SerializedValue): TableShape | null {
-  if (v.t !== 'array' || !v.children || v.children.length < 1) return null;
-  const objKids = v.children.filter((c) => c.node.t === 'object' || c.node.t === 'array');
-  if (objKids.length < 1) return null;
-  const headerSet = new Map<string, number>();
-  for (const c of objKids) {
-    for (const child of c.node.children ?? []) {
-      if (child.k === '[[Prototype]]') continue;
-      if (!headerSet.has(child.k)) headerSet.set(child.k, headerSet.size);
-    }
-  }
-  if (headerSet.size === 0) return null;
-  return { headers: Array.from(headerSet.keys()), rows: objKids.map((c) => c.node.children ?? []) };
-}
-
 /* ── table renderer ──────────────────────────────────────────────────── */
 
 const CELL_BORDER = '1px solid rgba(255,255,255,0.06)';
@@ -192,7 +184,7 @@ function TableView({ shape, depth }: { shape: TableShape; depth: number }): Reac
         onClick={() => setCollapsed(false)}
         style={{ cursor: 'pointer', color: C.coll, fontSize: 11, padding: '2px 0', userSelect: 'none' }}
       >
-        {'\uf054'} {shape.rows.length} rows × {shape.headers.length} cols
+        {'›'} {shape.rows.length} rows × {shape.headers.length} cols
       </div>
     );
   }
@@ -267,7 +259,7 @@ function TreeChild({ k, node, inMap }: { k: string; node: SerializedValue; inMap
         onMouseEnter={(e) => { e.currentTarget.style.background = C.hover; }}
         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
       >
-        <span style={{ color: C.dim, display: 'inline-block', width: 14, textAlign: 'center', fontSize: 10, userSelect: 'none' }}>{open ? '\uf078' : '\uf054'}</span>
+        <span style={{ color: C.dim, display: 'inline-block', width: 14, textAlign: 'center', fontSize: 10, userSelect: 'none' }}>{open ? '⌄' : '›'}</span>
         {keySpan}
         {open
           ? <span style={{ color: C.dim, opacity: 0.6, fontSize: 10, fontStyle: 'italic' }}>{typeTag(node) ?? previewText(node)}</span>
@@ -275,7 +267,7 @@ function TreeChild({ k, node, inMap }: { k: string; node: SerializedValue; inMap
         {node.truncated && !open && <span style={{ color: C.warn, fontSize: 10, marginLeft: 4 }}>…truncated</span>}
       </div>
       {open && (
-        <div style={{ borderLeft: `1px solid ${proto ? `${C.proto}66` : C.border}`, marginLeft: 6, paddingLeft: 14 }}>
+        <div style={{ borderLeft: `1px solid ${proto ? C.protoBorder : C.border}`, marginLeft: 6, paddingLeft: 14 }}>
           {tbl
             ? <TableView shape={tbl} depth={1} />
             : kids.map((ck, ci) => <TreeChild key={`${ck.k}-${ci}`} k={ck.k} node={ck.node} inMap={node.t === 'map'} />)}
@@ -316,15 +308,17 @@ function isExpandable(v: SerializedValue | null): boolean {
     ((v.t === 'function' || v.t === 'class') && (v.children?.length ?? 0) > 0);
 }
 
-function OutputRow({ out, ln, canExpand, expanded, onToggle }: {
+function OutputRow({ out, ln, canExpand, expanded, onToggle, lineHeight }: {
   out: RowOut;
   ln: number;
   canExpand: boolean;
   expanded: boolean;
   onToggle: () => void;
+  lineHeight: number;
 }): React.JSX.Element {
   const hasExpand = canExpand && isExpandable(out.primary);
-  const table = out.primary ? detectTable(out.primary) : null;
+  const isTableEntry = out.logs.some((entry) => entry.level === 'table');
+  const table = isTableEntry && out.primary ? detectTable(out.primary) : null;
 
   const tableLabel = (entry: InlineConsoleEntry): string => {
     if (entry.level === 'table' && entry.args && entry.args.length > 0) {
@@ -344,7 +338,7 @@ function OutputRow({ out, ln, canExpand, expanded, onToggle }: {
         data-inspector-oneliner={ln}
         onClick={() => hasExpand && onToggle()}
         style={{
-          height: LINE_HEIGHT_PX,
+          height: lineHeight,
           display: 'flex',
           alignItems: 'center',
           gap: 6,
@@ -381,7 +375,7 @@ function OutputRow({ out, ln, canExpand, expanded, onToggle }: {
         )}
         {hasExpand && (
           <span style={{ marginLeft: 'auto', color: C.result, fontSize: 10, flexShrink: 0, userSelect: 'none' }}>
-            {expanded ? '\uf078' : '\uf054'}
+            {expanded ? '⌄' : '›'}
           </span>
         )}
       </div>
@@ -414,27 +408,29 @@ function OutputRow({ out, ln, canExpand, expanded, onToggle }: {
 export function LineOutputColumn({
   lineCount,
   scrollTop,
-  allowExpand
+  allowExpand,
+  fileId,
+  lineHeight = LINE_HEIGHT_PX
 }: {
   lineCount: number;
   scrollTop: number;
   allowExpand: boolean;
+  fileId: string | null;
+  lineHeight?: number;
 }): React.JSX.Element {
   const inlineByLine = useRun((s) => s.inlineByLine);
   const resultByLine = useRun((s) => s.resultByLine);
+  const runFileId = useRun((s) => s.runFileId);
   const phase = useRun((s) => s.phase);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [expandedLine, setExpandedLine] = useState<number | null>(null);
   const [width, setWidth] = useState<number>(readStoredWidth);
   const [viewportH, setViewportH] = useState<number>(0);
   const dragCleanupRef = useRef<(() => void) | null>(null);
+  const rowHeight = Math.max(18, lineHeight);
 
-  useEffect(() => {
-    if (containerRef.current) containerRef.current.scrollTop = scrollTop;
-  }, [scrollTop]);
-
-  /* Track visible height so scrollHeight matches Monaco's contentHeight
-     (lineCount*LINE_HEIGHT_PX + max(0, viewportHeight - LINE_HEIGHT_PX)). */
+  /* Track visible height so the translated output surface covers Monaco's
+     viewport even when the source is shorter than the editor region. */
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -444,6 +440,20 @@ export function LineOutputColumn({
     });
     ro.observe(el);
     setViewportH(el.clientHeight);
+    return () => ro.disconnect();
+  }, []);
+
+  // A stored width may have been created on a larger window. Clamp it only
+  // when the current editor region is known, and keep it in sync while the
+  // window is resized.
+  useEffect(() => {
+    const el = containerRef.current;
+    const region = el?.closest<HTMLElement>('.rh-editor-region');
+    if (!region) return;
+    const fitToRegion = (): void => setWidth((current) => Math.min(current, maxWidthForRegion(el)));
+    const ro = new ResizeObserver(fitToRegion);
+    ro.observe(region);
+    fitToRegion();
     return () => ro.disconnect();
   }, []);
 
@@ -469,6 +479,7 @@ export function LineOutputColumn({
   useEffect(() => () => dragCleanupRef.current?.(), []);
 
   const rows = useMemo(() => {
+    if (fileId === null || runFileId !== fileId) return {};
     const map: Record<number, RowOut> = {};
     for (const [ls, items] of Object.entries(inlineByLine)) {
       const ln = Number(ls);
@@ -495,7 +506,7 @@ export function LineOutputColumn({
       }
     }
     return map;
-  }, [inlineByLine, resultByLine]);
+  }, [fileId, inlineByLine, resultByLine, runFileId]);
 
   const toggleLine = (ln: number): void => {
     setExpandedLine((prev) => (prev === ln ? null : ln));
@@ -513,7 +524,7 @@ export function LineOutputColumn({
     document.body.style.cursor = 'col-resize';
 
     const onMove = (ev: MouseEvent): void => {
-      latest = Math.min(WIDTH_MAX, Math.max(WIDTH_MIN, startW + (startX - ev.clientX)));
+      latest = Math.min(maxWidthForRegion(containerRef.current), Math.max(WIDTH_MIN, startW + (startX - ev.clientX)));
       setWidth(latest);
     };
     const onUp = (): void => {
@@ -531,7 +542,13 @@ export function LineOutputColumn({
 
   const total = Math.max(lineCount, 1);
   const filled = Object.keys(rows).length;
-  const extra = Math.max(0, viewportH - LINE_HEIGHT_PX);
+  // Keep one stable scroll surface sized like Monaco, but only mount rows
+  // that actually contain output. Rendering an empty div for every source
+  // line made tab switches visibly paint the inspector one line at a time.
+  const contentHeight = Math.max(total * rowHeight, viewportH) + (expandedLine === null ? 0 : 420);
+  const outputRows = Object.entries(rows)
+    .map(([line, out]) => [Number(line), out] as const)
+    .sort(([a], [b]) => a - b);
 
   return (
     <div
@@ -567,34 +584,46 @@ export function LineOutputColumn({
         ref={containerRef}
         style={{
           flex: 1,
-          overflowY: 'auto',
+          // Monaco is the canonical scroll surface for this column.  Keep
+          // the output viewport clipped and move its content by Monaco's
+          // scrollTop rather than maintaining a second independent scrollbar.
+          overflowY: 'hidden',
           overflowX: 'hidden',
           position: 'relative',
           fontFamily: "'JetBrainsMono Nerd Font Mono', 'Cascadia Mono', Consolas, monospace",
           fontSize: 12,
-          lineHeight: `${LINE_HEIGHT_PX}px`
+          lineHeight: `${rowHeight}px`
         }}
       >
-        {filled === 0 && phase !== 'running' && (
-          <div style={{ position: 'absolute', top: 8, left: 10, color: C.dim, fontSize: 11, whiteSpace: 'nowrap' }}>
-            outputs appear next to their line
-          </div>
-        )}
-        {Array.from({ length: total }, (_, i) => i + 1).map((ln) => {
-          const out = rows[ln];
-          if (!out) return <div key={ln} style={{ height: LINE_HEIGHT_PX }} />;
-          return (
-            <OutputRow
-              key={ln}
-              out={out}
-              ln={ln}
-              canExpand={allowExpand}
-              expanded={expandedLine === ln}
-              onToggle={() => toggleLine(ln)}
-            />
-          );
-        })}
-        {extra > 0 && <div style={{ height: extra }} />}
+        <div
+          style={{
+            position: 'relative',
+            width: '100%',
+            height: contentHeight,
+            minHeight: contentHeight,
+            // Keep line N at the same y-coordinate as Monaco line N.
+            transform: `translate3d(0, -${Math.max(0, scrollTop)}px, 0)`,
+            willChange: 'transform'
+          }}
+        >
+          {filled === 0 && phase !== 'running' && (
+            <div style={{ position: 'absolute', top: 8, left: 10, color: C.dim, fontSize: 11, whiteSpace: 'nowrap' }}>
+              outputs appear next to their line
+            </div>
+          )}
+          {outputRows.map(([ln, out]) => (
+            <div key={ln} style={{ position: 'absolute', top: (ln - 1) * rowHeight, left: 0, right: 0, minHeight: rowHeight, zIndex: expandedLine === ln ? 2 : 1 }}>
+              <OutputRow
+                out={out}
+                ln={ln}
+                canExpand={allowExpand}
+                expanded={expandedLine === ln}
+                onToggle={() => toggleLine(ln)}
+                lineHeight={rowHeight}
+              />
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

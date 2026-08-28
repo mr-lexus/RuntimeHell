@@ -14,7 +14,9 @@ export const PkgOpRequestSchema = z
     /** Optional range for installs ('latest' default). */
     versionRange: z.string().min(1).optional(),
     /** Renderer's selected MANAGED node version — drives D7 npm resolution. */
-    managedNodeVersion: z.string().min(1).optional()
+    managedNodeVersion: z.string().min(1).optional(),
+    /** Whether npm lifecycle scripts are disabled for this operation. */
+    ignoreScripts: z.boolean().default(true)
   })
   .strict();
 export type PkgOpRequest = z.infer<typeof PkgOpRequestSchema>;

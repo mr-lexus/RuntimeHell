@@ -6,7 +6,7 @@
  * main process additionally enforces single-flight per workspace.
  */
 import { create } from 'zustand';
-import type { RunEvent, SerializedValue } from '@rh/protocol';
+import type { RunEvent, RuntimeId, SerializedValue } from '@rh/protocol';
 import { getActiveFile, type OpenFile } from './ui.js';
 import { useRuntimes } from './runtimes.js';
 
@@ -42,7 +42,11 @@ export type RunLang = 'js' | 'ts';
 interface RunState {
   phase: RunPhase;
   runId: string | null;
+  /** Source file that produced the current inline output/result maps. */
+  runFileId: string | null;
   runtimeVersion: string | null;
+  /** Runtime id that executed the last run (runtime switching). */
+  lastRuntimeId: RuntimeId | null;
   timeoutMs: number;
   lines: ConsoleLine[];
   reports: { index: number; value: SerializedValue }[];
@@ -87,7 +91,9 @@ function upsertReport(
 export const useRun = create<RunState>((set, get) => ({
   phase: 'idle',
   runId: null,
+  runFileId: null,
   runtimeVersion: null,
+  lastRuntimeId: null,
   timeoutMs: 5000,
   lines: [],
   reports: [],
@@ -131,14 +137,17 @@ export const useRun = create<RunState>((set, get) => ({
       set({ notice: 'no file open' });
       return;
     }
-    set({ phase: 'running', lines: [], reports: [], inlineConsole: [], inlineByLine: {}, resultByLine: {}, lastExit: null, notice: null });
+    set({ phase: 'running', runFileId: file.id, lines: [], reports: [], inlineConsole: [], inlineByLine: {}, resultByLine: {}, lastExit: null, notice: null });
+    const rt = useRuntimes.getState();
     const response = await bridge.startRun({
       workspaceId: 'default',
       relPath: file.relPath,
       content: file.content,
-      timeoutMs: 5000,
-      // Per-workspace override (todo 12); falls back to system node in main.
-      runtimeVersion: useRuntimes.getState().selectedVersion ?? undefined,
+      timeoutMs: get().timeoutMs,
+      // Active runtime dispatch (node/deno/bun); version = per-runtime selection,
+      // falls back to system/newest-managed resolution in main when undefined.
+      runtimeId: rt.activeRuntime,
+      runtimeVersion: rt.selected[rt.activeRuntime] ?? undefined,
       // Language override ('js' skips TS transpile in the main process).
       lang: get().lang
     });
@@ -157,7 +166,7 @@ export const useRun = create<RunState>((set, get) => ({
       }
       return;
     }
-    set({ runId: response.runId, runtimeVersion: response.runtimeVersion });
+    set({ runId: response.runId, runtimeVersion: response.runtimeVersion, lastRuntimeId: rt.activeRuntime });
   },
 
   scheduleAutoRun: () => {

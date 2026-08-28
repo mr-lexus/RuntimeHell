@@ -187,48 +187,100 @@ function makeSerializer(userCaps) {
       state.nodeCount++;
       objNode.children.push({ k: key, node: serializeValue(childVal, depth + 1, ancestors, state) });
     }
-    // [[Prototype]] — serialize one level up the chain so the inspector can
-    // show inherited properties and the constructor name.  We only walk one
-    // extra depth level inside the prototype (its own keys) to keep the tree
-    // compact; deeper chains are represented by label only.
-    try {
-      var proto = Object.getPrototypeOf(value);
-      if (proto !== null && proto !== Object.prototype && proto !== Function.prototype) {
-        var protoLabel = proto.constructor && proto.constructor.name !== 'Object' ? proto.constructor.name : undefined;
-        var protoNode = { t: 'object', label: protoLabel, children: [] };
-        var protoKeys;
-        try {
-          protoKeys = Object.getOwnPropertyNames(proto);
-        } catch (pe) {
-          protoKeys = [];
-        }
-        // Skip noisy internal keys (length, name, caller, arguments for functions).
-        var SKIP = { length: 1, name: 1, caller: 1, arguments: 1, prototype: 1, __proto__: 1, constructor: 1 };
-        for (var pi = 0; pi < protoKeys.length && protoKeys.length < 200; pi++) {
-          var pk = protoKeys[pi];
-          if (SKIP[pk]) continue;
-          if (state.nodeCount >= caps.maxNodes) {
-            protoNode.truncated = true;
-            break;
-          }
-          var pVal;
-          try {
-            pVal = proto[pk];
-          } catch (e) {
-            pVal = '<threw>';
-          }
-          // Skip functions that are just built-in no-ops (toString, hasOwnProperty, etc.)
-          // to keep the tree useful — we still show them as labels.
-          state.nodeCount++;
-          protoNode.children.push({ k: pk, node: serializeValue(pVal, depth + 2, ancestors, state) });
-        }
-        if (protoNode.children.length > 0 || protoLabel) {
-          objNode.children.push({ k: '[[Prototype]]', node: protoNode });
-        }
-      }
-    } catch (_) {}
+    appendPrototypeChain(objNode, value, depth, ancestors, state);
     ancestors.pop();
     return objNode;
+  }
+
+  // Keep the prototype links as explicit tree nodes.  Walking until null is
+  // important for `class Child extends Parent`: showing only Child.prototype
+  // hides the inherited methods on Parent.prototype and Object.prototype.
+  // The same caps used for ordinary values protect the inspector from hostile
+  // proxies and unusually large prototype objects.
+  function appendPrototypeChain(target, value, depth, ancestors, state) {
+    var current = value;
+    var currentTarget = target;
+    var chainDepth = depth;
+    var seen = [];
+    var SKIP = Object.create(null);
+    SKIP.length = 1;
+    SKIP.name = 1;
+    SKIP.caller = 1;
+    SKIP.arguments = 1;
+    SKIP.prototype = 1;
+    SKIP.__proto__ = 1;
+    SKIP.constructor = 1;
+
+    while (chainDepth < caps.maxDepth) {
+      var proto;
+      try {
+        proto = Object.getPrototypeOf(current);
+      } catch (_) {
+        return;
+      }
+
+      if (proto === null) {
+        if (state.nodeCount >= caps.maxNodes) {
+          currentTarget.truncated = true;
+          return;
+        }
+        state.nodeCount++;
+        currentTarget.children.push({ k: '[[Prototype]]', node: { t: 'null' } });
+        return;
+      }
+      if (seen.indexOf(proto) !== -1) {
+        currentTarget.truncated = true;
+        return;
+      }
+      seen.push(proto);
+
+      if (state.nodeCount >= caps.maxNodes) {
+        currentTarget.truncated = true;
+        return;
+      }
+      var protoLabel;
+      try {
+        var ctor = proto.constructor;
+        protoLabel = ctor && typeof ctor.name === 'string' && ctor.name ? ctor.name : undefined;
+      } catch (_) {
+        protoLabel = undefined;
+      }
+      var protoNode = { t: 'object', label: protoLabel, children: [] };
+      state.nodeCount++;
+      currentTarget.children.push({ k: '[[Prototype]]', node: protoNode });
+
+      var protoKeys;
+      try {
+        protoKeys = Object.getOwnPropertyNames(proto);
+      } catch (_) {
+        protoKeys = [];
+      }
+
+      ancestors.push(proto);
+      for (var pi = 0; pi < protoKeys.length && pi < 200; pi++) {
+        var pk = protoKeys[pi];
+        if (SKIP[pk]) continue;
+        if (state.nodeCount >= caps.maxNodes) {
+          protoNode.truncated = true;
+          break;
+        }
+        var pVal;
+        try {
+          pVal = proto[pk];
+        } catch (e) {
+          pVal = '<threw>';
+        }
+        state.nodeCount++;
+        protoNode.children.push({ k: pk, node: serializeValue(pVal, chainDepth + 2, ancestors, state) });
+      }
+      ancestors.pop();
+
+      current = proto;
+      currentTarget = protoNode;
+      chainDepth++;
+    }
+
+    currentTarget.truncated = true;
   }
 
   return function serialize(root) {

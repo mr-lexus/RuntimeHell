@@ -25,6 +25,8 @@ export interface RuntimeCatalogEntry {
   color: string;
   /** Can this be installed via the app's managed-download flow? */
   installable: boolean;
+  /** npm package installed into the active workspace sandbox. */
+  packageName?: string;
   /** Command that detects a system installation (e.g. 'node --version'). */
   detectCommand?: string;
 }
@@ -52,7 +54,7 @@ export const RUNTIME_CATALOG: RuntimeCatalogEntry[] = [
     website: 'https://deno.com',
     version: '2.x',
     color: '#70ffaf',
-    installable: false,
+    installable: true,
     detectCommand: 'deno --version'
   },
   {
@@ -64,7 +66,7 @@ export const RUNTIME_CATALOG: RuntimeCatalogEntry[] = [
     website: 'https://bun.sh',
     version: '1.x',
     color: '#fbf0df',
-    installable: false,
+    installable: true,
     detectCommand: 'bun --version'
   },
   {
@@ -100,7 +102,18 @@ export const RUNTIME_CATALOG: RuntimeCatalogEntry[] = [
     website: 'https://v8.dev',
     version: '12.x',
     color: '#4285f4',
-    installable: false,
+    installable: true,
+    detectCommand: 'd8 --version'
+  },
+  {
+    id: 'd8-debug',
+    name: 'V8 (debug)',
+    category: 'engine',
+    engine: 'V8 / d8-debug',
+    description: 'Debug build of the V8 shell for bytecode, optimization, deopt, and GC analysis.',
+    website: 'https://v8.dev/docs/build',
+    color: '#8ab4f8',
+    installable: true,
     detectCommand: 'd8 --version'
   },
   {
@@ -111,18 +124,18 @@ export const RUNTIME_CATALOG: RuntimeCatalogEntry[] = [
     description: "Mozilla's engine in Firefox. The original JavaScript engine (1995).",
     website: 'https://spidermonkey.dev',
     color: '#ff9500',
-    installable: false,
+    installable: true,
     detectCommand: 'js --version'
   },
   {
-    id: 'jsc',
+    id: 'javascriptcore',
     name: 'JavaScriptCore',
     category: 'engine',
     engine: 'JavaScriptCore',
     description: "Apple's engine in Safari/WebKit, also used by Bun. Tiered JIT: LLInt → B3 → FTL.",
     website: 'https://trac.webkit.org/wiki/JavaScriptCore',
     color: '#007aff',
-    installable: false,
+    installable: true,
     detectCommand: 'jsc --version'
   },
   {
@@ -211,7 +224,8 @@ export const RUNTIME_CATALOG: RuntimeCatalogEntry[] = [
     website: 'https://github.com/zloirock/core-js',
     version: '3.x',
     color: '#f7df1e',
-    installable: false
+    installable: true,
+    packageName: 'core-js'
   },
   {
     id: 'tc39',

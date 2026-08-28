@@ -20,7 +20,12 @@ function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
+    minWidth: 760,
+    minHeight: 520,
     title: 'RuntimeHell',
+    backgroundColor: '#0a0f14',
+    autoHideMenuBar: true,
+    titleBarStyle: 'hidden',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -65,6 +70,24 @@ function main(): void {
   registerIpcHandlers((channel, handler) => {
     ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
   });
+
+  // The renderer owns the compact titlebar, including window actions.
+  ipcMain.handle(IPC.windowMinimize, (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+    return { ok: true };
+  });
+  ipcMain.handle(IPC.windowToggleMaximize, (event) => {
+    const target = BrowserWindow.fromWebContents(event.sender);
+    if (!target) return { maximized: false };
+    if (target.isMaximized()) target.unmaximize();
+    else target.maximize();
+    return { maximized: target.isMaximized() };
+  });
+  ipcMain.handle(IPC.windowClose, (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+    return { ok: true };
+  });
+  ipcMain.handle(IPC.windowState, (event) => ({ maximized: BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false }));
   registerPersistenceHandlers((channel, handler) => {
     ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
   });

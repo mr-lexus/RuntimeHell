@@ -42,6 +42,7 @@ export function ComparePanel({ code }: { code: string }): React.JSX.Element {
         {['v8', 'spidermonkey', 'javascriptcore'].map((id) => (
           <label key={id} style={{ display: 'flex', gap: 3, alignItems: 'center', cursor: 'pointer', fontSize: 11 }}>
             <input
+              className="rh-native-checkbox"
               type="checkbox"
               checked={selectedEngines.includes(id)}
               onChange={() => toggleEngine(id)}
@@ -80,7 +81,7 @@ export function ComparePanel({ code }: { code: string }): React.JSX.Element {
         const term = terminologyFor(entry.engineId);
         return (
           <div key={entry.engineId} style={{ border: '1px solid #333', padding: 6 }}>
-            <div style={{ color: '#9cdcfe', fontWeight: 'bold', marginBottom: 4 }}>
+            <div style={{ color: 'var(--accent-strong)', fontWeight: 'bold', marginBottom: 4 }}>
               {term.displayName} {entry.version !== null ? `(${entry.version})` : ''}
               {entry.status === 'unsupported' && <span style={{ color: '#f48771' }}> — unsupported</span>}
               {entry.reason !== null && <span style={{ color: '#888', marginLeft: 6 }}>{entry.reason}</span>}

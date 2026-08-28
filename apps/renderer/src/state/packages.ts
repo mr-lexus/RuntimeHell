@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { create } from 'zustand';
 import type { PkgEvent, PkgSearchRow } from '@rh/protocol';
 import { useRuntimes } from './runtimes';
+import { useSettings } from './settings';
 
 interface PackagesState {
   installed: Record<string, string>;
@@ -93,7 +94,8 @@ export const usePackages = create<PackagesState>((set, get) => ({
       workspaceId: 'default',
       name,
       ...(range !== undefined && range.trim() !== '' ? { versionRange: range.trim() } : {}),
-      managedNodeVersion: useRuntimes.getState().selectedVersion ?? undefined
+      managedNodeVersion: useRuntimes.getState().selected['node'] ?? undefined,
+      ignoreScripts: useSettings.getState().settings.prefs.ignoreScripts
     });
     set({ busy: false });
     if (response.ok) {
@@ -144,7 +146,7 @@ export const usePackages = create<PackagesState>((set, get) => ({
   remove: async (name) => {
     if (!window.api?.pkgRemove || get().busy) return;
     set({ busy: true });
-    const response = await window.api.pkgRemove({ workspaceId: 'default', name, managedNodeVersion: useRuntimes.getState().selectedVersion ?? undefined });
+    const response = await window.api.pkgRemove({ workspaceId: 'default', name, managedNodeVersion: useRuntimes.getState().selected['node'] ?? undefined, ignoreScripts: useSettings.getState().settings.prefs.ignoreScripts });
     set({ busy: false });
     if (response.ok) {
       await get().refresh();

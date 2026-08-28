@@ -8,7 +8,8 @@
  */
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, basename } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   BinaryManifestSchema,
   ManifestEntrySchema,
@@ -137,6 +138,102 @@ export function targetDirFor(entry: ManifestEntry): string {
   if (entry.kind === 'runtime') return runtimeDir(entry.id, entry.version);
   if (entry.kind === 'engine') return engineDir(entry.id, entry.version);
   return supportDir(entry.id);
+}
+
+const IMPORT_BINARY_NAME: Record<string, string> = {
+  node: 'node.exe',
+  deno: 'deno.exe',
+  bun: 'bun.exe',
+  v8: 'd8.exe',
+  'd8-debug': 'd8.exe',
+  spidermonkey: 'js.exe',
+  javascriptcore: 'jsc.exe',
+  quickjs: 'qjs.exe',
+  hermes: 'hermes.exe',
+  chakra: 'ch.exe',
+  txiki: 'tjs.exe',
+  loran: 'loran.exe',
+  jerryscript: 'jerry.exe',
+  mujs: 'mujs.exe'
+};
+
+function safeImportSegment(value: string, label: string): void {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(value)) throw new Error(`invalid ${label}`);
+}
+
+async function hashImportSource(sourcePath: string): Promise<string> {
+  const hash = createHash('sha256');
+  const walk = async (current: string, relative: string): Promise<void> => {
+    const stat = await fs.stat(current);
+    if (stat.isDirectory()) {
+      const children = (await fs.readdir(current)).sort();
+      for (const child of children) await walk(join(current, child), join(relative, child));
+      return;
+    }
+    hash.update(`${relative}\0`);
+    hash.update(await fs.readFile(current));
+  };
+  await walk(sourcePath, basename(sourcePath));
+  return hash.digest('hex');
+}
+
+/** Copy an existing Windows runtime/engine into the private RuntimeHell cache. */
+export async function importLocalArtifact(
+  kind: 'runtime' | 'engine',
+  id: string,
+  sourcePath: string,
+  version: string
+): Promise<ManifestEntry> {
+  if (!isAbsolute(sourcePath)) throw new Error('local import path must be absolute');
+  safeImportSegment(id, 'binary id');
+  safeImportSegment(version, 'version');
+  const sourceStat = await fs.stat(sourcePath);
+  const entry: ManifestEntry = {
+    kind,
+    id,
+    platform: 'win64',
+    arch: 'x64',
+    version,
+    url: pathToFileURL(sourcePath).toString(),
+    sha256: await hashImportSource(sourcePath),
+    license: 'user-provided local artifact',
+    source: 'local-import',
+    customBuildRequired: false as const
+  };
+  const finalDir = targetDirFor(entry);
+  const stageDir = tmpDir(`local-${kind}-${id}-${version}`);
+  try {
+    await fs.access(finalDir).then(
+      () => {
+        throw new Error(`already installed at ${finalDir}`);
+      },
+      () => undefined
+    );
+    await fs.rm(stageDir, { recursive: true, force: true });
+    await fs.mkdir(stageDir, { recursive: true });
+    if (sourceStat.isDirectory()) {
+      const executableName = IMPORT_BINARY_NAME[id];
+      if (executableName === undefined) throw new Error(`no Windows executable mapping for ${kind}/${id}`);
+      try {
+        await fs.access(join(sourcePath, executableName));
+      } catch {
+        throw new Error(`local artifact folder must contain ${executableName}`);
+      }
+      // Materialize links into the cache so an imported tree cannot keep a
+      // path back out of the sandbox when it is executed later.
+      await fs.cp(sourcePath, stageDir, { recursive: true, dereference: true });
+    } else {
+      await fs.copyFile(sourcePath, join(stageDir, IMPORT_BINARY_NAME[id] ?? basename(sourcePath)));
+    }
+    await fs.mkdir(dirname(finalDir), { recursive: true });
+    await fs.rename(stageDir, finalDir);
+    const installed: ManifestEntry = { ...entry, installedPath: finalDir, addedAt: new Date().toISOString() };
+    await upsertEntry(installed);
+    return installed;
+  } catch (error) {
+    await fs.rm(stageDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 /**
