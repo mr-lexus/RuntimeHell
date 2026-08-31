@@ -19,7 +19,7 @@ const SELECT_KEY = 'rh.runtime.selected';
 const LEGACY_SELECT_KEY = 'rh.runtime.selectedVersion';
 const ACTIVE_KEY = 'rh.runtime.activeRuntime';
 
-const RUNTIME_IDS: readonly RuntimeId[] = ['node', 'deno', 'bun'];
+const RUNTIME_IDS: readonly RuntimeId[] = ['node', 'deno', 'bun', 'browser'];
 
 /** Per-runtime system detection outcome, keyed by catalog entry id. */
 export interface RuntimeDetection {
@@ -30,17 +30,38 @@ export interface RuntimeDetection {
 /** Selection value: a managed version, an nvm version, or the global PATH runtime. */
 export type RuntimeSelection = string;
 
+export interface RuntimeInstallProgress {
+  id: string;
+  version: string;
+  receivedBytes: number;
+  totalBytes: number | null;
+}
+
+type RuntimeProgressMap = Record<string, RuntimeInstallProgress>;
+
+function progressKey(id: string, version: string): string {
+  return `${id}:${version}`;
+}
+
+function withoutProgress(progress: RuntimeProgressMap, key: string): RuntimeProgressMap {
+  if (progress[key] === undefined) return progress;
+  const next = { ...progress };
+  delete next[key];
+  return next;
+}
+
 interface RuntimesState {
   loadedOnce: boolean;
   loading: boolean;
   systemRuntimes: Record<string, SystemRuntimeInfo | null>;
+  systemBrowsers: Record<string, SystemRuntimeInfo | null>;
   nvm: NvmInfo | null;
   /** Managed runtime and engine entries returned by the binary manifest. */
   installed: ManifestEntry[];
   availableVersions: Record<string, RuntimeVersionRow[]>;
   availableErrors: Record<string, string>;
-  /** Single active install download progress (per runtime id). */
-  progress: { id: string; version: string; receivedBytes: number; totalBytes: number | null } | null;
+  /** Active install/download progress, keyed by runtime id and version. */
+  progress: RuntimeProgressMap;
   /** Per-runtime selection, keyed by runtime id. */
   selected: Record<string, RuntimeSelection>;
   /** Runtime used to run code (Ctrl+Enter / auto-run). */
@@ -96,11 +117,12 @@ export const useRuntimes = create<RuntimesState>((set, get) => ({
   loadedOnce: false,
   loading: false,
   systemRuntimes: {},
+  systemBrowsers: {},
   nvm: null,
   installed: [],
   availableVersions: {},
   availableErrors: {},
-  progress: null,
+  progress: {},
   selected: loadSelected(),
   activeRuntime: loadActiveRuntime(),
   notice: null,
@@ -126,6 +148,7 @@ export const useRuntimes = create<RuntimesState>((set, get) => ({
         loadedOnce: true,
         loading: false,
         systemRuntimes: list.systemRuntimes,
+        systemBrowsers: list.systemBrowsers,
         nvm: list.nvm,
         installed: list.installed,
         availableVersions: list.availableVersions,
@@ -141,68 +164,121 @@ export const useRuntimes = create<RuntimesState>((set, get) => ({
     if (!window.api?.onBinariesProgress) return undefined;
     return window.api.onBinariesProgress((event: BinaryProgressEvent) => {
       if (event.done) {
-        set({ progress: null });
+        set((state) => {
+          const key = progressKey(event.id, event.version);
+          if (state.progress[key] !== undefined) return { progress: withoutProgress(state.progress, key) };
+          const matchingKeys = Object.entries(state.progress)
+            .filter(([, progress]) => progress.id === event.id)
+            .map(([matchingKey]) => matchingKey);
+          return matchingKeys.length === 1
+            ? { progress: withoutProgress(state.progress, matchingKeys[0]!) }
+            : state;
+        });
         void get().refresh();
         return;
       }
-      set({
-        progress: { id: event.id, version: event.version, receivedBytes: event.receivedBytes, totalBytes: event.totalBytes }
+      set((state) => {
+        const key = progressKey(event.id, event.version);
+        const existingKey = state.progress[key] !== undefined
+          ? key
+          : Object.entries(state.progress).find(([, progress]) =>
+              progress.id === event.id && (progress.version === 'latest' || progress.version === event.version)
+            )?.[0];
+        const next = { ...state.progress };
+        if (existingKey !== undefined && existingKey !== key) delete next[existingKey];
+        next[key] = {
+          id: event.id,
+          version: event.version,
+          receivedBytes: event.receivedBytes,
+          totalBytes: event.totalBytes
+        };
+        return { progress: next };
       });
     });
   },
 
   install: async (kind, id, version) => {
-    if (!window.api || get().progress !== null) return;
+    if (!window.api) return;
     const progressVersion = version ?? 'latest';
-    set({ notice: null, progress: { id, version: progressVersion, receivedBytes: 0, totalBytes: null } });
-    const response =
-      kind === 'runtime'
-        ? await window.api.installRuntime(id, version ?? '')
-        : await window.api.installEngine(id, version);
-    if (!response.ok) {
-      set({ notice: `install failed: ${response.message}`, progress: null });
-      return;
-    }
-    const selected = kind === 'runtime'
-      ? { ...get().selected, [id]: response.entry.version }
-      : get().selected;
-    set({ progress: null, selected });
-    if (kind === 'runtime') {
-      try {
-        localStorage.setItem(SELECT_KEY, JSON.stringify(selected));
-      } catch {
-        /* storage unavailable — session-only selection */
+    const key = progressKey(id, progressVersion);
+    if (get().progress[key] !== undefined) return;
+    set((state) => ({
+      notice: null,
+      progress: {
+        ...state.progress,
+        [key]: { id, version: progressVersion, receivedBytes: 0, totalBytes: null }
       }
+    }));
+    try {
+      const response =
+        kind === 'runtime'
+          ? await window.api.installRuntime(id, version ?? '')
+          : await window.api.installEngine(id, version);
+      if (!response.ok) {
+        set((state) => ({ notice: `install failed: ${response.message}`, progress: withoutProgress(state.progress, key) }));
+        return;
+      }
+      const selected = kind === 'runtime'
+        ? { ...get().selected, [id]: response.entry.version }
+        : get().selected;
+      set((state) => ({ progress: withoutProgress(state.progress, key), selected }));
+      if (kind === 'runtime') {
+        try {
+          localStorage.setItem(SELECT_KEY, JSON.stringify(selected));
+        } catch {
+          /* storage unavailable — session-only selection */
+        }
+      }
+      await get().refresh();
+    } catch (err) {
+      set((state) => ({
+        notice: `install failed: ${err instanceof Error ? err.message : String(err)}`,
+        progress: withoutProgress(state.progress, key)
+      }));
     }
-    await get().refresh();
   },
 
   importLocal: async (kind, id, sourcePath, version) => {
-    if (!window.api || get().progress !== null) return;
+    if (!window.api) return;
     const normalizedPath = sourcePath.trim();
     const normalizedVersion = version.trim();
     if (normalizedPath === '' || normalizedVersion === '') {
       set({ notice: 'local import requires an absolute path and version' });
       return;
     }
-    set({ notice: null, progress: { id, version: normalizedVersion, receivedBytes: 0, totalBytes: null } });
-    const response = await window.api.importLocalBinary(kind, id, normalizedPath, normalizedVersion);
-    if (!response.ok) {
-      set({ notice: `local import failed: ${response.message}`, progress: null });
-      return;
-    }
-    const selected = kind === 'runtime'
-      ? { ...get().selected, [id]: response.entry.version }
-      : get().selected;
-    set({ progress: null, selected });
-    if (kind === 'runtime') {
-      try {
-        localStorage.setItem(SELECT_KEY, JSON.stringify(selected));
-      } catch {
-        /* storage unavailable — session-only selection */
+    const key = progressKey(id, normalizedVersion);
+    if (get().progress[key] !== undefined) return;
+    set((state) => ({
+      notice: null,
+      progress: {
+        ...state.progress,
+        [key]: { id, version: normalizedVersion, receivedBytes: 0, totalBytes: null }
       }
+    }));
+    try {
+      const response = await window.api.importLocalBinary(kind, id, normalizedPath, normalizedVersion);
+      if (!response.ok) {
+        set((state) => ({ notice: `local import failed: ${response.message}`, progress: withoutProgress(state.progress, key) }));
+        return;
+      }
+      const selected = kind === 'runtime'
+        ? { ...get().selected, [id]: response.entry.version }
+        : get().selected;
+      set((state) => ({ progress: withoutProgress(state.progress, key), selected }));
+      if (kind === 'runtime') {
+        try {
+          localStorage.setItem(SELECT_KEY, JSON.stringify(selected));
+        } catch {
+          /* storage unavailable — session-only selection */
+        }
+      }
+      await get().refresh();
+    } catch (err) {
+      set((state) => ({
+        notice: `local import failed: ${err instanceof Error ? err.message : String(err)}`,
+        progress: withoutProgress(state.progress, key)
+      }));
     }
-    await get().refresh();
   },
 
   remove: async (kind, id, version) => {
@@ -252,6 +328,9 @@ export const useRuntimes = create<RuntimesState>((set, get) => ({
   detectRuntimes: async () => {
     const results: Record<string, RuntimeDetection> = {};
     for (const [id, sys] of Object.entries(get().systemRuntimes)) {
+      if (sys !== null) results[id] = { installed: true, version: sys.version };
+    }
+    for (const [id, sys] of Object.entries(get().systemBrowsers)) {
       if (sys !== null) results[id] = { installed: true, version: sys.version };
     }
     const nvm = get().nvm;

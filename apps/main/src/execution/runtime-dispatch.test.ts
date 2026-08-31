@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { RunEvent, RunResult } from '@rh/protocol';
 import { ExecutionManager } from './execution-manager.js';
 import type { ProcessRunner, RunHandle, RunOptions } from './process-runner.js';
+import type { BrowserRuntimeRunner } from '../runtimes/browser/browser-runtime.js';
 import { workspaceRoot } from '../workspace/files.js';
 
 let homeBackup: string | undefined;
@@ -57,7 +58,7 @@ class FakeRunner implements Partial<ProcessRunner> {
   }
 }
 
-type Resolver = (runtimeId: 'node' | 'deno' | 'bun', requestedVersion?: string) => Promise<{ exePath: string; version: string } | null>;
+type Resolver = (runtimeId: 'node' | 'deno' | 'bun' | 'browser', requestedVersion?: string) => Promise<{ exePath: string; version: string } | null>;
 
 function makeManager(resolver: Resolver) {
   const runner = new FakeRunner();
@@ -73,6 +74,7 @@ function makeManager(resolver: Resolver) {
 const NODE = { exePath: 'C:/node/node.exe', version: '24.18.0' };
 const DENO = { exePath: 'C:/deno/deno.exe', version: '2.3.4' };
 const BUN = { exePath: 'C:/bun/bun.exe', version: '1.3.14' };
+const BROWSER = { exePath: 'C:/electron/electron.exe', version: '13.5.0' };
 
 const REQ = {
   workspaceId: 'default',
@@ -123,6 +125,25 @@ describe('ExecutionManager runtime dispatch', () => {
     expect(opts?.exePath).toBe(BUN.exePath);
     expect(opts?.args?.[0]).toBe('run');
     expect(opts?.reportTransport).toBe('stderr');
+  });
+
+  it('dispatches browser to the embedded runner without a Node bootstrap or Deno/Bun prelude', async () => {
+    const resolver = vi.fn<Resolver>(async () => BROWSER);
+    const runner = new FakeRunner();
+    const manager = new ExecutionManager({
+      resolveRuntime: resolver,
+      createRunner: () => new FakeRunner() as unknown as ProcessRunner,
+      createBrowserRunner: () => runner as unknown as BrowserRuntimeRunner,
+      emit: () => undefined
+    });
+    const response = await manager.start({ ...REQ, runtimeId: 'browser' });
+    expect(response).toMatchObject({ ok: true, runtimeVersion: BROWSER.version });
+    expect(resolver).toHaveBeenCalledWith('browser', undefined);
+    expect(runner.handles[0]?.args).toEqual(['run', expect.stringContaining('.rhbuild')]);
+    expect(runner.handles[0]?.reportTransport).toBe('stderr');
+    const entry = await readFile(join(workspaceRoot('default'), '.rhbuild', 'entry.cjs'), 'utf8');
+    expect(entry).not.toContain('Runtime-agnostic result-capture prelude');
+    expect(entry).toContain('__rh.console');
   });
 
   it('prepends the capture prelude to the transpiled entry for deno', async () => {

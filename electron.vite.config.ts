@@ -9,6 +9,12 @@ function copyTemplatesPlugin() {
       cpSync(resolve(process.cwd(), 'apps/main/src/execution/templates'), resolve(process.cwd(), 'out/main/templates'), {
         recursive: true,
       });
+      // Performance harnesses execute outside Electron, so keep Mitata's
+      // ESM source beside the main bundle for both production builds and
+      // electron-vite dev rebuilds.
+      cpSync(resolve(process.cwd(), 'apps/main/node_modules/mitata/src'), resolve(process.cwd(), 'out/main/mitata/src'), {
+        recursive: true,
+      });
     },
   };
 }

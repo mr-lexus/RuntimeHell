@@ -8,7 +8,7 @@ export interface OpenFile {
   dirty: boolean;
 }
 
-export type DrawerTab = 'console' | 'inspector' | 'analysis' | 'packages' | 'runtimes';
+export type DrawerTab = 'console' | 'inspector' | 'analysis' | 'packages' | 'runtimes' | 'performance';
 
 interface UiState {
   files: OpenFile[];

@@ -3,7 +3,7 @@
  * TranspileService → ProcessRunner for a single workspace file, enforcing
  * ONE active run per workspace (auto-run debouncing must never stack runs).
  *
- * Runtime switching: `RunStartRequest.runtimeId` ('node' | 'deno' | 'bun')
+ * Runtime switching: `RunStartRequest.runtimeId` ('node' | 'deno' | 'bun' | 'browser')
  * selects the execution lane; omitting it (or 'node') keeps the exact
  * historical flow (`node --require bootstrap.cjs entry`).
  *
@@ -22,6 +22,7 @@ import { detectSystemNode } from '../runtimes/node/node-runtime.js';
 import { detectNvmNode } from '../runtimes/runtime-detection.js';
 import { resolveRuntimeChoice } from '../runtimes/runtime-resolver.js';
 import { DenoBunRuntimeAdapter, type ResolvedRuntime } from '../runtimes/runtime-adapter.js';
+import { EmbeddedBrowserRuntime, type BrowserRuntimeRunner } from '../runtimes/browser/browser-runtime.js';
 import { readManifest } from '../binaries/binary-manager.js';
 import { workspaceRoot } from '../workspace/files.js';
 
@@ -35,6 +36,8 @@ export interface ExecutionManagerDeps {
   readonly resolveRuntime?: (runtimeId: RuntimeId, requestedVersion?: string) => Promise<ResolvedRuntime | null>;
   /** Runner factory; default = one shared ProcessRunner. */
   readonly createRunner?: () => ProcessRunner;
+  /** Browser lane runner; injected in tests to avoid starting Electron. */
+  readonly createBrowserRunner?: () => BrowserRuntimeRunner;
   /** Event delivery into the renderer. */
   readonly emit: (event: RunEvent) => void;
   /** History recorder (todo 21); injected so tests stay filesystem-free. */
@@ -50,6 +53,11 @@ export interface ExecutionManagerDeps {
     durationMs: number;
     killedBy: string | null;
   }) => void;
+}
+
+interface RunnerLike {
+  onEvent(cb: (event: RunEvent) => void): () => void;
+  run(options: import('./process-runner.js').RunOptions): RunHandle;
 }
 
 interface ActiveRun {
@@ -78,7 +86,7 @@ function ensureNvmDetected(): Promise<NvmInfo | null> {
  * panel hint stays actionable for every lane.
  */
 export function runtimeUnavailableMessage(runtimeId: RuntimeId): string {
-  const name = runtimeId === 'node' ? 'Node.js' : runtimeId === 'deno' ? 'Deno' : 'Bun';
+  const name = runtimeId === 'node' ? 'Node.js' : runtimeId === 'deno' ? 'Deno' : runtimeId === 'bun' ? 'Bun' : 'Chromium Browser';
   return `no ${name} runtime found — install or manage one from the Runtimes panel`;
 }
 
@@ -89,6 +97,9 @@ export function runtimeUnavailableMessage(runtimeId: RuntimeId): string {
  * Deno/Bun skip the nvm lane entirely (DenoBunRuntimeAdapter).
  */
 async function defaultResolveRuntime(runtimeId: RuntimeId, requestedVersion?: string): Promise<ResolvedRuntime | null> {
+  if (runtimeId === 'browser') {
+    return { exePath: process.execPath, version: process.versions.v8 ?? process.versions.chrome ?? 'embedded' };
+  }
   if (runtimeId !== 'node') {
     return new DenoBunRuntimeAdapter(runtimeId).resolveExecutable(requestedVersion);
   }
@@ -114,13 +125,15 @@ function capturePrelude(): string {
 }
 
 export class ExecutionManager {
-  private readonly runner: ProcessRunner;
+  private readonly runner: RunnerLike;
+  private readonly browserRunner: RunnerLike;
   private readonly resolveRuntime: RuntimeResolver;
   private readonly activeByWorkspace = new Map<string, ActiveRun>();
   private readonly activeByRunId = new Map<string, ActiveRun>();
 
   constructor(private readonly deps: ExecutionManagerDeps) {
     this.runner = deps.createRunner?.() ?? new ProcessRunner();
+    this.browserRunner = deps.createBrowserRunner?.() ?? new EmbeddedBrowserRuntime();
     this.resolveRuntime = deps.resolveRuntime ?? defaultResolveRuntime;
   }
 
@@ -136,6 +149,7 @@ export class ExecutionManager {
     // renderers behave exactly as before.
     const runtimeId: RuntimeId = req.runtimeId ?? 'node';
     const isNode = runtimeId === 'node';
+    const isBrowser = runtimeId === 'browser';
 
     // Runtime first: fail before touching disk when no runtime is available.
     const runtime = await this.resolveRuntime(runtimeId, req.runtimeVersion);
@@ -161,8 +175,8 @@ export class ExecutionManager {
     const buildDir = join(root, '.rhbuild');
 
     // Deno/Bun: inject the self-contained capture prelude into the entry.
-    // Node: bootstrap via --require, no banner (EXACT historical output).
-    const prelude = isNode ? '' : capturePrelude();
+    // Node/browser: use their native host hooks, no banner.
+    const prelude = isNode || isBrowser ? '' : capturePrelude();
 
     let entryPath: string;
     let mapPath: string | null = null;
@@ -177,12 +191,12 @@ export class ExecutionManager {
     const forcePassthrough = req.lang === 'js';
     const shouldTranspile = !forcePassthrough && needsTranspile(req.relPath);
     if (shouldTranspile) {
-      const result = await transpileTo(buildDir, req.relPath, captured.code, isNode ? {} : { banner: prelude });
+      const result = await transpileTo(buildDir, req.relPath, captured.code, isNode || isBrowser ? {} : { banner: prelude });
       if (!result.ok) return { ok: false, stage: 'transpile', errors: result.errors };
       entryPath = result.outputPath;
       mapPath = result.mapPath;
     } else {
-      const result = await passthroughTo(buildDir, req.relPath, isNode ? captured.code : `${prelude}\n${captured.code}`);
+      const result = await passthroughTo(buildDir, req.relPath, isNode || isBrowser ? captured.code : `${prelude}\n${captured.code}`);
       entryPath = result.outputPath;
       mapPath = result.mapPath;
     }
@@ -203,9 +217,11 @@ export class ExecutionManager {
     // Per-runtime invocation:
     //   node → `node --require bootstrap.cjs <entry>` (unchanged flow)
     //   deno → `deno run <entry>` · bun → `bun run <entry>`
+    //   browser → hidden Chromium page (the BrowserRuntimeRunner consumes the entry)
     // Capture frames arrive via the prepended prelude on stderr, which
     // ProcessRunner routes/deduplicates exactly like the Node lane.
-    const handle = this.runner.run({
+    const selectedRunner = isBrowser ? this.browserRunner : this.runner;
+    const handle = selectedRunner.run({
       exePath: runtime.exePath,
       args: isNode ? ['--require', bootstrap, entryPath] : ['run', entryPath],
       cwd: buildDir,
@@ -217,7 +233,7 @@ export class ExecutionManager {
     // Subscribe AFTER spawn: the runner emits asynchronously (IO ticks), never
     // synchronously inside run(), and every event is filtered to THIS run so
     // concurrent workspaces sharing the runner cannot cross-talk.
-    const unsubscribe = this.runner.onEvent((event) => {
+    const unsubscribe = selectedRunner.onEvent((event) => {
       if (event.runId !== handle.runId) return;
       if (event.type === 'stderr') {
         // User stderr only: protocol frames were split out by the runner's

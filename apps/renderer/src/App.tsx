@@ -16,6 +16,7 @@ import { useRuntimes } from './state/runtimes';
 import { ANALYSIS_ALL_TYPES } from './state/analysis';
 import { useAnalysis } from './state/analysis';
 import { useSettings, DEFAULT_RENDERER_SETTINGS } from './state/settings';
+import { usePerformance } from './state/performance';
 import type { PaletteCommand } from './ui/CommandPalette';
 import { WorkbenchShell } from './ui/WorkbenchShell';
 import type { SettingsPatch } from '@rh/protocol';
@@ -31,7 +32,7 @@ const DEMO_FILE = {
   content: ANALYSIS_DEMO_CODE
 };
 
-const DRAWER_TABS: DrawerTab[] = ['console', 'inspector', 'analysis', 'packages', 'runtimes'];
+const DRAWER_TABS: DrawerTab[] = ['console', 'inspector', 'analysis', 'packages', 'runtimes', 'performance'];
 
 export function App(): React.JSX.Element {
   const files = useUi((s) => s.files);
@@ -51,6 +52,7 @@ export function App(): React.JSX.Element {
   const hydrateSettings = useSettings((s) => s.hydrate);
   const patchSettings = useSettings((s) => s.patch);
   const resetAppearance = useSettings((s) => s.resetAppearance);
+  const resetEditor = useSettings((s) => s.resetEditor);
   const resetAllSettings = useSettings((s) => s.resetAll);
   const [workspaceView, setWorkspaceView] = useState<'editor' | 'settings'>('editor');
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -97,9 +99,6 @@ export function App(): React.JSX.Element {
   const activeFile = useActiveFile();
   const analysisEngines = useAnalysis((s) => s.engines);
   const analysisEngineId = useAnalysis((s) => s.engineId);
-  const analysisRequestId = useAnalysis((s) => s.requestId);
-  const analysisAutoKeyRef = useRef<string | null>(null);
-  const analysisAutoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const analyzeActions = ANALYSIS_ALL_TYPES.map((type) => {
     const caps = analysisEngines.find((e) => e.id === analysisEngineId)?.capabilities;
     const key = type as keyof typeof caps;
@@ -110,37 +109,14 @@ export function App(): React.JSX.Element {
   const splitRef = useRef<HTMLDivElement | null>(null);
   const lastSelectionRef = useRef<SelectionInfo | null>(null);
 
-  // Keep analysis in sync with source tabs. A short debounce matters during
-  // session restore, where several tabs can become active in quick succession.
-  // The request still contains all analysis types; the backend marks types
-  // unsupported when the selected engine cannot provide them.
+  // Analysis is explicit: changing the source or engine clears stale results
+  // and cancels any in-flight request, but never starts a replacement probe.
+  const activeFileContent = activeFile?.content ?? '';
   useEffect(() => {
-    if (analysisAutoTimerRef.current !== null) clearTimeout(analysisAutoTimerRef.current);
-    if (activeFile === null || activeFile.content.trim() === '') {
-      analysisAutoKeyRef.current = null;
-      return;
-    }
-    if (analysisRequestId !== null) return;
-    const engine = analysisEngines.find((item) => item.id === analysisEngineId);
-    const hasCapability = engine?.capabilities !== null && engine?.capabilities !== undefined &&
-      Object.entries(engine.capabilities).some(([key, value]) => key !== 'notes' && value === true);
-    if (!hasCapability) return;
-    const autoKey = `${activeFile.id}:${analysisEngineId}`;
-    if (analysisAutoKeyRef.current === autoKey) return;
-    analysisAutoTimerRef.current = setTimeout(() => {
-      analysisAutoTimerRef.current = null;
-      if (useAnalysis.getState().requestId !== null) return;
-      analysisAutoKeyRef.current = autoKey;
-      const language = activeFile.language === 'typescript' ? 'ts' : 'js';
-      useAnalysis.getState().requestFromSelection(null, activeFile.content, [...ANALYSIS_ALL_TYPES], false, language);
-    }, 250);
-    return () => {
-      if (analysisAutoTimerRef.current !== null) {
-        clearTimeout(analysisAutoTimerRef.current);
-        analysisAutoTimerRef.current = null;
-      }
-    };
-  }, [activeFile, activeFileId, analysisEngineId, analysisEngines, analysisRequestId]);
+    const analysis = useAnalysis.getState();
+    if (analysis.requestId !== null) void analysis.cancel();
+    analysis.reset();
+  }, [activeFileContent, activeFileId, analysisEngineId]);
 
   useEffect(() => {
     exposeMonacoForTests();
@@ -194,11 +170,13 @@ export function App(): React.JSX.Element {
     });
     const offEvents = window.api?.onRunEvent((event) => useRun.getState().handleEvent(event));
     const offAnalysis = window.api?.onAnalysisEvent((event) => useAnalysis.getState().handleEvent(event));
+    const offPerformance = usePerformance.getState().bindEvents();
     return () => {
       disposed = true;
       offRun();
       offEvents?.();
       offAnalysis?.();
+      offPerformance?.();
     };
   }, [openFile]);
 
@@ -207,11 +185,11 @@ export function App(): React.JSX.Element {
   const [ataStatus, setAtaStatus] = useState<AtaStatus>(getAtaStatus());
   const inlineByLine = useRun((s) => s.inlineByLine);
   const resultByLine = useRun((s) => s.resultByLine);
-  const [showInspector, setShowInspector] = useState<boolean>(DEFAULT_RENDERER_SETTINGS.editor.inlineInspector);
+  const [showOutputColumn, setShowOutputColumn] = useState<boolean>(DEFAULT_RENDERER_SETTINGS.editor.inlineInspector);
   const [scrollTop, setScrollTop] = useState(0);
   const [lineCount, setLineCount] = useState(1);
   useEffect(() => {
-    setShowInspector(appSettings.editor.inlineInspector);
+    setShowOutputColumn(appSettings.editor.inlineInspector);
     setDrawerOpen(appSettings.layout.drawerOpen);
     if (useUi.getState().drawerRatio !== appSettings.layout.drawerRatio) setDrawerRatio(appSettings.layout.drawerRatio);
   }, [appSettings.editor.inlineInspector, appSettings.layout.drawerOpen, appSettings.layout.drawerRatio, setDrawerRatio]);
@@ -414,7 +392,7 @@ export function App(): React.JSX.Element {
     if (patch.prefs?.timeoutMs !== undefined) useRun.getState().setTimeoutMs(patch.prefs.timeoutMs);
     if (patch.prefs?.autorun !== undefined) setAutoRun(patch.prefs.autorun);
     if (patch.prefs?.defaultRuntime !== undefined) useRuntimes.getState().setActiveRuntime(patch.prefs.defaultRuntime);
-    if (patch.editor?.inlineInspector !== undefined) setShowInspector(patch.editor.inlineInspector);
+    if (patch.editor?.inlineInspector !== undefined) setShowOutputColumn(patch.editor.inlineInspector);
     if (patch.layout?.drawerOpen !== undefined) setDrawerOpen(patch.layout.drawerOpen);
     if (patch.layout?.drawerRatio !== undefined) setDrawerRatio(patch.layout.drawerRatio);
   };
@@ -446,7 +424,7 @@ export function App(): React.JSX.Element {
     { id: 'autorun', label: autoRun ? 'Disable auto-run' : 'Enable auto-run', category: 'Execution', run: () => applySettingsPatch({ prefs: { autorun: !autoRun } }) }
   ];
 
-  return <WorkbenchShell settings={appSettings} files={files} activeFileId={activeFileId} activeFile={activeFile} drawerTab={drawerTab} drawerRatio={drawerRatio} drawerOpen={drawerOpen} showInspector={showInspector} phase={phase} runtimeVersion={runtimeVersion} lastRuntimeId={lastRuntimeId} activeRuntime={activeRuntime} lastExit={lastExit} autoRun={autoRun} lang={lang} ataStatus={ataStatus} status={status} lineCount={lineCount} scrollTop={scrollTop} inlineByLine={inlineByLine} resultByLine={resultByLine} analyzeActions={analyzeActions} paletteOpen={paletteOpen} settingsViewActive={workspaceView === 'settings'} commands={commands} onClosePalette={() => setPaletteOpen(false)} onOpenPalette={() => setPaletteOpen(true)} onOpenSettings={() => setWorkspaceView('settings')} onSetWorkspaceView={setWorkspaceView} onSetActive={setActive} onCloseFile={closeFile} onRenameFile={renameFile} onCreateTab={createTab} onRun={() => emitRunRequested()} onSave={onSave} onSaveFile={(file) => saveFile(file)} onChange={(value) => { if (activeFile) { updateContent(activeFile.id, value); scheduleAutoRun(); scheduleAta(value); } }} onFormatError={(message) => setStatus(`format error: ${message}`)} onSelectionChanged={(info) => { lastSelectionRef.current = info; }} onScrollTop={setScrollTop} onLineCount={setLineCount} onAnalyze={(type, code, info) => { const language = activeFile?.language === 'typescript' ? 'ts' : 'js'; useAnalysis.getState().requestFromSelection(info ?? null, code || activeFile?.content || '', [type], false, language); setDrawerTab('analysis'); setDrawerOpen(true); }} onLoadAnalysisDemo={loadAnalysisDemo} onSetDrawerTab={(tab) => { setDrawerTab(tab); applySettingsPatch({ layout: { drawerTab: tab } }); }} onSetDrawerOpen={(open) => { setDrawerOpen(open); applySettingsPatch({ layout: { drawerOpen: open } }); }} onSetDrawerRatio={(ratio) => { setDrawerRatio(ratio); applySettingsPatch({ layout: { drawerRatio: ratio } }); }} onSetAutoRun={(value) => applySettingsPatch({ prefs: { autorun: value } })} onCancel={() => void requestCancel()} onSetLang={setLang} onSetInspector={(value) => applySettingsPatch({ editor: { inlineInspector: value } })} onPatchSettings={applySettingsPatch} onResetAppearance={() => void resetAppearance()} onResetAll={() => void resetAllSettings()} />;
+  return <WorkbenchShell settings={appSettings} files={files} activeFileId={activeFileId} activeFile={activeFile} drawerTab={drawerTab} drawerRatio={drawerRatio} drawerOpen={drawerOpen} showOutputColumn={showOutputColumn} phase={phase} runtimeVersion={runtimeVersion} lastRuntimeId={lastRuntimeId} activeRuntime={activeRuntime} lastExit={lastExit} autoRun={autoRun} lang={lang} ataStatus={ataStatus} status={status} lineCount={lineCount} scrollTop={scrollTop} inlineByLine={inlineByLine} resultByLine={resultByLine} analyzeActions={analyzeActions} paletteOpen={paletteOpen} settingsViewActive={workspaceView === 'settings'} commands={commands} onClosePalette={() => setPaletteOpen(false)} onOpenSettings={() => setWorkspaceView('settings')} onSetWorkspaceView={setWorkspaceView} onSetActive={setActive} onCloseFile={closeFile} onRenameFile={renameFile} onCreateTab={createTab} onRun={() => emitRunRequested()} onSave={onSave} onSaveFile={(file) => saveFile(file)} onChange={(value) => { if (activeFile) { updateContent(activeFile.id, value); scheduleAutoRun(); scheduleAta(value); } }} onFormatError={(message) => setStatus(`format error: ${message}`)} onSelectionChanged={(info) => { lastSelectionRef.current = info; }} onScrollTop={setScrollTop} onLineCount={setLineCount} onAnalyze={(type, code, info) => { const language = activeFile?.language === 'typescript' ? 'ts' : 'js'; useAnalysis.getState().requestFromSelection(info ?? null, code || activeFile?.content || '', [type], false, language); setDrawerTab('analysis'); setDrawerOpen(true); }} onLoadAnalysisDemo={loadAnalysisDemo} onSetDrawerTab={(tab) => { setDrawerTab(tab); if (tab !== 'performance') applySettingsPatch({ layout: { drawerTab: tab } }); }} onSetDrawerOpen={(open) => { setDrawerOpen(open); applySettingsPatch({ layout: { drawerOpen: open } }); }} onSetDrawerRatio={(ratio) => { setDrawerRatio(ratio); applySettingsPatch({ layout: { drawerRatio: ratio } }); }} onSetAutoRun={(value) => applySettingsPatch({ prefs: { autorun: value } })} onCancel={() => void requestCancel()} onSetLang={setLang} onSetOutputColumn={(value) => applySettingsPatch({ editor: { inlineInspector: value } })} onPatchSettings={applySettingsPatch} onResetAppearance={() => void resetAppearance()} onResetEditor={() => void resetEditor()} onResetAll={() => void resetAllSettings()} />;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontSize: 13, background: 'var(--bg-app)', color: 'var(--text)' }}>
@@ -470,11 +448,11 @@ export function App(): React.JSX.Element {
           <option value="rh-light">☀️ light</option>
         </select>
         <button
-          onClick={() => setShowInspector((v) => !v)}
+          onClick={() => setShowOutputColumn((v) => !v)}
           title="Toggle inspector tree in inline panel"
           style={{
-            background: showInspector ? 'var(--bg-chip)' : 'transparent',
-            color: showInspector ? 'var(--text)' : 'var(--text-dim)',
+            background: showOutputColumn ? 'var(--bg-chip)' : 'transparent',
+            color: showOutputColumn ? 'var(--text)' : 'var(--text-dim)',
             border: '1px solid var(--border)',
             padding: '3px 8px',
             cursor: 'pointer',
@@ -482,7 +460,7 @@ export function App(): React.JSX.Element {
             marginRight: 8
           }}
         >
-          🔍 inspector {showInspector ? 'on' : 'off'}
+          🔍 output {showOutputColumn ? 'on' : 'off'}
         </button>
         <span
           title="Force JS passthrough (Node 22+ strips types) or TS transpile via esbuild"
@@ -607,7 +585,7 @@ export function App(): React.JSX.Element {
               fileId={activeFileId}
               lineCount={lineCount}
               scrollTop={scrollTop}
-              allowExpand={showInspector}
+              allowExpand
             />
           )}
         </div>

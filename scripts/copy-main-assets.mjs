@@ -10,6 +10,8 @@ import { resolve } from 'node:path';
 
 const src = resolve(process.cwd(), 'apps/main/src/execution/templates');
 const dest = resolve(process.cwd(), 'out/main/templates');
+const mitataSrc = resolve(process.cwd(), 'apps/main/node_modules/mitata/src');
+const mitataDest = resolve(process.cwd(), 'out/main/mitata/src');
 
 if (!existsSync(src)) {
   console.error(`[copy-main-assets] missing source: ${src}`);
@@ -17,3 +19,10 @@ if (!existsSync(src)) {
 }
 cpSync(src, dest, { recursive: true });
 console.log(`[copy-main-assets] ${src} -> ${dest}`);
+
+if (!existsSync(mitataSrc)) {
+  console.error(`[copy-main-assets] missing Mitata source: ${mitataSrc}`);
+  process.exit(1);
+}
+cpSync(mitataSrc, mitataDest, { recursive: true });
+console.log(`[copy-main-assets] ${mitataSrc} -> ${mitataDest}`);

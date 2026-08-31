@@ -52,8 +52,9 @@ describe('run contract', () => {
     expect(RunRequestSchema.parse(baseReq)).toEqual(baseReq);
   });
 
-  it('rejects RunRequest with bad runtime or nonpositive timeout', () => {
-    expect(() => RunRequestSchema.parse({ ...baseReq, runtimeId: 'browser' })).toThrow();
+  it('accepts the embedded browser lane and rejects unknown runtimes', () => {
+    expect(RunRequestSchema.parse({ ...baseReq, runtimeId: 'browser' }).runtimeId).toBe('browser');
+    expect(() => RunRequestSchema.parse({ ...baseReq, runtimeId: 'not-a-runtime' })).toThrow();
     expect(() => RunRequestSchema.parse({ ...baseReq, timeoutMs: 0 })).toThrow();
   });
 
@@ -137,4 +138,3 @@ describe('manifest contract', () => {
     expect(() => BinaryManifestSchema.parse({ schemaVersion: 1, entries: [{ ...entry, url: 'not-a-url' }] })).toThrow();
   });
 });
-

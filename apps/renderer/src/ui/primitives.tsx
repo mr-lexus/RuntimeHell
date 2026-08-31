@@ -7,23 +7,24 @@ export interface InstrumentFrameProps extends HTMLAttributes<HTMLElement> {
   title: string;
   metadata?: ReactNode;
   actions?: ReactNode;
+  showHeader?: boolean;
   state?: FrameState;
   connectedEdges?: 'all' | 'top' | 'bottom' | 'left' | 'right' | 'none';
   readout?: ReactNode;
 }
 
 /** Shared Runtime Hell frame: the geometry carries state, not a card fill. */
-export function InstrumentFrame({ index, title, metadata, actions, state = 'idle', connectedEdges = 'all', readout, className = '', children, ...props }: InstrumentFrameProps): React.JSX.Element {
+export function InstrumentFrame({ index, title, metadata, actions, showHeader = true, state = 'idle', connectedEdges = 'all', readout, className = '', children, ...props }: InstrumentFrameProps): React.JSX.Element {
   const id = useId();
   return (
-    <section className={`rh-instrument-frame rh-frame-state-${state} rh-frame-connect-${connectedEdges} ${className}`} aria-labelledby={`${id}-title`} {...props}>
-      <header className="rh-instrument-header">
-        <span className="rh-frame-index">{index}</span>
-        <span className="rh-frame-title" id={`${id}-title`}>{title}</span>
-        <span className="rh-frame-rule" aria-hidden="true" />
-        {metadata && <span className="rh-frame-meta">{metadata}</span>}
-        {actions && <div className="rh-frame-actions">{actions}</div>}
-      </header>
+    <section className={`rh-instrument-frame rh-frame-state-${state} rh-frame-connect-${connectedEdges} ${className}`} aria-labelledby={showHeader ? `${id}-title` : undefined} {...props}>
+      {showHeader && <header>
+          <span className="rh-frame-index">{index}</span>
+          <span className="rh-frame-title" id={`${id}-title`}>{title}</span>
+          <span className="rh-frame-rule" aria-hidden="true" />
+          {metadata && <span className="rh-frame-meta">{metadata}</span>}
+          {actions && <div className="rh-frame-actions">{actions}</div>}
+        </header>}
       <div className="rh-instrument-body">{children}</div>
       {readout && <footer className="rh-frame-readout">{readout}</footer>}
     </section>
@@ -70,7 +71,7 @@ export function Separator({ vertical = false, ...props }: HTMLAttributes<HTMLDiv
 }
 
 export function KeyboardHint({ children }: { children: ReactNode }): React.JSX.Element {
-  return <kbd className="rh-keyboard-hint">{children}</kbd>;
+  return <kbd>{children}</kbd>;
 }
 
 export function EmptyState({ title, detail, children }: { title: string; detail?: string; children?: ReactNode }): React.JSX.Element {

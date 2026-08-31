@@ -9,7 +9,8 @@ export function parseEmbeddedJson(raw: string): unknown | null {
   const trimmed = raw.trim();
   if (trimmed === '') return null;
   try {
-    return JSON.parse(trimmed) as unknown;
+    const parsed = JSON.parse(trimmed) as unknown;
+    return parseAstCandidate(parsed);
   } catch {
     // Continue with line/document extraction below.
   }
@@ -18,7 +19,9 @@ export function parseEmbeddedJson(raw: string): unknown | null {
     const candidate = line.trim();
     if (!candidate.startsWith('{') && !candidate.startsWith('[')) continue;
     try {
-      return JSON.parse(candidate) as unknown;
+      const parsed = JSON.parse(candidate) as unknown;
+      const payload = parseAstCandidate(parsed);
+      if (payload !== null) return payload;
     } catch {
       // A diagnostic line can begin with '['; keep scanning for the payload.
     }
@@ -46,7 +49,9 @@ export function parseEmbeddedJson(raw: string): unknown | null {
         depth -= 1;
         if (depth === 0) {
           try {
-            return JSON.parse(raw.slice(start, end + 1)) as unknown;
+            const parsed = JSON.parse(raw.slice(start, end + 1)) as unknown;
+            const payload = parseAstCandidate(parsed);
+            if (payload !== null) return payload;
           } catch {
             break;
           }
@@ -55,6 +60,35 @@ export function parseEmbeddedJson(raw: string): unknown | null {
     }
   }
   return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isAstNode(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && typeof value['type'] === 'string' && value['type'].length > 0;
+}
+
+/**
+ * Accept real AST nodes only. Engine diagnostics often look JSON-like (for
+ * example `{ "root": 0 }`) but are not AST documents and must never appear in
+ * the normalized tree.
+ */
+function isAstPayload(value: unknown): value is Record<string, unknown> | unknown[] {
+  if (Array.isArray(value)) return value.some(isAstNode);
+  if (!isRecord(value)) return false;
+  if (isAstNode(value)) return true;
+  return 'root' in value && isAstNode(value['root']);
+}
+
+function unwrapAstPayload(value: unknown): unknown {
+  return isRecord(value) && 'root' in value && isAstNode(value['root']) ? value['root'] : value;
+}
+
+function parseAstCandidate(value: unknown): unknown | null {
+  const payload = unwrapAstPayload(value);
+  return isAstPayload(payload) ? payload : null;
 }
 
 /**

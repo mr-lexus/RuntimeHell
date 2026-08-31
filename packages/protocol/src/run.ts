@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
-export const RuntimeIdSchema = z.enum(['node', 'deno', 'bun']);
+/**
+ * Execution lanes. `browser` is the embedded Chromium renderer: V8 with a
+ * real DOM and browser Web APIs, deliberately without Node integration.
+ */
+export const RuntimeIdSchema = z.enum(['node', 'deno', 'bun', 'browser']);
 export type RuntimeId = z.infer<typeof RuntimeIdSchema>;
 
 /**

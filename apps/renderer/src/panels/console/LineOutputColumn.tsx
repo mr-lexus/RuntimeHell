@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRun, type InlineConsoleEntry } from '../../state/run';
 import type { SerializedValue } from '@rh/protocol';
-import { detectTable, type TableShape } from './table-shape';
+import { detectConsoleTable, detectTable, type TableShape } from './table-shape';
 
 /** Default line step used when the column is rendered outside WorkbenchShell. */
 export const LINE_HEIGHT_PX = 20;
@@ -318,15 +318,18 @@ function OutputRow({ out, ln, canExpand, expanded, onToggle, lineHeight }: {
 }): React.JSX.Element {
   const hasExpand = canExpand && isExpandable(out.primary);
   const isTableEntry = out.logs.some((entry) => entry.level === 'table');
-  const table = isTableEntry && out.primary ? detectTable(out.primary) : null;
+  const tableEntry = out.logs.find((entry) => entry.level === 'table');
+  const table = tableEntry?.args
+    ? detectConsoleTable(tableEntry.args)
+    : isTableEntry && out.primary
+      ? detectTable(out.primary)
+      : null;
 
   const tableLabel = (entry: InlineConsoleEntry): string => {
     if (entry.level === 'table' && entry.args && entry.args.length > 0) {
-      const a: SerializedValue | undefined = entry.args[0];
-      if (a) {
-        const n = a.size ?? a.children?.length ?? '?';
-        return `◀ Table (${n} rows)`;
-      }
+      const shape = detectConsoleTable(entry.args);
+      const n = shape?.rows.length ?? entry.args[0]?.size ?? entry.args[0]?.children?.length ?? '?';
+      return `◀ Table (${n} rows)`;
     }
     return `◀ ${entry.text}`;
   };
@@ -421,7 +424,6 @@ export function LineOutputColumn({
   const inlineByLine = useRun((s) => s.inlineByLine);
   const resultByLine = useRun((s) => s.resultByLine);
   const runFileId = useRun((s) => s.runFileId);
-  const phase = useRun((s) => s.phase);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [expandedLine, setExpandedLine] = useState<number | null>(null);
   const [width, setWidth] = useState<number>(readStoredWidth);
@@ -513,8 +515,10 @@ export function LineOutputColumn({
   };
 
   /* left-edge drag handle */
-  const startWidthDrag = (e: React.MouseEvent): void => {
+  const startWidthDrag = (e: React.PointerEvent<HTMLDivElement>): void => {
     e.preventDefault();
+    const handle = e.currentTarget;
+    handle.setPointerCapture?.(e.pointerId);
     const startX = e.clientX;
     const startW = width;
     let latest = startW;
@@ -523,25 +527,35 @@ export function LineOutputColumn({
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'col-resize';
 
-    const onMove = (ev: MouseEvent): void => {
+    const onMove = (ev: PointerEvent): void => {
       latest = Math.min(maxWidthForRegion(containerRef.current), Math.max(WIDTH_MIN, startW + (startX - ev.clientX)));
       setWidth(latest);
     };
     const onUp = (): void => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
+      if (handle.hasPointerCapture?.(e.pointerId)) handle.releasePointerCapture(e.pointerId);
       document.body.style.userSelect = prevUserSelect;
       document.body.style.cursor = prevCursor;
       try { localStorage.setItem(WIDTH_STORAGE_KEY, String(Math.round(latest))); } catch { /* ok */ }
       dragCleanupRef.current = null;
     };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
     dragCleanupRef.current = onUp;
   };
 
+  const nudgeWidth = (delta: number): void => {
+    setWidth((current) => {
+      const next = Math.min(maxWidthForRegion(containerRef.current), Math.max(WIDTH_MIN, current + delta));
+      try { localStorage.setItem(WIDTH_STORAGE_KEY, String(Math.round(next))); } catch { /* ok */ }
+      return next;
+    });
+  };
+
   const total = Math.max(lineCount, 1);
-  const filled = Object.keys(rows).length;
   // Keep one stable scroll surface sized like Monaco, but only mount rows
   // that actually contain output. Rendering an empty div for every source
   // line made tab switches visibly paint the inspector one line at a time.
@@ -565,17 +579,26 @@ export function LineOutputColumn({
     >
       {/* ── left-edge resize handle ── */}
       <div
-        onMouseDown={startWidthDrag}
+        onPointerDown={startWidthDrag}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowLeft') { e.preventDefault(); nudgeWidth(16); }
+          if (e.key === 'ArrowRight') { e.preventDefault(); nudgeWidth(-16); }
+        }}
         title="Drag to resize"
+        aria-label="Resize line output panel"
+        role="separator"
+        aria-orientation="vertical"
+        tabIndex={0}
         style={{
           position: 'absolute',
-          left: 0,
+          left: -4,
           top: 0,
           bottom: 0,
-          width: 4,
+          width: 8,
           cursor: 'col-resize',
           zIndex: 200,
           background: 'transparent',
+          touchAction: 'none',
         }}
         onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(86,156,214,0.35)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
@@ -606,11 +629,6 @@ export function LineOutputColumn({
             willChange: 'transform'
           }}
         >
-          {filled === 0 && phase !== 'running' && (
-            <div style={{ position: 'absolute', top: 8, left: 10, color: C.dim, fontSize: 11, whiteSpace: 'nowrap' }}>
-              outputs appear next to their line
-            </div>
-          )}
           {outputRows.map(([ln, out]) => (
             <div key={ln} style={{ position: 'absolute', top: (ln - 1) * rowHeight, left: 0, right: 0, minHeight: rowHeight, zIndex: expandedLine === ln ? 2 : 1 }}>
               <OutputRow

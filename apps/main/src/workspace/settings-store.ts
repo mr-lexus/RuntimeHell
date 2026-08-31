@@ -17,7 +17,23 @@ export const DEFAULT_SETTINGS: AppSettings = AppSettingsSchema.parse({
   appearance: {
     theme: 'dark', accent: 'cyan', background: 'topology', intensity: 'standard', motion: 'system', density: 'compact', uiScale: 100
   },
-  editor: { fontSize: 13, inlineInspector: true, vimMode: false },
+  editor: {
+    fontSize: 13,
+    fontLigatures: true,
+    tabSize: 2,
+    insertSpaces: true,
+    wordWrap: 'off',
+    lineNumbers: 'on',
+    minimap: false,
+    folding: true,
+    renderWhitespace: 'selection',
+    bracketPairColorization: true,
+    smoothScrolling: true,
+    stickyScroll: false,
+    cursorStyle: 'line',
+    inlineInspector: true,
+    vimMode: false
+  },
   layout: { drawerOpen: true, drawerRatio: 0.35, drawerTab: 'console', inlineOutputWidth: 320 },
   session: { tabs: [], activeRelPath: null }
 });

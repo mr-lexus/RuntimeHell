@@ -7,9 +7,11 @@
  * on any failure so a failed install never mutates the manifest or cache.
  */
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { dirname, isAbsolute, join, basename } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import {
   BinaryManifestSchema,
   ManifestEntrySchema,
@@ -40,7 +42,11 @@ export interface FetchSource {
 export interface InstallRequest {
   entry: Omit<ManifestEntry, 'installedPath' | 'addedAt'>;
   source: FetchSource;
-  /** Directory name inside the zip containing the payload root (auto-detect when absent). */
+  /** Archive format; zip remains the default for existing installers. */
+  archive?: 'zip' | 'tar.gz' | 'file';
+  /** Optional executable path inside an extracted archive to materialize at its root. */
+  executablePath?: string;
+  /** Directory name inside the archive containing the payload root (auto-detect when absent). */
   stripRoot?: boolean;
   onProgress?: (p: DownloadProgress) => void;
 }
@@ -66,24 +72,42 @@ export async function writeManifest(manifest: BinaryManifest): Promise<void> {
   await fs.rename(tmp, path);
 }
 
-export async function upsertEntry(entry: ManifestEntry): Promise<void> {
-  const manifest = await readManifest();
-  const key = (e: ManifestEntry): string => `${e.kind}:${e.id}:${e.platform}:${e.arch}:${e.version}`;
-  const filtered = manifest.entries.filter((e) => key(e) !== key(entry));
-  filtered.push(ManifestEntrySchema.parse(entry));
-  await writeManifest({ schemaVersion: 1, entries: filtered });
+/*
+ * Separate downloads use separate staging directories, but they all update
+ * the same manifest when they finish. Serialize those read/modify/write
+ * operations so two parallel installs cannot lose the entry written by the
+ * other install.
+ */
+let manifestMutation: Promise<void> = Promise.resolve();
+
+function withManifestMutation<T>(mutation: () => Promise<T>): Promise<T> {
+  const run = manifestMutation.then(mutation, mutation);
+  manifestMutation = run.then(() => undefined, () => undefined);
+  return run;
 }
 
-export async function removeEntry(kind: ManifestEntry['kind'], id: string, version: string): Promise<void> {
-  const manifest = await readManifest();
-  const target = manifest.entries.find(
-    (e) => e.kind === kind && e.id === id && e.version === version
-  );
-  if (!target) throw new Error(`not installed: ${kind}/${id}/${version}`);
-  if (!target.installedPath) throw new Error('manifest entry has no installedPath');
-  await fs.rm(target.installedPath, { recursive: true, force: false });
-  const remaining = manifest.entries.filter((e) => e !== target);
-  await writeManifest({ schemaVersion: 1, entries: remaining });
+export function upsertEntry(entry: ManifestEntry): Promise<void> {
+  return withManifestMutation(async () => {
+    const manifest = await readManifest();
+    const key = (e: ManifestEntry): string => `${e.kind}:${e.id}:${e.platform}:${e.arch}:${e.version}`;
+    const filtered = manifest.entries.filter((e) => key(e) !== key(entry));
+    filtered.push(ManifestEntrySchema.parse(entry));
+    await writeManifest({ schemaVersion: 1, entries: filtered });
+  });
+}
+
+export function removeEntry(kind: ManifestEntry['kind'], id: string, version: string): Promise<void> {
+  return withManifestMutation(async () => {
+    const manifest = await readManifest();
+    const target = manifest.entries.find(
+      (e) => e.kind === kind && e.id === id && e.version === version
+    );
+    if (!target) throw new Error(`not installed: ${kind}/${id}/${version}`);
+    if (!target.installedPath) throw new Error('manifest entry has no installedPath');
+    await fs.rm(target.installedPath, { recursive: true, force: false });
+    const remaining = manifest.entries.filter((e) => e !== target);
+    await writeManifest({ schemaVersion: 1, entries: remaining });
+  });
 }
 
 /** Stream a URL to a file, hashing while downloading. */
@@ -114,6 +138,29 @@ async function extractZip(zipFile: string, destDir: string): Promise<void> {
   const extract = (await import('extract-zip')).default;
   await fs.mkdir(destDir, { recursive: true });
   await extract(zipFile, { dir: destDir });
+}
+
+const execFileAsync = promisify(execFile);
+
+async function extractTarGz(archiveFile: string, destDir: string): Promise<void> {
+  await fs.mkdir(destDir, { recursive: true });
+  await execFileAsync('tar', ['-xzf', archiveFile, '-C', destDir], { windowsHide: true });
+}
+
+function safeRelativePath(value: string): string {
+  if (isAbsolute(value)) throw new Error('executablePath must be relative');
+  const normalized = value.replace(/\\/g, '/');
+  if (normalized === '' || normalized.split('/').some((segment) => segment === '..')) {
+    throw new Error('invalid executablePath');
+  }
+  return normalized;
+}
+
+async function materializeExecutable(stageDir: string, entryId: string, executablePath: string): Promise<void> {
+  const source = join(stageDir, safeRelativePath(executablePath));
+  const targetName = IMPORT_BINARY_NAME[entryId] ?? basename(source);
+  await fs.access(source);
+  if (source !== join(stageDir, targetName)) await fs.copyFile(source, join(stageDir, targetName));
 }
 
 /**
@@ -152,9 +199,7 @@ const IMPORT_BINARY_NAME: Record<string, string> = {
   hermes: 'hermes.exe',
   chakra: 'ch.exe',
   txiki: 'tjs.exe',
-  loran: 'loran.exe',
-  jerryscript: 'jerry.exe',
-  mujs: 'mujs.exe'
+  'moddable-xs': 'xst.exe'
 };
 
 function safeImportSegment(value: string, label: string): void {
@@ -256,8 +301,18 @@ export async function installArtifact(req: InstallRequest): Promise<ManifestEntr
     // manifest's pinned sha256 for this artifact/version combination.
     const recordedSha = expected ?? actual;
 
-    await extractZip(stageZip, stageDir);
-    if (req.stripRoot !== false) await hoistSingleRoot(stageDir);
+    if (req.archive === 'file') {
+      await fs.mkdir(stageDir, { recursive: true });
+      const targetName = IMPORT_BINARY_NAME[req.entry.id] ?? basename(req.source.url);
+      await fs.copyFile(stageZip, join(stageDir, targetName));
+    } else if (req.archive === 'tar.gz') {
+      await extractTarGz(stageZip, stageDir);
+      if (req.stripRoot !== false) await hoistSingleRoot(stageDir);
+    } else {
+      await extractZip(stageZip, stageDir);
+      if (req.stripRoot !== false) await hoistSingleRoot(stageDir);
+    }
+    if (req.executablePath !== undefined) await materializeExecutable(stageDir, req.entry.id, req.executablePath);
 
     const finalDir = targetDirFor(req.entry);
     await fs.mkdir(dirname(finalDir), { recursive: true });

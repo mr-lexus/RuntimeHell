@@ -4,7 +4,7 @@
  * sha256 sidecar / release digest respectively.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { buildBunInstall, buildDenoInstall, parseGitHubReleases } from './deno-bun.js';
+import { buildBunInstall, buildDenoInstall, parseDenoSha256, parseGitHubReleases } from './deno-bun.js';
 
 describe('parseGitHubReleases', () => {
   it('maps tag_name rows to version rows, dropping malformed entries', () => {
@@ -32,6 +32,21 @@ describe('parseGitHubReleases', () => {
 });
 
 describe('buildDenoInstall', () => {
+  it('parses the PowerShell Get-FileHash sidecar published for Windows', () => {
+    expect(parseDenoSha256('Algorithm : SHA256\nHash      : ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789\nPath      : C:\\deno.zip\n'))
+      .toBe('abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789');
+  });
+
+  it('parses the standard hash-and-filename sidecar format', () => {
+    expect(parseDenoSha256('abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  deno.zip\n'))
+      .toBe('abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789');
+  });
+
+  it('parses a checksum surrounded by sidecar metadata', () => {
+    expect(parseDenoSha256('Algorithm=SHA256\nchecksum: ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789\n'))
+      .toBe('abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789');
+  });
+
   it('builds an entry from the .sha256sum sidecar', async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const u = String(url);

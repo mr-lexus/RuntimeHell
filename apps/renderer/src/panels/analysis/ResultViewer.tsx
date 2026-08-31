@@ -1,7 +1,10 @@
-import { useMemo, useState } from 'react';
-import type { AnalysisResult } from '@rh/protocol';
+import { useId, useMemo, useRef, useState } from 'react';
+import type { AnalysisResult, NormalizedIrGraph, NormalizedIrGraphFunction, NormalizedIrGraphPhase } from '@rh/protocol';
 import { parseV8Bytecode, parseV8Deopts } from '@rh/engine-parsers';
 import { parseEmbeddedJson, parseSourceAst } from './ast-normalize';
+import { parseV8Gc, type NormalizedGcEvent } from './gc-normalize';
+import { parseV8Optcode } from './optcode-normalize';
+import { ANALYSIS_ACTION_ICON, ANALYSIS_HELP, ANALYSIS_VIEW_ICONS } from './analysis-help';
 
 type DrawerTab = 'normalized' | 'raw' | 'artifacts';
 
@@ -110,42 +113,142 @@ function NormalizedDeoptTable({ raw }: { raw: string }): React.JSX.Element {
   );
 }
 
-/** Collapsible AST node for the normalized tree view. */
-function AstNode({ name, node, depth }: { name: string; node: unknown; depth: number }): React.JSX.Element {
-  const [open, setOpen] = useState(depth < 2);
-  const isArray = Array.isArray(node);
-  const isObject = node !== null && typeof node === 'object' && !isArray;
-  const expandable = isArray || isObject;
-  const entries = isArray
-    ? (node as unknown[]).map((v, i) => [String(i), v] as const)
-    : isObject
-      ? Object.entries(node as Record<string, unknown>)
-      : [];
-  const preview = expandable
-    ? isArray
-      ? `Array(${(node as unknown[]).length})`
-      : `{${Object.keys(node as Record<string, unknown>).slice(0, 3).join(', ')}${Object.keys(node as Record<string, unknown>).length > 3 ? ', …' : ''}}`
-    : String(node ?? 'null');
+function formatMb(value: number): string {
+  return `${value.toFixed(value >= 10 ? 1 : 2)} MB`;
+}
+
+function NormalizedGcTable({ raw }: { raw: string }): React.JSX.Element {
+  const parsed = useMemo(() => parseV8Gc(raw), [raw]);
+  const rows = parsed.slice(-MAX_ROWS);
+  const totalPause = parsed.reduce((sum, event) => sum + event.pauseMs, 0);
+  const last = parsed.at(-1);
+
+  if (rows.length === 0) {
+    return <div style={{ color: '#dcdcaa' }}>No GC events parsed — raw output is authoritative.</div>;
+  }
 
   return (
-    <div style={{ paddingLeft: depth > 0 ? 14 : 0 }}>
-      <div
-        onClick={() => expandable && setOpen((o) => !o)}
-        style={{ cursor: expandable ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: 4, lineHeight: '18px', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-      >
-                <span style={{ color: 'var(--text-faint)', width: 12, textAlign: 'center', fontSize: 10, userSelect: 'none', flexShrink: 0 }}>
-          {expandable ? (open ? '⌄' : '›') : ''}
-        </span>
-        <span style={{ color: 'var(--accent-strong)', fontSize: 11, fontFamily: "'JetBrainsMono Nerd Font Mono', monospace" }}>{name}</span>
-        {!open && <span style={{ color: '#666', fontSize: 10 }}>: </span>}
-        {!open && <span style={{ color: isArray ? '#888' : '#ce9178', fontSize: 11, fontFamily: "'JetBrainsMono Nerd Font Mono', monospace" }}>{preview}</span>}
+    <div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', background: '#17251c', color: '#8fca99', padding: '3px 6px', marginBottom: 4, fontSize: 10 }}>
+        <span>{parsed.length} collection{parsed.length === 1 ? '' : 's'}</span>
+        <span>total pause {totalPause.toFixed(2)} ms</span>
+        {last !== undefined && <span>heap {formatMb(last.beforeUsedMb)} → {formatMb(last.afterUsedMb)}</span>}
+        <span style={{ color: '#777' }}>best-effort normalization · raw output remains authoritative</span>
       </div>
-      {open && expandable && (
-        <div style={{ borderLeft: '1px solid #333', marginLeft: 5 }}>
-          {entries.map(([k, v]) => (
-            <AstNode key={k} name={k} node={v} depth={depth + 1} />
+      <table style={{ fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", fontSize: 11, borderCollapse: 'collapse', width: '100%' }}>
+        <thead>
+          <tr style={{ color: '#888', textAlign: 'left' }}>
+            <th style={{ width: 70 }}>time</th>
+            <th style={{ width: 120 }}>collector</th>
+            <th style={{ width: 170 }}>heap</th>
+            <th style={{ width: 80 }}>pause</th>
+            <th>reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((event, index) => (
+            <GcRow key={`${event.timestampMs}-${index}`} event={event} />
           ))}
-          {entries.length === 0 && <div style={{ color: '#666', paddingLeft: 16, fontSize: 11 }}>empty</div>}
+        </tbody>
+      </table>
+      {parsed.length > MAX_ROWS && <div style={{ color: '#777' }}>… showing the last {MAX_ROWS} events</div>}
+    </div>
+  );
+}
+
+function GcRow({ event }: { event: NormalizedGcEvent }): React.JSX.Element {
+  const kindColor = /mark|major|compact/i.test(event.kind) ? '#dcdcaa' : '#8fca99';
+  return (
+    <tr style={{ borderBottom: '1px solid #222' }}>
+      <td style={{ color: '#888' }}>{event.timestampMs.toFixed(0)} ms</td>
+      <td style={{ color: kindColor }}>{event.kind}</td>
+      <td style={{ color: '#aaa' }}>{formatMb(event.beforeUsedMb)} / {formatMb(event.beforeTotalMb)} → {formatMb(event.afterUsedMb)} / {formatMb(event.afterTotalMb)}</td>
+      <td style={{ color: event.pauseMs >= 10 ? '#f48771' : '#ccc' }}>{event.pauseMs.toFixed(2)} ms</td>
+      <td style={{ color: '#aaa' }}>{event.reason || event.details || '—'}</td>
+    </tr>
+  );
+}
+
+const AST_META_KEYS = new Set([
+  'loc', 'start', 'end', 'range', 'raw', 'extra', 'tokens', 'comments',
+  'leadingComments', 'innerComments', 'trailingComments', 'errors', 'sourceFile', 'sourceFilename'
+]);
+
+function astRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function astNodeType(value: unknown): string | null {
+  const record = astRecord(value);
+  return typeof record?.['type'] === 'string' ? record['type'] : null;
+}
+
+function astChildValue(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(astChildValue);
+  return astNodeType(value) !== null;
+}
+
+function astChildren(node: unknown): [string, unknown][] {
+  if (Array.isArray(node)) return node.map((value, index) => [String(index), value]);
+  const record = astRecord(node);
+  if (record === null) return [];
+  return Object.entries(record).filter(([key, value]) => !AST_META_KEYS.has(key) && astChildValue(value));
+}
+
+function astScalarSummary(node: unknown): string {
+  if (Array.isArray(node)) return `${node.length} item${node.length === 1 ? '' : 's'}`;
+  const record = astRecord(node);
+  if (record === null) return String(node ?? 'null');
+  const name = record['name'];
+  if (typeof name === 'string') return name;
+  const id = astRecord(record['id']);
+  if (id !== null && typeof id['name'] === 'string') return String(id['name']);
+  if (typeof record['operator'] === 'string') return String(record['operator']);
+  if (typeof record['kind'] === 'string') return String(record['kind']);
+  if ('value' in record && (typeof record['value'] !== 'object' || record['value'] === null)) return String(record['value']);
+  return '';
+}
+
+function astSummaryColor(node: unknown): string {
+  if (Array.isArray(node)) return '#888';
+  if (astNodeType(node) !== null) return 'var(--text-secondary)';
+  return '#ce9178';
+}
+
+/** Compact semantic AST tree: node types are primary, parser metadata is hidden. */
+function AstNode({ name, node, depth }: { name: string; node: unknown; depth: number }): React.JSX.Element {
+  const children = astChildren(node);
+  const expandable = children.length > 0;
+  const [open, setOpen] = useState(depth < 2);
+  const type = astNodeType(node);
+  const label = type ?? name;
+  const summary = astScalarSummary(node);
+
+  return (
+    <div style={{ paddingLeft: depth > 0 ? 12 : 0 }}>
+      <button
+        type="button"
+        onClick={() => expandable && setOpen((value) => !value)}
+        aria-expanded={expandable ? open : undefined}
+        style={{
+          appearance: 'none', border: 0, background: 'transparent', color: 'inherit', cursor: expandable ? 'pointer' : 'default',
+          display: 'flex', alignItems: 'baseline', gap: 6, width: '100%', padding: '1px 3px', textAlign: 'left',
+          fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", fontSize: 11, lineHeight: '17px', minWidth: 0
+        }}
+      >
+        <span style={{ color: 'var(--text-faint)', width: 10, flexShrink: 0, textAlign: 'center', userSelect: 'none' }}>
+          {expandable ? (open ? '⌄' : '›') : '·'}
+        </span>
+        <span style={{ color: type === null ? 'var(--accent-strong)' : '#4ec9b0', flexShrink: 0 }}>{label}</span>
+        {name !== label && <span style={{ color: '#777', flexShrink: 0 }}>{name}</span>}
+        {summary !== '' && <span style={{ color: astSummaryColor(node), overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summary}</span>}
+        {expandable && !open && <span style={{ color: '#666', marginLeft: 'auto', flexShrink: 0 }}>{children.length} child{children.length === 1 ? '' : 'ren'}</span>}
+      </button>
+      {open && expandable && (
+        <div style={{ borderLeft: '1px solid #30363d', marginLeft: 7 }}>
+          {children.map(([key, value]) => <AstNode key={key} name={key} node={value} depth={depth + 1} />)}
         </div>
       )}
     </div>
@@ -164,7 +267,7 @@ function NormalizedAstView({ raw, source, engine }: { raw: string; source: strin
           <div style={{ background: 'color-mix(in srgb, var(--accent) 12%, transparent)', color: 'var(--accent-strong)', padding: '2px 6px', marginBottom: 4, fontSize: 11 }}>
             source AST tree · V8 textual dump remains available in raw
           </div>
-          <div style={{ fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", fontSize: 12, overflow: 'auto' }}>
+          <div style={{ fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", fontSize: 12, overflow: 'auto', maxHeight: 520 }}>
             <AstNode name="Program" node={sourceAst} depth={0} />
           </div>
         </div>
@@ -188,8 +291,8 @@ function NormalizedAstView({ raw, source, engine }: { raw: string; source: strin
       <div style={{ background: '#3a3325', color: '#dcdcaa', padding: '2px 6px', marginBottom: 4, fontSize: 11 }}>
         parsed AST tree — raw output is authoritative
       </div>
-      <div style={{ fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", fontSize: 12, overflow: 'auto' }}>
-        <AstNode name="root" node={parsed} depth={0} />
+      <div style={{ fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", fontSize: 12, overflow: 'auto', maxHeight: 520 }}>
+        <AstNode name="Program" node={parsed} depth={0} />
       </div>
     </div>
   );
@@ -197,23 +300,8 @@ function NormalizedAstView({ raw, source, engine }: { raw: string; source: strin
 
 /** Parse raw OptCode disassembly into a structured table. */
 function NormalizedOptcodeTable({ raw }: { raw: string }): React.JSX.Element {
-  const rows = useMemo(() => {
-    const out: { pc: string; op: string; operands: string }[] = [];
-    const LINE_RE = /^\s*(?:[0-9a-f]+)?\s*([0-9a-f]+)\s+(.+)$/;
-    for (const line of raw.split('\n')) {
-      const m = LINE_RE.exec(line);
-      if (m) {
-        const pc = m[1] ?? '';
-        const rest = m[2] ?? '';
-        const spaceIdx = rest.indexOf(' ');
-        const op = spaceIdx === -1 ? rest : rest.slice(0, spaceIdx);
-        const operands = spaceIdx === -1 ? '' : rest.slice(spaceIdx + 1);
-        out.push({ pc, op, operands });
-        if (out.length >= MAX_ROWS) break;
-      }
-    }
-    return out;
-  }, [raw]);
+  const parsed = useMemo(() => parseV8Optcode(raw), [raw]);
+  const rows = parsed.slice(0, MAX_ROWS);
 
   if (rows.length === 0) {
     return <div style={{ color: '#dcdcaa' }}>No optimized instructions parsed — raw output is authoritative.</div>;
@@ -242,9 +330,499 @@ function NormalizedOptcodeTable({ raw }: { raw: string }): React.JSX.Element {
           ))}
         </tbody>
       </table>
-      {rows.length >= MAX_ROWS && <div style={{ color: '#777' }}>… truncated at {MAX_ROWS} rows</div>}
+      {parsed.length > MAX_ROWS && <div style={{ color: '#777' }}>… truncated at {MAX_ROWS} rows</div>}
     </div>
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isNormalizedIrGraph(value: unknown): value is NormalizedIrGraph {
+  if (!isRecord(value) || value['kind'] !== 'ir-graph' || !Array.isArray(value['functions'])) return false;
+  return value['functions'].every((fn) => {
+    if (!isRecord(fn) || typeof fn['name'] !== 'string' || !Array.isArray(fn['phases'])) return false;
+    return fn['phases'].every((phase) => isRecord(phase) && typeof phase['name'] === 'string' && Array.isArray(phase['nodes']) && Array.isArray(phase['edges']));
+  });
+}
+
+const IR_NODE_WIDTH = 184;
+const IR_NODE_HEIGHT = 52;
+const IR_COLUMN_GAP = 52;
+const IR_ROW_GAP = 10;
+const IR_CANVAS_PADDING = 24;
+const IR_MAX_VISIBLE_NODES = 160;
+
+function shortIrLabel(value: string, max = 24): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+interface IrGraphPosition {
+  x: number;
+  y: number;
+  rank: number;
+  row: number;
+}
+
+interface IrGraphLayout {
+  positions: Map<number, IrGraphPosition>;
+  width: number;
+  height: number;
+  edges: NormalizedIrGraphPhase['edges'];
+}
+
+/**
+ * Put nodes into data-flow layers instead of placing them in input-array
+ * order. A small barycentric pass keeps connected nodes close together and
+ * dramatically reduces the edge crossings in TurboFan's wide graphs.
+ */
+function layoutIrGraph(phase: NormalizedIrGraphPhase): IrGraphLayout {
+  const nodes = phase.nodes.slice(0, IR_MAX_VISIBLE_NODES);
+  const visibleIds = new Set(nodes.map((node) => node.id));
+  const edges = phase.edges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target));
+  const incoming = new Map<number, number[]>();
+  for (const node of nodes) incoming.set(node.id, []);
+  for (const edge of edges) {
+    if (edge.source === edge.target) continue;
+    incoming.get(edge.target)?.push(edge.source);
+  }
+
+  const rankMemo = new Map<number, number>();
+  const rankOf = (id: number, visiting: Set<number>): number => {
+    const cached = rankMemo.get(id);
+    if (cached !== undefined) return cached;
+    if (visiting.has(id)) return 0;
+    const nextVisiting = new Set(visiting);
+    nextVisiting.add(id);
+    const rank = Math.min(
+      24,
+      Math.max(0, ...(incoming.get(id) ?? []).map((source) => rankOf(source, nextVisiting) + 1))
+    );
+    rankMemo.set(id, rank);
+    return rank;
+  };
+  for (const node of nodes) rankOf(node.id, new Set());
+
+  const layers = new Map<number, number[]>();
+  for (const node of nodes) {
+    const rank = rankMemo.get(node.id) ?? 0;
+    const layer = layers.get(rank) ?? [];
+    layer.push(node.id);
+    layers.set(rank, layer);
+  }
+
+  // Stable ordering first; then use the previous layer as a barycenter hint.
+  for (const layer of layers.values()) layer.sort((a, b) => a - b);
+  for (let pass = 0; pass < 2; pass += 1) {
+    const orderedRanks = [...layers.keys()].sort((a, b) => a - b);
+    for (const rank of orderedRanks) {
+      const layer = layers.get(rank);
+      if (layer === undefined || rank === 0) continue;
+      const previous = layers.get(rank - 1) ?? [];
+      const previousIndex = new Map(previous.map((id, index) => [id, index]));
+      layer.sort((a, b) => {
+        const aNeighbors = (incoming.get(a) ?? []).map((id) => previousIndex.get(id)).filter((v): v is number => v !== undefined);
+        const bNeighbors = (incoming.get(b) ?? []).map((id) => previousIndex.get(id)).filter((v): v is number => v !== undefined);
+        const aCenter = aNeighbors.length === 0 ? Number.POSITIVE_INFINITY : aNeighbors.reduce((sum, value) => sum + value, 0) / aNeighbors.length;
+        const bCenter = bNeighbors.length === 0 ? Number.POSITIVE_INFINITY : bNeighbors.reduce((sum, value) => sum + value, 0) / bNeighbors.length;
+        return aCenter - bCenter || a - b;
+      });
+    }
+  }
+
+  const positions = new Map<number, IrGraphPosition>();
+  const maxRows = Math.max(1, ...[...layers.values()].map((layer) => layer.length));
+  const maxRank = Math.max(0, ...layers.keys());
+  for (const [rank, layer] of layers) {
+    for (const [row, id] of layer.entries()) {
+      positions.set(id, {
+        x: IR_CANVAS_PADDING + rank * (IR_NODE_WIDTH + IR_COLUMN_GAP),
+        y: IR_CANVAS_PADDING + row * (IR_NODE_HEIGHT + IR_ROW_GAP),
+        rank,
+        row
+      });
+    }
+  }
+
+  return {
+    positions,
+    edges,
+    width: IR_CANVAS_PADDING * 2 + (maxRank + 1) * IR_NODE_WIDTH + maxRank * IR_COLUMN_GAP,
+    height: IR_CANVAS_PADDING * 2 + maxRows * IR_NODE_HEIGHT + Math.max(0, maxRows - 1) * IR_ROW_GAP
+  };
+}
+
+/**
+ * A deliberately small, directional view for understanding one node. The
+ * selected node stays in the middle column; its producers are placed left
+ * and its consumers right, which makes the data-flow direction obvious.
+ */
+function layoutIrHierarchy(phase: NormalizedIrGraphPhase, rootId: number, depth: number): IrGraphLayout {
+  const nodes = phase.nodes.slice(0, IR_MAX_VISIBLE_NODES);
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const incoming = new Map<number, number[]>();
+  const outgoing = new Map<number, number[]>();
+  for (const node of nodes) {
+    incoming.set(node.id, []);
+    outgoing.set(node.id, []);
+  }
+  const edges = phase.edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
+  for (const edge of edges) {
+    if (edge.source === edge.target) continue;
+    incoming.get(edge.target)?.push(edge.source);
+    outgoing.get(edge.source)?.push(edge.target);
+  }
+
+  const rank = new Map<number, number>([[rootId, 0]]);
+  const visit = (start: number, direction: 'up' | 'down'): void => {
+    let frontier = [start];
+    for (let level = 1; level <= depth; level += 1) {
+      const next: number[] = [];
+      for (const id of frontier) {
+        const neighbors = direction === 'up' ? incoming.get(id) ?? [] : outgoing.get(id) ?? [];
+        for (const neighbor of neighbors) {
+          if (rank.has(neighbor)) continue;
+          rank.set(neighbor, direction === 'up' ? -level : level);
+          next.push(neighbor);
+        }
+      }
+      frontier = next;
+    }
+  };
+  visit(rootId, 'up');
+  visit(rootId, 'down');
+
+  const layers = new Map<number, number[]>();
+  for (const node of nodes) {
+    const nodeRank = rank.get(node.id);
+    if (nodeRank === undefined) continue;
+    const layer = layers.get(nodeRank) ?? [];
+    layer.push(node.id);
+    layers.set(nodeRank, layer);
+  }
+  for (const layer of layers.values()) layer.sort((a, b) => a - b);
+
+  const maxRows = Math.max(1, ...[...layers.values()].map((layer) => layer.length));
+  const minRank = Math.min(...layers.keys());
+  const maxRank = Math.max(...layers.keys());
+  const positions = new Map<number, IrGraphPosition>();
+  for (const [nodeRank, layer] of layers) {
+    const verticalOffset = (maxRows - layer.length) / 2;
+    for (const [row, id] of layer.entries()) {
+      positions.set(id, {
+        x: IR_CANVAS_PADDING + (nodeRank - minRank) * (IR_NODE_WIDTH + IR_COLUMN_GAP),
+        y: IR_CANVAS_PADDING + (verticalOffset + row) * (IR_NODE_HEIGHT + IR_ROW_GAP),
+        rank: nodeRank,
+        row
+      });
+    }
+  }
+  return {
+    positions,
+    edges: edges.filter((edge) => rank.has(edge.source) && rank.has(edge.target)),
+    width: IR_CANVAS_PADDING * 2 + (maxRank - minRank + 1) * IR_NODE_WIDTH + (maxRank - minRank) * IR_COLUMN_GAP,
+    height: IR_CANVAS_PADDING * 2 + maxRows * IR_NODE_HEIGHT + Math.max(0, maxRows - 1) * IR_ROW_GAP
+  };
+}
+
+function irEdgeColor(type: string | undefined): string {
+  if (/control|effect|depend/i.test(type ?? '')) return '#79b8e8';
+  if (/value|data|use/i.test(type ?? '')) return '#8fca99';
+  return '#858585';
+}
+
+function connectedIrNodes(phase: NormalizedIrGraphPhase, selectedNodeId: number | null): Set<number> | null {
+  if (selectedNodeId === null) return null;
+  const connected = new Set<number>([selectedNodeId]);
+  for (const edge of phase.edges) {
+    if (edge.source === selectedNodeId) connected.add(edge.target);
+    if (edge.target === selectedNodeId) connected.add(edge.source);
+  }
+  return connected;
+}
+
+function irNeighborhood(phase: NormalizedIrGraphPhase, selectedNodeId: number, depth: number): Set<number> {
+  const adjacent = new Map<number, Set<number>>();
+  for (const node of phase.nodes) adjacent.set(node.id, new Set());
+  for (const edge of phase.edges) {
+    adjacent.get(edge.source)?.add(edge.target);
+    adjacent.get(edge.target)?.add(edge.source);
+  }
+  const result = new Set<number>([selectedNodeId]);
+  let frontier = [selectedNodeId];
+  for (let level = 0; level < depth; level += 1) {
+    const next: number[] = [];
+    for (const id of frontier) {
+      for (const neighbor of adjacent.get(id) ?? []) {
+        if (result.has(neighbor)) continue;
+        result.add(neighbor);
+        next.push(neighbor);
+      }
+    }
+    frontier = next;
+  }
+  return result;
+}
+
+function IrGraphCanvas({ phase, selectedNodeId, onSelectNode }: { phase: NormalizedIrGraphPhase; selectedNodeId: number | null; onSelectNode: (id: number) => void }): React.JSX.Element {
+  const [focusDepth, setFocusDepth] = useState<number | null>(null);
+  const [hierarchyMode, setHierarchyMode] = useState(false);
+  const visibleNodeIds = useMemo(
+    () => selectedNodeId !== null && focusDepth !== null ? irNeighborhood(phase, selectedNodeId, focusDepth) : null,
+    [phase, selectedNodeId, focusDepth]
+  );
+  const displayPhase = useMemo(() => {
+    if (visibleNodeIds === null) return phase;
+    return {
+      ...phase,
+      nodes: phase.nodes.filter((node) => visibleNodeIds.has(node.id)),
+      edges: phase.edges.filter((edge) => visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target)),
+      truncated: false
+    };
+  }, [phase, visibleNodeIds]);
+  const layout = useMemo(
+    () => hierarchyMode && selectedNodeId !== null && focusDepth !== null
+      ? layoutIrHierarchy(displayPhase, selectedNodeId, focusDepth)
+      : layoutIrGraph(displayPhase),
+    [displayPhase, focusDepth, hierarchyMode, selectedNodeId]
+  );
+  const [zoom, setZoom] = useState(0.9);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const markerId = `rh-ir-arrow-${useId().replace(/:/g, '')}`;
+  const connected = connectedIrNodes(displayPhase, selectedNodeId);
+  const nodes = displayPhase.nodes.slice(0, IR_MAX_VISIBLE_NODES);
+  const incomingCount = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const edge of layout.edges) counts.set(edge.target, (counts.get(edge.target) ?? 0) + 1);
+    return counts;
+  }, [layout.edges]);
+  const outgoingCount = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const edge of layout.edges) counts.set(edge.source, (counts.get(edge.source) ?? 0) + 1);
+    return counts;
+  }, [layout.edges]);
+
+  const fitGraph = (): void => {
+    const viewport = viewportRef.current;
+    const availableWidth = (viewport?.clientWidth ?? 760) - 30;
+    const availableHeight = (viewport?.clientHeight ?? 280) - 30;
+    setZoom(Math.max(0.35, Math.min(1.2, availableWidth / layout.width, availableHeight / layout.height)));
+  };
+
+  return (
+    <div className="rh-ir-graph-shell" style={{ border: '1px solid #292929', background: '#0d0d0d', height: '100%', minHeight: 0, flex: '1 1 auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', flex: '0 0 auto', padding: '4px 6px', borderBottom: '1px solid #242424', color: '#888', fontSize: 10 }}>
+        <span style={{ color: '#79b8e8' }}>● control</span>
+        <span style={{ color: '#8fca99' }}>● value</span>
+        <span style={{ color: '#858585' }}>● other</span>
+        <span style={{ color: '#666' }}>·</span>
+        <button type="button" onClick={() => { setFocusDepth(null); setHierarchyMode(false); }} disabled={focusDepth === null} style={irGraphButtonStyle} title="show complete graph"><span className="rh-analysis-icon" aria-hidden="true">{ANALYSIS_ACTION_ICON.overview}</span> overview</button>
+        <button type="button" onClick={() => { setFocusDepth(1); setHierarchyMode(false); }} disabled={selectedNodeId === null || focusDepth === 1 && !hierarchyMode} style={irGraphButtonStyle} title="show one hop around selected node"><span className="rh-analysis-icon" aria-hidden="true">{ANALYSIS_ACTION_ICON.focus}</span> focus 1 hop</button>
+        <button type="button" onClick={() => { setFocusDepth(2); setHierarchyMode(false); }} disabled={selectedNodeId === null || focusDepth === 2 && !hierarchyMode} style={irGraphButtonStyle} title="show two hops around selected node"><span className="rh-analysis-icon" aria-hidden="true">{ANALYSIS_ACTION_ICON.focus}</span> focus 2 hops</button>
+        <button type="button" onClick={() => { setFocusDepth(2); setHierarchyMode(true); }} disabled={selectedNodeId === null || hierarchyMode} style={irGraphButtonStyle} title="arrange dependencies left and consumers right"><span className="rh-analysis-icon" aria-hidden="true">{ANALYSIS_ACTION_ICON.hierarchy}</span> hierarchy</button>
+        <span style={{ flex: 1 }} />
+        <button type="button" onClick={() => setZoom((value) => Math.max(0.45, Number((value - 0.1).toFixed(2))))} style={{ ...irGraphButtonStyle, fontSize: 14 }} aria-label="zoom out">−</button>
+        <span style={{ minWidth: 38, textAlign: 'center' }}>{Math.round(zoom * 100)}%</span>
+        <button type="button" onClick={() => setZoom((value) => Math.min(1.8, Number((value + 0.1).toFixed(2))))} style={{ ...irGraphButtonStyle, fontSize: 14 }} aria-label="zoom in">+</button>
+        <button type="button" onClick={() => setZoom(0.9)} style={irGraphButtonStyle} title="reset zoom"><span className="rh-analysis-icon" aria-hidden="true">{ANALYSIS_ACTION_ICON.overview}</span> reset</button>
+        <button type="button" onClick={fitGraph} style={irGraphButtonStyle} title="fit graph to viewport"><span className="rh-analysis-icon" aria-hidden="true">{ANALYSIS_ACTION_ICON.fit}</span> fit</button>
+      </div>
+      <div
+        ref={viewportRef}
+        className="rh-ir-graph-viewport"
+        tabIndex={0}
+        aria-label="Scrollable IR graph viewport"
+        style={{ height: 'auto', minHeight: 0, flex: '1 1 auto', overflow: 'auto', overscrollBehavior: 'contain', scrollbarGutter: 'stable both-edges' }}
+      >
+      <svg width={layout.width * zoom} height={layout.height * zoom} viewBox={`0 0 ${layout.width} ${layout.height}`} style={{ display: 'block', minWidth: 620, minHeight: Math.min(layout.height * zoom, 260) }} role="img" aria-label={`${phase.name} IR graph`}>
+        <defs>
+          <pattern id={`${markerId}-grid`} width="24" height="24" patternUnits="userSpaceOnUse">
+            <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#171717" strokeWidth="1" />
+          </pattern>
+          <marker id={markerId} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#666" />
+          </marker>
+        </defs>
+        <rect width={layout.width} height={layout.height} fill={`url(#${markerId}-grid)`} />
+        {layout.edges.map((edge, index) => {
+          const source = layout.positions.get(edge.source);
+          const target = layout.positions.get(edge.target);
+          if (source === undefined || target === undefined) return null;
+          const forward = target.x > source.x;
+          const sourceX = forward ? source.x + IR_NODE_WIDTH : source.x + IR_NODE_WIDTH / 2;
+          const targetX = forward ? target.x : target.x + IR_NODE_WIDTH / 2;
+          const bend = Math.max(28, Math.abs(targetX - sourceX) * 0.42);
+          const dimmed = connected !== null && !connected.has(edge.source) && !connected.has(edge.target);
+          return (
+            <path
+              key={`${edge.source}-${edge.target}-${edge.index ?? index}`}
+              d={`M ${sourceX} ${source.y + IR_NODE_HEIGHT / 2} C ${sourceX + (forward ? bend : 36)} ${source.y + IR_NODE_HEIGHT / 2}, ${targetX - (forward ? bend : 36)} ${target.y + IR_NODE_HEIGHT / 2}, ${targetX} ${target.y + IR_NODE_HEIGHT / 2}`}
+              fill="none"
+              stroke={irEdgeColor(edge.type)}
+              strokeWidth={selectedNodeId !== null && (edge.source === selectedNodeId || edge.target === selectedNodeId) ? 2 : 1}
+              strokeDasharray={/effect/i.test(edge.type ?? '') ? '4 3' : undefined}
+              opacity={dimmed ? 0.12 : selectedNodeId === null || edge.source === selectedNodeId || edge.target === selectedNodeId ? 0.9 : 0.45}
+              markerEnd={`url(#${markerId})`}
+            />
+          );
+        })}
+        {nodes.map((node) => {
+          const position = layout.positions.get(node.id);
+          if (position === undefined) return null;
+          const selected = selectedNodeId === node.id;
+          const dimmed = connected !== null && !connected.has(node.id);
+          const fill = selected ? '#3a3325' : node.control ? '#172535' : node.live ? '#17251c' : '#202020';
+          const stroke = selected ? '#dcdcaa' : node.control ? '#4c9acb' : node.live ? '#5b9b68' : '#555';
+          return (
+            <g
+              key={node.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onSelectNode(node.id)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') onSelectNode(node.id);
+              }}
+              style={{ cursor: 'pointer', opacity: dimmed ? 0.28 : 1 }}
+            >
+              <title>{`${node.id}: ${node.label}${node.properties === '' ? '' : ` · ${node.properties}`}`}</title>
+              <rect x={position.x} y={position.y} width={IR_NODE_WIDTH} height={IR_NODE_HEIGHT} rx={4} fill={fill} stroke={stroke} strokeWidth={selected ? 2 : 1} />
+              <text x={position.x + 8} y={position.y + 16} fill="#aaa" fontSize="9" fontFamily="JetBrainsMono Nerd Font Mono, monospace">#{node.id}</text>
+              <text x={position.x + 38} y={position.y + 16} fill={selected ? '#dcdcaa' : '#e0e0e0'} fontSize="11" fontFamily="JetBrainsMono Nerd Font Mono, monospace">{shortIrLabel(node.label, 22)}</text>
+              <text x={position.x + 8} y={position.y + 33} fill={node.control ? '#79b8e8' : '#8fca99'} fontSize="10" fontFamily="JetBrainsMono Nerd Font Mono, monospace">{shortIrLabel(node.opcode, 25)}</text>
+              <text x={position.x + IR_NODE_WIDTH - 8} y={position.y + 46} textAnchor="end" fill="#666" fontSize="8" fontFamily="JetBrainsMono Nerd Font Mono, monospace">in {incomingCount.get(node.id) ?? 0} · out {outgoingCount.get(node.id) ?? 0}</text>
+            </g>
+          );
+        })}
+      </svg>
+      </div>
+      {displayPhase.truncated && <div style={{ color: '#dcdcaa', fontSize: 10, padding: '3px 6px' }}>graph clipped to {IR_MAX_VISIBLE_NODES} nodes for display; raw artifact contains the complete phase</div>}
+      {focusDepth !== null && selectedNodeId !== null && <div style={{ color: '#8fca99', fontSize: 10, padding: '3px 6px' }}>{hierarchyMode ? 'hierarchy' : 'focused'} on #{selectedNodeId} · showing {displayPhase.nodes.length} nodes within {focusDepth} hop{focusDepth === 1 ? '' : 's'}</div>}
+    </div>
+  );
+}
+
+const irGraphButtonStyle: React.CSSProperties = {
+  border: '1px solid #333',
+  background: '#171717',
+  color: '#aaa',
+  padding: '1px 6px',
+  cursor: 'pointer',
+  font: 'inherit',
+  fontSize: 10
+};
+
+function IrGraphPayloadView({ graph, onCopyRaw }: { graph: NormalizedIrGraph; onCopyRaw: () => void }): React.JSX.Element {
+  const [functionIndex, setFunctionIndex] = useState(0);
+  const [phaseIndex, setPhaseIndex] = useState(0);
+  const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
+  const currentFunction: NormalizedIrGraphFunction | null = graph.functions[Math.min(functionIndex, Math.max(0, graph.functions.length - 1))] ?? null;
+  const currentPhase: NormalizedIrGraphPhase | null = currentFunction?.phases[Math.min(phaseIndex, Math.max(0, (currentFunction?.phases.length ?? 1) - 1))] ?? null;
+  const selectedNode = currentPhase?.nodes.find((node) => node.id === selectedNodeId) ?? null;
+  const selectedIncoming = selectedNode === null || currentPhase === null
+    ? 0
+    : currentPhase.edges.filter((edge) => edge.target === selectedNode.id).length;
+  const selectedOutgoing = selectedNode === null || currentPhase === null
+    ? 0
+    : currentPhase.edges.filter((edge) => edge.source === selectedNode.id).length;
+
+  if (currentFunction === null || currentPhase === null) {
+    return <div style={{ color: 'var(--warn)' }}>IR graph artifact has no renderable phases — raw output is authoritative.</div>;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, height: '100%', minHeight: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <span style={{ color: 'var(--accent-strong)', fontWeight: 600 }}>TurboFan IR</span>
+        <span style={{ color: '#777' }}>{currentFunction.name}</span>
+        {graph.functions.length > 1 && (
+          <select
+            value={Math.min(functionIndex, graph.functions.length - 1)}
+            onChange={(event) => {
+              setFunctionIndex(Number(event.target.value));
+              setPhaseIndex(0);
+              setSelectedNodeId(null);
+            }}
+            style={{ background: '#171717', color: '#ccc', border: '1px solid #333', fontFamily: 'inherit', fontSize: 11 }}
+          >
+            {graph.functions.map((fn, index) => <option key={`${fn.name}-${index}`} value={index}>{fn.name}</option>)}
+          </select>
+        )}
+        <select
+          value={selectedNodeId ?? ''}
+          onChange={(event) => setSelectedNodeId(event.target.value === '' ? null : Number(event.target.value))}
+          style={{ background: '#171717', color: '#ccc', border: '1px solid #333', fontFamily: 'inherit', fontSize: 11, maxWidth: 260 }}
+          aria-label="select IR node"
+        >
+          <option value="">select node…</option>
+          {currentPhase.nodes.map((node) => <option key={node.id} value={node.id}>#{node.id} {shortIrLabel(node.label, 30)}</option>)}
+        </select>
+      </div>
+      <div style={{ display: 'flex', gap: 3, overflowX: 'auto', paddingBottom: 2 }}>
+        {currentFunction.phases.map((phase, index) => (
+          <button
+            key={`${phase.name}-${index}`}
+            onClick={() => { setPhaseIndex(index); setSelectedNodeId(null); }}
+            style={{ background: index === phaseIndex ? '#333' : '#161616', color: index === phaseIndex ? '#dcdcaa' : '#999', border: '1px solid #292929', padding: '3px 6px', cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: 'inherit', fontSize: 10 }}
+            title={`${phase.nodes.length} nodes · ${phase.edges.length} edges`}
+          >
+            {index + 1}. {shortIrLabel(phase.name.replace(/^V8\./, ''), 30)} <span style={{ color: '#666' }}>({phase.nodes.length})</span>
+          </button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#888', fontSize: 10 }}>
+        <span>{currentPhase.name}</span>
+        <span>·</span>
+        <span>{currentPhase.nodes.length} nodes</span>
+        <span>·</span>
+        <span>{currentPhase.edges.length} edges</span>
+        <span style={{ marginLeft: 'auto', color: '#666' }}>click a node for details</span>
+      </div>
+      {currentPhase.nodes.length === 0 ? (
+        <div style={{ border: '1px solid #292929', color: '#777', padding: 10 }}>This phase has no graph nodes; select a graph phase above.</div>
+      ) : (
+        <IrGraphCanvas phase={currentPhase} selectedNodeId={selectedNodeId} onSelectNode={setSelectedNodeId} />
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, borderLeft: selectedNode === null ? '2px solid #333' : '2px solid #dcdcaa', background: '#171717', padding: '3px 7px', fontSize: 10, lineHeight: '14px' }}>
+        <div
+          title={selectedNode === null ? 'Select a node to inspect its details' : `${selectedNode.label}${selectedNode.properties === '' ? '' : ` · ${selectedNode.properties}`}`}
+          style={{ display: 'flex', alignItems: 'baseline', gap: 9, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap' }}
+        >
+          {selectedNode === null ? (
+            <span style={{ color: '#777' }}>select a node for details</span>
+          ) : (
+            <>
+              <strong style={{ color: '#dcdcaa', fontSize: 11, flex: '0 0 auto' }}>#{selectedNode.id} · {selectedNode.label}</strong>
+              <span style={{ color: '#8fca99', flex: '0 0 auto' }}>{selectedNode.opcode}</span>
+              <span style={{ color: '#79b8e8', flex: '0 0 auto' }}>in {selectedIncoming} · out {selectedOutgoing}</span>
+              {selectedNode.properties !== '' && <span style={{ color: '#999', overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedNode.properties}</span>}
+              {selectedNode.sourcePosition !== undefined && <span style={{ color: '#777', flex: '0 0 auto' }}>source offset {selectedNode.sourcePosition}</span>}
+            </>
+          )}
+        </div>
+        <button
+          onClick={onCopyRaw}
+          title="Copy raw output"
+          aria-label="Copy raw output"
+          style={{ marginLeft: 'auto', flex: '0 0 auto', background: '#2a2a2a', color: '#ccc', border: 'none', padding: '2px 7px', cursor: 'pointer', fontSize: 10 }}
+        >
+          <span className="rh-analysis-icon" aria-hidden="true">{ANALYSIS_ACTION_ICON.copy}</span> copy raw
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function NormalizedIrGraphView({ normalized, artifacts, onCopyRaw }: { normalized: unknown; artifacts: AnalysisResult['artifacts']; onCopyRaw: () => void }): React.JSX.Element {
+  if (!isNormalizedIrGraph(normalized)) {
+    return (
+      <div style={{ color: '#dcdcaa' }}>
+        IR graph artifacts were not converted into a visual model. Open the artifacts or raw output for the original Turbolizer data.
+        {artifacts.length > 0 && <div style={{ color: '#777', marginTop: 3 }}>{artifacts.map((artifact) => artifact.name).join(' · ')}</div>}
+      </div>
+    );
+  }
+  return <IrGraphPayloadView graph={normalized} onCopyRaw={onCopyRaw} />;
 }
 
 /**
@@ -253,14 +831,11 @@ function NormalizedOptcodeTable({ raw }: { raw: string }): React.JSX.Element {
  */
 export function ResultViewer({ result, focusFunction }: { result: AnalysisResult; focusFunction?: string | null }): React.JSX.Element {
   /** Which normalizer to show for this analysis type. */
-  const hasNormalizer = result.analysisType === 'bytecode' || result.analysisType === 'deopts' || result.analysisType === 'ast' || result.analysisType === 'optcode';
-  // IR/GC are intentionally raw-first: their output is a V8 trace rather than
-  // a stable row schema, and showing the empty normalized placeholder hid the
-  // useful trace immediately after a successful run.
+  const hasNormalizer = result.analysisType === 'bytecode' || result.analysisType === 'deopts' || result.analysisType === 'ast' || result.analysisType === 'optcode' || result.analysisType === 'ir-graph' || result.analysisType === 'gc';
   const [tab, setTab] = useState<DrawerTab>(() => (hasNormalizer ? 'normalized' : 'raw'));
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minHeight: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, height: '100%', minHeight: 0, flex: '1 1 auto' }}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
         {(['normalized', 'raw', 'artifacts'] as const).map((t) => {
           const disabled = t === 'normalized' && !hasNormalizer;
@@ -279,17 +854,31 @@ export function ResultViewer({ result, focusFunction }: { result: AnalysisResult
                 opacity: disabled ? 0.5 : 1
               }}
             >
-              {t}
+              <span className="rh-analysis-icon" aria-hidden="true">{ANALYSIS_VIEW_ICONS[t]}</span> {t}
             </button>
           );
         })}
+        <details className="rh-analysis-info">
+          <summary className="rh-analysis-info-trigger" title="help: reading analysis output" aria-label={`Help for ${ANALYSIS_HELP[result.analysisType].title}`}>
+            <span aria-hidden="true">{ANALYSIS_ACTION_ICON.info}</span>
+          </summary>
+          <div className="rh-analysis-info-popover" role="tooltip">
+            <strong>{ANALYSIS_HELP[result.analysisType].title}</strong>
+            <span>{ANALYSIS_HELP[result.analysisType].summary}</span>
+            <p>{ANALYSIS_HELP[result.analysisType].details}</p>
+            <small>Normalized is a best-effort view; Raw remains authoritative.</small>
+          </div>
+        </details>
         <span style={{ flex: 1 }} />
         {result.artifacts.length > 0 && <span style={{ color: 'var(--accent-strong)', fontSize: 11 }}>{result.artifacts.length} artifact(s)</span>}
       </div>
 
+      <div style={{ flex: '1 1 auto', minHeight: 0, overflow: result.analysisType === 'ir-graph' ? 'hidden' : 'auto' }}>
       {tab === 'raw' && (
         <pre
           style={{
+            height: '100%',
+            boxSizing: 'border-box',
             margin: 0,
             background: '#111',
             padding: 6,
@@ -312,6 +901,10 @@ export function ResultViewer({ result, focusFunction }: { result: AnalysisResult
           <NormalizedAstView raw={result.rawOutput} source={result.source} engine={result.engine} />
         ) : result.analysisType === 'optcode' ? (
           <NormalizedOptcodeTable raw={result.rawOutput} />
+        ) : result.analysisType === 'ir-graph' ? (
+          <NormalizedIrGraphView normalized={result.normalized} artifacts={result.artifacts} onCopyRaw={() => void navigator.clipboard.writeText(result.rawOutput)} />
+        ) : result.analysisType === 'gc' ? (
+          <NormalizedGcTable raw={result.rawOutput} />
         ) : (
           <div style={{ color: '#777' }}>no normalizer for '{result.analysisType}' yet</div>
         ))}
@@ -325,20 +918,15 @@ export function ResultViewer({ result, focusFunction }: { result: AnalysisResult
           ))}
         </div>
       )}
-      <button
-        onClick={() => void navigator.clipboard.writeText(result.rawOutput)}
-        style={{
-          alignSelf: 'flex-end',
-          background: '#2a2a2a',
-          color: '#ccc',
-          border: 'none',
-          padding: '2px 8px',
-          cursor: 'pointer',
-          fontSize: 11
-        }}
-      >
-        copy raw
-      </button>
+      </div>
+      {!(tab === 'normalized' && result.analysisType === 'ir-graph') && (
+        <button
+          onClick={() => void navigator.clipboard.writeText(result.rawOutput)}
+          style={{ alignSelf: 'flex-end', background: '#2a2a2a', color: '#ccc', border: 'none', padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}
+        >
+          <span className="rh-analysis-icon" aria-hidden="true">{ANALYSIS_ACTION_ICON.copy}</span> copy raw
+        </button>
+      )}
     </div>
   );
 }

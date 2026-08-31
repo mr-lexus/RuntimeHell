@@ -4,7 +4,7 @@
  * fed by EnginesController via the preload bridge.
  */
 import { create } from 'zustand';
-import type { AnalysisEvent, AnalysisResult, AnalysisType, EngineCapabilities } from '@rh/protocol';
+import type { AnalysisEvent, AnalysisResult, AnalysisStartRequest, AnalysisType, EngineCapabilities } from '@rh/protocol';
 import { buildAnalysisSnippet } from '../editor/wrapping';
 import type { SelectionInfo } from '../editor/selection-service';
 
@@ -24,6 +24,8 @@ export interface EngineChoice {
   reason: string | null;
 }
 
+export type AnalysisEngineId = AnalysisStartRequest['engineId'];
+
 const ALL_TYPES: AnalysisType[] = ['ast', 'bytecode', 'optcode', 'ir-graph', 'deopts', 'gc'];
 
 function freshTypes(): Record<AnalysisType, TypeState> {
@@ -39,7 +41,7 @@ function freshTypes(): Record<AnalysisType, TypeState> {
 
 interface AnalysisState {
   requestId: string | null;
-  engineId: 'v8' | 'd8-debug';
+  engineId: AnalysisEngineId;
   engines: EngineChoice[];
   types: Record<AnalysisType, TypeState>;
   lastError: string | null;
@@ -48,7 +50,9 @@ interface AnalysisState {
   generatedCode: string | null;
   /** Function the current request targets — filters the bytecode viewer. */
   focusFunction: string | null;
-  setEngine: (id: 'v8' | 'd8-debug') => void;
+  setEngine: (id: AnalysisEngineId) => void;
+  /** Clear displayed results without starting a new analysis request. */
+  reset: () => void;
   refreshEngines: () => Promise<void>;
   requestFromSelection: (
     info: SelectionInfo | null,
@@ -76,11 +80,23 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
 
   setEngine: (engineId) => set({ engineId }),
 
+  reset: () => set({
+    requestId: null,
+    types: freshTypes(),
+    lastError: null,
+    cancelledNotice: false,
+    generatedCode: null,
+    focusFunction: null
+  }),
+
   refreshEngines: async () => {
     if (!window.api?.enginesList) return;
     try {
       const engines = (await window.api.enginesList()) as unknown as EngineChoice[];
-      const available = engines.filter((e) => e.id === 'v8' || e.id === 'd8-debug');
+      // The main-process registry is the source of truth. It includes every
+      // engine with an Analytics adapter (V8, SpiderMonkey, JSC, ...), so do
+      // not keep a renderer-side allow-list that silently hides new engines.
+      const available = engines;
       const current = get().engineId;
       // Keep the user's current choice when it is usable; otherwise select a
       // concrete installed engine instead of leaving the drawer pointed at a
@@ -92,7 +108,7 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
         available[0];
       set({
         engines: available,
-        ...(preferred !== undefined ? { engineId: preferred.id as 'v8' | 'd8-debug' } : {})
+        ...(preferred !== undefined ? { engineId: preferred.id as AnalysisEngineId } : {})
       });
     } catch (error) {
       // A missing local engine must not turn an optional analysis probe into

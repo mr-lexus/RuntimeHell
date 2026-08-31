@@ -103,6 +103,8 @@ export const BinariesListResponseSchema = z
   .object({
     /** System-wide (PATH) detection per runtime id: 'node' | 'deno' | 'bun'. */
     systemRuntimes: z.record(z.string(), SystemRuntimeInfoSchema.nullable()),
+    /** Installed desktop browsers detected outside the embedded browser lane. */
+    systemBrowsers: z.record(z.string(), SystemRuntimeInfoSchema.nullable()),
     /** nvm-windows Node versions (null when nvm absent). */
     nvm: NvmInfoSchema.nullable(),
     /** Managed runtime, engine, and support binaries currently installed. */

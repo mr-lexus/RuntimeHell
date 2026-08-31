@@ -49,7 +49,17 @@ import {
   AppSettingsSchema,
   SettingsPatchSchema,
   type AppSettings,
-  type SettingsPatch
+  type SettingsPatch,
+  PerformanceStartRequestSchema,
+  PerformanceStartResponseSchema,
+  PerformanceCancelRequestSchema,
+  PerformanceCancelResponseSchema,
+  PerformanceEventSchema,
+  PerformanceCatalogResponseSchema,
+  type PerformanceEvent,
+  type PerformanceCatalogResponse,
+  type PerformanceStartResponse,
+  type PerformanceCancelResponse
 } from '@rh/protocol';
 
 const api = {
@@ -221,6 +231,24 @@ const api = {
     return () => {
       ipcRenderer.removeListener(IPC.analysisEvent, handler);
     };
+  },
+  // --- performance lab ------------------------------------------------------
+  performanceCatalog: async (): Promise<PerformanceCatalogResponse> => {
+    return PerformanceCatalogResponseSchema.parse(await ipcRenderer.invoke(IPC.performanceCatalog, {}));
+  },
+  performanceStart: async (req: unknown): Promise<PerformanceStartResponse> => {
+    return PerformanceStartResponseSchema.parse(await ipcRenderer.invoke(IPC.performanceStart, PerformanceStartRequestSchema.parse(req)));
+  },
+  performanceCancel: async (requestId: string): Promise<PerformanceCancelResponse> => {
+    return PerformanceCancelResponseSchema.parse(await ipcRenderer.invoke(IPC.performanceCancel, PerformanceCancelRequestSchema.parse({ requestId })));
+  },
+  onPerformanceEvent: (cb: (event: PerformanceEvent) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+      const parsed = PerformanceEventSchema.safeParse(payload);
+      if (parsed.success) cb(parsed.data);
+    };
+    ipcRenderer.on(IPC.performanceEvent, handler);
+    return () => ipcRenderer.removeListener(IPC.performanceEvent, handler);
   },
   // --- persistence (todo 21) --------------------------------------------------
   settingsGet: async (): Promise<AppSettings> => {

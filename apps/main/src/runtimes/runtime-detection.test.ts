@@ -4,7 +4,13 @@
  * spawn processes / touch the fs — covered by integration, not here.
  */
 import { describe, expect, it } from 'vitest';
-import { nvmRoot, nvmSymlink, parseNvmVersions } from './runtime-detection.js';
+import { nvmRoot, nvmSymlink, parseNvmVersions, parseRuntimeVersionOutput } from './runtime-detection.js';
+
+describe('parseRuntimeVersionOutput', () => {
+  it('parses Firefox --version output for system browser detection', () => {
+    expect(parseRuntimeVersionOutput('firefox', 'Mozilla Firefox 141.0.1\r\n')).toBe('141.0.1');
+  });
+});
 
 describe('parseNvmVersions', () => {
   it('maps vX.Y.Z dirs to rows, newest first, marking the active target', () => {

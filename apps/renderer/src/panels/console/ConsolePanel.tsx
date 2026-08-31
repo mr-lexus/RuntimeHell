@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRun, type InlineConsoleEntry } from '../../state/run';
 import { useUi } from '../../state/ui';
 import type { SerializedValue } from '@rh/protocol';
-import { detectTable, type TableShape } from './table-shape';
+import { detectConsoleTable, detectTable, type TableShape } from './table-shape';
 
 /* ── colour palette ──────────────────────────────────────────────────── */
 
@@ -291,9 +291,12 @@ function ConsoleEntryRow({
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false);
   const primary = entry?.args?.[0] ?? result ?? null;
-  const hasExpand = isExpandable(primary);
-  const table = primary && (entry?.level === 'table' || (entry === null && result !== null))
-    ? detectTable(primary) : null;
+  const table = entry?.level === 'table' && entry.args
+    ? detectConsoleTable(entry.args)
+    : primary && entry === null
+      ? detectTable(primary)
+      : null;
+  const hasExpand = isExpandable(primary) || table !== null;
 
   const isWarn = entry?.level === 'warn';
   const isError = entry?.level === 'error';
@@ -354,7 +357,7 @@ function ConsoleEntryRow({
         }}>
           {entry
             ? (table
-              ? <span><span style={{ color: C.dim }}>▶ </span><span style={{ color: C.coll }}>Table</span> <span style={{ color: C.dim, fontSize: 11 }}>({primary?.size ?? primary?.children?.length ?? '?'} rows)</span></span>
+            ? <span><span style={{ color: C.dim }}>▶ </span><span style={{ color: C.coll }}>Table</span> <span style={{ color: C.dim, fontSize: 11 }}>({table.rows.length} rows)</span></span>
               : <ConsoleValueRow entry={entry} />
             )
             : <span>→ {result ? inlineText(result) : ''}</span>

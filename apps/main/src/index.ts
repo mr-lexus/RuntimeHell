@@ -2,7 +2,7 @@ import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { BrowserWindow, app, ipcMain } from 'electron';
 import { IPC } from '@rh/protocol';
-import { registerBinariesHandlers, registerExecutionHandlers, registerIpcHandlers, registerPackageHandlers, registerAnalysisHandlers, registerPersistenceHandlers } from './ipc/router.js';
+import { registerBinariesHandlers, registerExecutionHandlers, registerIpcHandlers, registerPackageHandlers, registerAnalysisHandlers, registerPersistenceHandlers, registerPerformanceHandlers } from './ipc/router.js';
 import { appendHistory } from './workspace/history.js';
 import { ExecutionManager } from './execution/execution-manager.js';
 import { BinariesController } from './binaries/binaries-controller.js';
@@ -13,6 +13,8 @@ import { EnginesController } from './engines/engines-controller.js';
 import { V8EngineAdapterV0 } from './engines/v8-adapter.js';
 import { SpiderMonkeyAdapter } from './engines/spidermonkey/sm-adapter.js';
 import { JavaScriptCoreAdapter } from './engines/javascriptcore/jsc-adapter.js';
+import { DenoBunRuntimeAdapter, NodeRuntimeAdapter, RuntimeRegistry } from './runtimes/runtime-adapter.js';
+import { PerformanceManager, RegistryPerformanceTargetResolver } from './performance/performance-manager.js';
 
 const isDev = !app.isPackaged;
 
@@ -151,6 +153,14 @@ function main(): void {
     ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
   };
   registerAnalysisHandlers(registrar, analysis);
+  const runtimes = new RuntimeRegistry({ adapters: [new NodeRuntimeAdapter(), new DenoBunRuntimeAdapter('deno'), new DenoBunRuntimeAdapter('bun')] });
+  const performance = new PerformanceManager({
+    targetResolver: new RegistryPerformanceTargetResolver(runtimes),
+    emit: (event) => {
+      for (const win of BrowserWindow.getAllWindows()) win.webContents.send(IPC.performanceEvent, event);
+    }
+  });
+  registerPerformanceHandlers(registrar, performance);
   registrar(IPC.enginesList, async () => enginesController.list());
   registrar(IPC.engineCapabilities, async (payload) => {
     const req = (payload ?? {}) as { engineId?: string };

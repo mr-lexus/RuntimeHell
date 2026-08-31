@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import * as monaco from 'monaco-editor';
+import type { AppSettings } from '@rh/protocol';
 import { getSelectionInfo, type SelectionInfo } from './selection-service';
 import { VimModeController } from './vim-mode';
 
@@ -33,6 +34,8 @@ export interface CodeEditorProps {
   inlineResults?: Record<number, import('@rh/protocol').SerializedValue>;
   theme?: 'rh-dark' | 'rh-light';
   fontSize?: number;
+  /** Monaco preferences controlled by the Settings > Editor tab. */
+  editorSettings?: AppSettings['editor'];
   /** Opt-in modal Vim/Neovim-style keybindings. */
   vimMode?: boolean;
 }
@@ -51,6 +54,24 @@ function parserFor(language: string): 'babel' | 'typescript' | 'tsx' {
   return 'tsx';
 }
 
+const DEFAULT_EDITOR_SETTINGS: AppSettings['editor'] = {
+  fontSize: 13,
+  fontLigatures: true,
+  tabSize: 2,
+  insertSpaces: true,
+  wordWrap: 'off',
+  lineNumbers: 'on',
+  minimap: false,
+  folding: true,
+  renderWhitespace: 'selection',
+  bracketPairColorization: true,
+  smoothScrolling: true,
+  stickyScroll: false,
+  cursorStyle: 'line',
+  inlineInspector: true,
+  vimMode: false
+};
+
 export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -61,19 +82,29 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
 
   useEffect(() => {
     if (!containerRef.current) return;
+    const editorSettings = propsRef.current.editorSettings ?? DEFAULT_EDITOR_SETTINGS;
+    const fontSize = propsRef.current.fontSize ?? editorSettings.fontSize;
     const editor = monaco.editor.create(containerRef.current, {
       value: propsRef.current.value,
       language: propsRef.current.language,
       theme: propsRef.current.theme ?? 'rh-dark',
       automaticLayout: true,
-      minimap: { enabled: false },
-      fontSize: propsRef.current.fontSize ?? 13,
-      lineHeight: Math.max(18, Math.round((propsRef.current.fontSize ?? 13) * 1.5)),
-      tabSize: 2,
+      minimap: { enabled: editorSettings.minimap },
+      fontSize,
+      lineHeight: Math.max(18, Math.round(fontSize * 1.5)),
+      tabSize: editorSettings.tabSize,
+      insertSpaces: editorSettings.insertSpaces,
+      detectIndentation: false,
+      wordWrap: editorSettings.wordWrap,
+      lineNumbers: editorSettings.lineNumbers,
+      folding: editorSettings.folding,
+      renderWhitespace: editorSettings.renderWhitespace,
       fontFamily: "'JetBrainsMono Nerd Font Mono', 'Cascadia Mono', Consolas, monospace",
-      fontLigatures: true,
-      bracketPairColorization: { enabled: true },
-      stickyScroll: { enabled: false }
+      fontLigatures: editorSettings.fontLigatures,
+      bracketPairColorization: { enabled: editorSettings.bracketPairColorization },
+      smoothScrolling: editorSettings.smoothScrolling,
+      stickyScroll: { enabled: editorSettings.stickyScroll },
+      cursorStyle: editorSettings.cursorStyle
     });
     editorRef.current = editor;
 
@@ -223,11 +254,29 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    if (editorRef.current && props.theme) monaco.editor.setTheme(props.theme);
-    if (editorRef.current && props.fontSize) {
-      editorRef.current.updateOptions({ fontSize: props.fontSize, lineHeight: Math.max(18, Math.round(props.fontSize * 1.5)) });
-    }
-  }, [props.theme, props.fontSize]);
+    const editor = editorRef.current;
+    if (!editor) return;
+    if (props.theme) monaco.editor.setTheme(props.theme);
+    const settings = props.editorSettings ?? DEFAULT_EDITOR_SETTINGS;
+    const fontSize = props.fontSize ?? settings.fontSize;
+    editor.updateOptions({
+      fontSize,
+      lineHeight: Math.max(18, Math.round(fontSize * 1.5)),
+      fontLigatures: settings.fontLigatures,
+      tabSize: settings.tabSize,
+      insertSpaces: settings.insertSpaces,
+      detectIndentation: false,
+      wordWrap: settings.wordWrap,
+      lineNumbers: settings.lineNumbers,
+      minimap: { enabled: settings.minimap },
+      folding: settings.folding,
+      renderWhitespace: settings.renderWhitespace,
+      bracketPairColorization: { enabled: settings.bracketPairColorization },
+      smoothScrolling: settings.smoothScrolling,
+      stickyScroll: { enabled: settings.stickyScroll },
+      ...(props.vimMode ? {} : { cursorStyle: settings.cursorStyle })
+    });
+  }, [props.theme, props.fontSize, props.editorSettings, props.vimMode]);
 
   useEffect(() => {
     const editor = editorRef.current;

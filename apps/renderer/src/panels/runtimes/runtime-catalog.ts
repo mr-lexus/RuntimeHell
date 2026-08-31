@@ -70,14 +70,27 @@ export const RUNTIME_CATALOG: RuntimeCatalogEntry[] = [
     detectCommand: 'bun --version'
   },
   {
-    id: 'loran',
-    name: 'Loran',
+    id: 'browser',
+    name: 'Chromium (Browser)',
     category: 'runtime',
-    engine: 'V8',
-    description: 'Experimental V8-based runtime exploring alternative embedding models.',
-    website: 'https://github.com/topics/javascript-runtime',
-    color: '#c586c0',
+    engine: 'V8 + Web APIs',
+    description: 'Embedded Chromium page: V8 with DOM, timers, fetch, URL, streams, and browser globals — no Node.js APIs.',
+    website: 'https://developer.mozilla.org/en-US/docs/Web/API',
+    version: 'embedded',
+    color: '#8ab4f8',
     installable: false
+  },
+  {
+    id: 'firefox',
+    name: 'Firefox (Browser)',
+    category: 'runtime',
+    engine: 'Gecko + SpiderMonkey + Web APIs',
+    description: 'System Firefox browser. It is detected here for browser coverage; the current embedded execution lane remains Chromium.',
+    website: 'https://www.mozilla.org/firefox/',
+    version: 'system',
+    color: '#ff7139',
+    installable: false,
+    detectCommand: 'firefox --version'
   },
   {
     id: 'txiki',
@@ -86,9 +99,9 @@ export const RUNTIME_CATALOG: RuntimeCatalogEntry[] = [
     engine: 'QuickJS',
     description: 'Small, embeddable runtime built on QuickJS with a Node-like API.',
     website: 'https://github.com/saghul/txiki.js',
-    version: '24.x',
+    version: '26.x',
     color: '#4ec9b0',
-    installable: false,
+    installable: true,
     detectCommand: 'tjs --version'
   },
 
@@ -146,19 +159,19 @@ export const RUNTIME_CATALOG: RuntimeCatalogEntry[] = [
     description: "Meta's engine optimized for React Native: bytecode AOT, fast startup, small footprint.",
     website: 'https://hermesengine.dev',
     color: '#00d2ff',
-    installable: false,
+    installable: true,
     detectCommand: 'hermes --version'
   },
   {
     id: 'quickjs',
-    name: 'QuickJS',
+    name: 'QuickJS-ng',
     category: 'engine',
     engine: 'QuickJS',
-    description: "Fabrice Bellard's small, embeddable engine with near-complete ES2023 support.",
-    website: 'https://bellard.org/quickjs/',
-    version: '2025-04-26',
+    description: "Small, embeddable QuickJS successor with a maintained official Windows CLI release.",
+    website: 'https://github.com/quickjs-ng/quickjs',
+    version: '0.x',
     color: '#e74c3c',
-    installable: false,
+    installable: true,
     detectCommand: 'qjs -h'
   },
   {
@@ -168,8 +181,9 @@ export const RUNTIME_CATALOG: RuntimeCatalogEntry[] = [
     engine: 'GraalJS',
     description: "Oracle's JVM-based engine (GraalVM) with full ECMAScript compliance and polyglot interop.",
     website: 'https://www.graalvm.org/javascript/',
+    version: '25.x',
     color: '#f80000',
-    installable: false,
+    installable: true,
     detectCommand: 'js --version'
   },
   {
@@ -179,39 +193,21 @@ export const RUNTIME_CATALOG: RuntimeCatalogEntry[] = [
     engine: 'Chakra',
     description: "Microsoft's legacy Edge engine (ChakraCore). Archived, kept for historical comparison.",
     website: 'https://github.com/chakra-core/ChakraCore',
+    version: '1.11.x',
     color: '#7b4fbe',
-    installable: false
-  },
-  {
-    id: 'jerryscript',
-    name: 'JerryScript',
-    category: 'engine',
-    engine: 'JerryScript',
-    description: 'Ultra-lightweight engine for IoT and microcontrollers (< 64 KB RAM).',
-    website: 'https://jerryscript.net',
-    version: '3.x',
-    color: '#e91e63',
-    installable: false
-  },
-  {
-    id: 'mujs',
-    name: 'MuJS',
-    category: 'engine',
-    engine: 'MuJS',
-    description: 'Lightweight ECMAScript interpreter in C, designed for embedding (MuPDF).',
-    website: 'https://mujs.com',
-    color: '#795548',
-    installable: false
+    installable: true
   },
   {
     id: 'moddable-xs',
     name: 'Moddable XS',
     category: 'engine',
     engine: 'XS',
-    description: 'JavaScript runtime for microcontrollers — ships in embedded products.',
-    website: 'https://www.moddable.com',
+    description: 'Moddable’s embeddable XS engine and desktop command-line shell.',
+    website: 'https://github.com/Moddable-OpenSource/moddable',
+    version: '9.x',
     color: '#00bcd4',
-    installable: false
+    installable: true,
+    detectCommand: 'xst --version'
   },
 
   /* ── Standards & polyfills — informational ───────────────────────────── */

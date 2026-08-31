@@ -51,6 +51,7 @@ function makeController(
     fetchAvailable: (id) => Promise.resolve(AVAILABLE[id] ?? []),
     // Only 'node' carries the injected system detection; deno/bun stay absent.
     detectSystem: (id) => Promise.resolve(id === 'node' ? system : null),
+    detectBrowser: () => Promise.resolve(null),
     detectNvm: () => Promise.resolve(nvm)
   });
 }
@@ -61,6 +62,7 @@ describe('BinariesController.list', () => {
     const list = await controller.list();
     expect(list.systemRuntimes.node).toEqual({ exePath: 'C:/n.exe', version: '24.18.0' });
     expect(list.systemRuntimes.deno).toBeNull();
+    expect(list.systemBrowsers.firefox).toBeNull();
     expect(list.nvm).toEqual(NVM);
     // LTS rows first (≤8), then current (≤3).
     expect(list.availableVersions.node?.[0]?.lts).toBe(true);
@@ -75,6 +77,7 @@ describe('BinariesController.list', () => {
       emitProgress: () => {},
       fetchAvailable: (id) => (id === 'node' ? Promise.reject(new Error('network down')) : Promise.resolve([])),
       detectSystem: () => Promise.resolve(null),
+      detectBrowser: () => Promise.resolve(null),
       detectNvm: () => Promise.resolve(null)
     });
     const list = await controller.list();

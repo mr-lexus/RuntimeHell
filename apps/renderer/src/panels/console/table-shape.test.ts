@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectTable } from './table-shape';
+import { detectConsoleTable, detectTable } from './table-shape';
 import type { SerializedValue } from '@rh/protocol';
 
 const number = (prim: string): SerializedValue => ({ t: 'number', prim });
@@ -34,5 +34,27 @@ describe('detectTable', () => {
     });
     expect(shape?.headers).toEqual(['key', 'score']);
     expect(shape?.rows[0]?.[0]).toEqual({ k: 'key', node: { t: 'string', prim: 'alice' } });
+  });
+
+  it('combines multiple record arguments into table rows', () => {
+    const shape = detectConsoleTable([
+      { t: 'object', children: [{ k: 'a', node: number('1') }, { k: 'b', node: number('2') }] },
+      { t: 'object', children: [{ k: 'a', node: number('3') }, { k: 'c', node: number('4') }] },
+    ]);
+    expect(shape?.headers).toEqual(['a', 'b', 'c']);
+    expect(shape?.rows).toHaveLength(2);
+    expect(shape?.rows[1]).toEqual([
+      { k: 'a', node: number('3') },
+      { k: 'c', node: number('4') },
+    ]);
+  });
+
+  it('keeps native console.table column filtering', () => {
+    const shape = detectConsoleTable([
+      { t: 'array', children: [{ k: '0', node: { t: 'object', children: [{ k: 'a', node: number('1') }, { k: 'b', node: number('2') }] } }] },
+      { t: 'array', children: [{ k: '0', node: string('b') }] },
+    ]);
+    expect(shape?.headers).toEqual(['b']);
+    expect(shape?.rows[0]).toEqual([{ k: 'b', node: number('2') }]);
   });
 });

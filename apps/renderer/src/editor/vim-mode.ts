@@ -52,7 +52,15 @@ export class VimModeController {
     this.pending = '';
     this.countBuffer = '';
     if (mode === 'visual' || mode === 'visual-line') {
-      this.anchor = this.editor.getPosition();
+      const position = this.editor.getPosition();
+      const anchor = position && mode === 'visual-line' ? new monaco.Position(position.lineNumber, 1) : position;
+      this.anchor = anchor;
+      if (position) {
+        const end = mode === 'visual'
+          ? this.clampPosition(position.lineNumber, position.column + 1)
+          : new monaco.Position(position.lineNumber, this.lineEndColumn(position.lineNumber));
+        this.editor.setSelection(new monaco.Selection(anchor?.lineNumber ?? position.lineNumber, anchor?.column ?? position.column, end.lineNumber, end.column));
+      }
     } else {
       this.anchor = null;
     }

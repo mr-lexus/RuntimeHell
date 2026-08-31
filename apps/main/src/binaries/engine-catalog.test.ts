@@ -37,8 +37,8 @@ describe('resolveEngineArtifact (C-lane decision table)', () => {
     ['v8', 'win64', 'x64', true],
     ['d8-debug', 'win64', 'x64', true],
     ['spidermonkey', 'win64', 'x64', true],
-    ['javascriptcore', 'win64', 'x64', false],
-    ['quickjs', 'win64', 'x64', false],
+    ['javascriptcore', 'win64', 'x64', true],
+    ['quickjs', 'win64', 'x64', true],
     ['v8', 'mac64arm', 'arm64', false, true], // hypothetical uncovered combo → C-lane
     ['d8-debug', 'linux64', 'x64', false, true]
   ];
@@ -55,6 +55,7 @@ describe('resolveEngineArtifact (C-lane decision table)', () => {
 
   it('JSC win64 declares its webkit-requirements support artifact', () => {
     const source = resolveEngineArtifact('javascriptcore', 'win64', 'x64');
+    expect(source.enabled).toBe(true);
     expect(source.requiresSupport).toBe('webkit-requirements');
   });
 

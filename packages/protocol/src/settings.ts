@@ -26,6 +26,18 @@ export type Density = z.infer<typeof DensitySchema>;
 export const UiScaleSchema = z.union([z.literal(90), z.literal(100), z.literal(110)]);
 export type UiScale = z.infer<typeof UiScaleSchema>;
 
+export const EditorWordWrapSchema = z.enum(['off', 'on', 'wordWrapColumn', 'bounded']);
+export type EditorWordWrap = z.infer<typeof EditorWordWrapSchema>;
+
+export const EditorLineNumbersSchema = z.enum(['on', 'off', 'relative']);
+export type EditorLineNumbers = z.infer<typeof EditorLineNumbersSchema>;
+
+export const EditorRenderWhitespaceSchema = z.enum(['none', 'boundary', 'selection', 'all']);
+export type EditorRenderWhitespace = z.infer<typeof EditorRenderWhitespaceSchema>;
+
+export const EditorCursorStyleSchema = z.enum(['line', 'block', 'underline', 'line-thin', 'block-outline', 'underline-thin']);
+export type EditorCursorStyle = z.infer<typeof EditorCursorStyleSchema>;
+
 export const DrawerTabSchema = z.enum(['console', 'inspector', 'analysis', 'packages', 'runtimes']);
 
 const SessionTabSchema = z.object({ workspaceId: z.string().min(1), relPath: z.string().min(1) }).strict();
@@ -54,8 +66,20 @@ export const AppSettingsSchema = z
       .strict(),
     editor: z
       .object({
-        fontSize: z.number().int().min(11).max(18),
-        inlineInspector: z.boolean(),
+        fontSize: z.number().int().min(10).max(32).default(13),
+        fontLigatures: z.boolean().default(true),
+        tabSize: z.number().int().min(1).max(8).default(2),
+        insertSpaces: z.boolean().default(true),
+        wordWrap: EditorWordWrapSchema.default('off'),
+        lineNumbers: EditorLineNumbersSchema.default('on'),
+        minimap: z.boolean().default(false),
+        folding: z.boolean().default(true),
+        renderWhitespace: EditorRenderWhitespaceSchema.default('selection'),
+        bracketPairColorization: z.boolean().default(true),
+        smoothScrolling: z.boolean().default(true),
+        stickyScroll: z.boolean().default(false),
+        cursorStyle: EditorCursorStyleSchema.default('line'),
+        inlineInspector: z.boolean().default(true),
         /** Opt-in modal Vim/Neovim-style editing layer for Monaco. */
         vimMode: z.boolean().default(false)
       })

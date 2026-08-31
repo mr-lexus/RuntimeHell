@@ -7,7 +7,11 @@
 | SpiderMonkey (jsshell) | MPL-2.0 | Mozilla taskcluster/archive | Unmodified binaries |
 | JavaScriptCore (jsc) | LGPL-2.1 + BSD mix | WebKitForWindows / wincairo CI | Requires WebKitRequirements DLLs |
 | WebKitRequirements | BSD-style | WebKitForWindows GitHub releases | Support DLLs only |
-| QuickJS-ng | MIT | future-phase target | |
+| QuickJS-ng | MIT | quickjs-ng GitHub releases | Windows x64 executable; upstream sha256 digest |
+| txiki.js | MIT | saghul/txiki.js GitHub releases | Windows x64 archive; installed as a managed runtime |
+| GraalJS | GFTC / UPL | Oracle GraalJS GitHub releases | Native Windows x64 standalone; `bin/js.exe` is materialized at the install root |
+| Hermes CLI | MIT | facebook/hermes GitHub releases | Windows x64 `.tgz`; requires the host `tar` extractor |
+| ChakraCore | MIT | ChakraCore GitHub release → official Azure binary | Windows x64/all binary; release-note sha256 |
 
 ## Bun licensing note
 

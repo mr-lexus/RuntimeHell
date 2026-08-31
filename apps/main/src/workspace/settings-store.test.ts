@@ -49,6 +49,7 @@ describe('settings store', () => {
 
   it('adds the Vim editor default when loading an older v2 settings file', async () => {
     const path = settingsPath();
+    await saveSettings(DEFAULT_SETTINGS, path);
     await writeFile(path, JSON.stringify({ ...DEFAULT_SETTINGS, editor: { fontSize: 13, inlineInspector: true } }), 'utf8');
     const { settings, corruptBackupPath } = await loadSettings(path);
     expect(corruptBackupPath).toBeNull();

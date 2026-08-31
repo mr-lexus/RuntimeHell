@@ -17,6 +17,11 @@ describe('parseEmbeddedJson', () => {
     expect(parseEmbeddedJson('--- AST ---\nFUNC at 0')).toBeNull();
   });
 
+  it('does not mistake a scalar diagnostic for an AST root', () => {
+    expect(parseEmbeddedJson('0')).toBeNull();
+    expect(parseEmbeddedJson('{"root":0}')).toBeNull();
+  });
+
   it('builds a structured source tree when V8 AST output is textual', () => {
     expect(parseSourceAst('function add(a: number, b: number) { return a + b; }')).toMatchObject({
       type: 'Program',

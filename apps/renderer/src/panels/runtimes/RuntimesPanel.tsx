@@ -19,10 +19,10 @@ const SECTION_TITLE: React.CSSProperties = {
   margin: '14px 0 6px'
 };
 
-const GRID: React.CSSProperties = {
+const STACK: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  gap: 0
+  width: '100%'
 };
 
 const CARD: React.CSSProperties = {
@@ -32,17 +32,157 @@ const CARD: React.CSSProperties = {
   padding: '10px 4px',
   display: 'flex',
   flexDirection: 'column',
-  gap: 4
+  gap: 4,
+  width: '100%',
+  maxWidth: '100%',
+  boxSizing: 'border-box'
 };
 
-const dot = (color: string): React.CSSProperties => ({
-  width: 8,
-  height: 8,
-  borderRadius: '50%',
-  background: color,
-  flexShrink: 0,
-  boxShadow: 'none'
-});
+const ICONS = {
+  chevronRight: '\uf054',
+  chevronDown: '\uf078',
+  external: '\uf08e',
+  play: '\uf04b',
+  download: '\uf019',
+  trash: '\uf1f8',
+  copy: '\uf0c5',
+  check: '\uf00c',
+  info: '\uf129',
+  wrench: '\uf0ad',
+  versions: '\uf1b3',
+  ruler: '\uf1d8'
+} as const;
+
+function RuntimeIcon({ glyph }: { glyph: string }): React.JSX.Element {
+  return (
+    <span className="rh-runtime-icon" aria-hidden="true">
+      {glyph}
+    </span>
+  );
+}
+
+function RuntimeInfo({
+  entry,
+  version,
+  path,
+  source
+}: {
+  entry: RuntimeCatalogEntry;
+  version: string;
+  path: string | undefined;
+  source: string;
+}): React.JSX.Element {
+  return (
+    <details className="rh-runtime-info">
+      <summary className="rh-runtime-info-trigger" title={`show ${entry.name} details`} aria-label={`show ${entry.name} details`}>
+        <RuntimeIcon glyph={ICONS.info} />
+      </summary>
+      <div className="rh-runtime-info-popover" role="tooltip">
+        <strong>{entry.name} · v{version}</strong>
+        <span>{source}</span>
+        <code>{path ?? 'path unavailable'}</code>
+      </div>
+    </details>
+  );
+}
+
+/* Nerd Font Devicons are used where the bundled font has a stable brand mark.
+ * The rest intentionally use compact monograms: an unknown glyph would render
+ * as a tofu square and make the catalog look broken. */
+const RUNTIME_MARKS: Readonly<Record<string, string>> = {
+  node: '\ue718',
+  deno: '\ue7c0',
+  bun: '\ue76f',
+  browser: 'WEB',
+  firefox: '\uf269',
+  txiki: 'TX',
+  v8: 'V8',
+  'd8-debug': 'V8',
+  spidermonkey: 'SM',
+  javascriptcore: 'JS',
+  hermes: 'HM',
+  quickjs: 'QJ',
+  graaljs: 'GJ',
+  chakra: 'CH',
+  'moddable-xs': 'XS',
+  'core-js': 'CJ',
+  tc39: 'TC'
+};
+
+const RUNTIME_LOGO_ASSETS = import.meta.glob('../../assets/runtime-logos/*.{svg,png,webp,ico}', {
+  eager: true,
+  import: 'default',
+  query: '?url'
+}) as Readonly<Record<string, string>>;
+
+const RUNTIME_LOGO_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  node: ['node', 'nodejs'],
+  browser: ['browser', 'chromium'],
+  firefox: ['firefox', 'mozilla', 'gecko'],
+  'd8-debug': ['d8-debug', 'd8', 'v8-debug', 'v8'],
+  spidermonkey: ['spidermonkey', 'spider-monkey'],
+  javascriptcore: ['javascriptcore', 'jsc', 'webkit'],
+  'core-js': ['core-js', 'corejs'],
+  tc39: ['tc39', 'tc-39']
+};
+
+function normalizeLogoName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function runtimeLogoAsset(id: string, variant?: 'dark' | 'light'): string | undefined {
+  const names = RUNTIME_LOGO_ALIASES[id] ?? [id];
+  return Object.entries(RUNTIME_LOGO_ASSETS).find(([path]) => {
+    const fileName = path.replace(/\\/g, '/').split('/').pop() ?? '';
+    const baseName = fileName.replace(/\.[^.]+$/, '');
+    const normalizedFileName = normalizeLogoName(baseName);
+    return names.some((name) => {
+      const normalizedName = normalizeLogoName(name);
+      return variant === undefined
+        ? normalizedName === normalizedFileName
+        : `${normalizedName}${variant}` === normalizedFileName;
+    });
+  })?.[1];
+}
+
+function RuntimeLogo({ entry }: { entry: RuntimeCatalogEntry }): React.JSX.Element {
+  const mark = RUNTIME_MARKS[entry.id] ?? entry.name.slice(0, 2).toUpperCase();
+  const asset = runtimeLogoAsset(entry.id);
+  const darkAsset = runtimeLogoAsset(entry.id, 'dark');
+  const lightAsset = runtimeLogoAsset(entry.id, 'light');
+  const isGlyph = mark.codePointAt(0)! >= 0xe000;
+  const hasThemeAssets = darkAsset !== undefined && lightAsset !== undefined;
+  if (asset !== undefined || hasThemeAssets) {
+    return (
+      <span
+        className={`rh-runtime-logo is-asset${entry.id === 'core-js' ? ' is-theme-adaptive' : ''}`}
+        title={`${entry.name} logo`}
+        aria-label={`${entry.name} logo`}
+        role="img"
+      >
+        {hasThemeAssets ? (
+          <>
+            <img className="rh-runtime-logo-theme is-dark" src={darkAsset} alt="" />
+            <img className="rh-runtime-logo-theme is-light" src={lightAsset} alt="" />
+          </>
+        ) : (
+          <img src={asset} alt="" />
+        )}
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`rh-runtime-logo${isGlyph ? ' is-glyph' : ' is-monogram'}`}
+      style={{ color: entry.color }}
+      title={`${entry.name} logo`}
+      aria-label={`${entry.name} logo`}
+      role="img"
+    >
+      {mark}
+    </span>
+  );
+}
 
 const BADGE: React.CSSProperties = {
   fontFamily: MONO,
@@ -91,6 +231,16 @@ const BTN: React.CSSProperties = {
   cursor: 'pointer',
   fontSize: 11,
   fontFamily: MONO
+};
+
+const ICON_BTN: React.CSSProperties = {
+  ...BTN,
+  display: 'inline-grid',
+  placeItems: 'center',
+  width: 25,
+  height: 23,
+  padding: 0,
+  borderColor: 'transparent'
 };
 
 const SUB_LABEL: React.CSSProperties = {
@@ -163,13 +313,16 @@ function CardHeader({
   entry,
   collapsed,
   onToggle,
-  active = false
+  active = false,
+  summary = entry.description
 }: {
   entry: RuntimeCatalogEntry;
   collapsed: boolean;
   onToggle: () => void;
   /** Renders an "active" chip when this runtime currently runs code. */
   active?: boolean;
+  /** Optional compact summary rendered on the same line as the title. */
+  summary?: string;
 }): React.JSX.Element {
   return (
     <div
@@ -187,15 +340,18 @@ function CardHeader({
       }}
     >
       <span className="rh-runtime-disclosure" aria-hidden="true">
-        {collapsed ? '▸' : '▾'}
+        <RuntimeIcon glyph={collapsed ? ICONS.chevronRight : ICONS.chevronDown} />
       </span>
-      <span style={dot(entry.color)} />
+      <RuntimeLogo entry={entry} />
       <strong style={{ fontSize: 12, color: 'var(--text)' }}>{entry.name}</strong>
-      {active && <span style={ACTIVE_BADGE}>active</span>}
+      {active && <span style={ACTIVE_BADGE}><RuntimeIcon glyph={ICONS.check} /> active</span>}
       <span style={BADGE}>{entry.engine}</span>
       {entry.version !== undefined && (
         <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)' }}>{entry.version}</span>
       )}
+      <span className="rh-runtime-card-summary" title={summary}>
+        {summary}
+      </span>
       <a
         href={entry.website}
         target="_blank"
@@ -206,7 +362,7 @@ function CardHeader({
           e.stopPropagation();
         }}
       >
-        site ↗
+        <RuntimeIcon glyph={ICONS.external} /> site
       </a>
     </div>
   );
@@ -240,21 +396,19 @@ function PolyfillCard({
       <CardHeader entry={entry} collapsed={collapsed} onToggle={onToggle} />
       {!collapsed && (
         <>
-          <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{entry.description}</div>
           {packageName === undefined ? (
             <div style={{ color: 'var(--text-faint)', fontSize: 11 }}>
               reference only — this catalog entry has no installable package
             </div>
           ) : (
-            <div style={{ ...ROW, flexWrap: 'wrap' }}>
+            <div className="rh-runtime-inline-row">
               <span style={SOURCE_BADGE}>workspace-local</span>
               {installed !== undefined ? (
                 <>
                   <strong>{packageName}</strong>
                   <span style={{ color: 'var(--ok)' }}>{installed}</span>
-                  <span style={{ flex: 1 }} />
                   <button style={BTN} disabled={busy} onClick={() => void remove(packageName)}>
-                    remove
+                    <RuntimeIcon glyph={ICONS.trash} /> remove
                   </button>
                 </>
               ) : (
@@ -273,7 +427,7 @@ function PolyfillCard({
                     disabled={busy}
                     onClick={() => void installVersioned(packageName, requestedVersion.trim() || undefined)}
                   >
-                    {busy ? 'installing…' : 'install locally'}
+                    {busy ? 'installing…' : <><RuntimeIcon glyph={ICONS.download} /> install locally</>}
                   </button>
                 </>
               )}
@@ -308,7 +462,8 @@ function CatalogCard({
   );
   const [sourcePath, setSourcePath] = useState('');
   const [version, setVersion] = useState(entry.version ?? 'local');
-  const busy = state.progress !== null;
+  const busy = Object.values(state.progress).some((progress) => progress.id === entry.id);
+  const systemBrowser = state.systemBrowsers[entry.id] ?? null;
 
   return (
     <div
@@ -320,11 +475,39 @@ function CatalogCard({
         e.currentTarget.style.background = 'var(--bg-panel)';
       }}
     >
-      <CardHeader entry={entry} collapsed={collapsed} onToggle={onToggle} />
+      <CardHeader entry={entry} collapsed={collapsed} onToggle={onToggle} active={entry.id === 'browser' && state.activeRuntime === 'browser'} />
       {!collapsed && (
         <>
-          <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{entry.description}</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+          {entry.id === 'browser' ? (
+            <div className="rh-runtime-inline-row">
+              <span style={SOURCE_BADGE}>built-in · always available</span>
+              <span style={{ color: 'var(--ok)' }}>Chromium {typeof navigator !== 'undefined' ? navigator.userAgent.match(/Chrome\/([\d.]+)/)?.[1] ?? 'embedded' : 'embedded'}</span>
+              <button
+                type="button"
+                style={state.activeRuntime === 'browser' ? DEFAULT_CHIP_ACTIVE : BTN}
+                onClick={() => state.setActiveRuntime('browser')}
+              >
+                {state.activeRuntime === 'browser' ? <><RuntimeIcon glyph={ICONS.check} /> active runtime</> : <><RuntimeIcon glyph={ICONS.play} /> use for runs</>}
+              </button>
+            </div>
+          ) : entry.id === 'firefox' ? (
+            <div className="rh-runtime-inline-row">
+              <span style={SOURCE_BADGE}>system browser</span>
+              {systemBrowser !== null ? (
+                <>
+                  <span style={{ color: 'var(--ok)' }}>detected · v{systemBrowser.version}</span>
+                  <RuntimeInfo entry={entry} version={systemBrowser.version} path={systemBrowser.exePath} source="desktop installation" />
+                </>
+              ) : (
+                <span style={{ color: 'var(--text-faint)' }}>not detected on this system</span>
+              )}
+              <span className="rh-runtime-note" style={{ margin: 0 }}>
+                Firefox uses Gecko and SpiderMonkey; it is not yet a selectable embedded runner in RuntimeHell.
+              </span>
+            </div>
+          ) : (
+            <>
+          <div className="rh-runtime-meta-row">
             {detection?.installed === true ? (
               <span style={{ color: 'var(--ok)', fontFamily: MONO }}>
                 installed{detection.version !== undefined ? ` · ${detection.version}` : ''}
@@ -333,17 +516,17 @@ function CatalogCard({
               <span style={{ color: 'var(--text-faint)' }}>not detected on this system</span>
             )}
             {entry.detectCommand !== undefined && (
-              <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)' }}>
+              <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-faint)' }}>
                 $ {entry.detectCommand}
               </span>
             )}
           </div>
-          <div style={{ ...ROW, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <div className="rh-runtime-inline-row">
             <span style={SOURCE_BADGE}>sandbox-local</span>
             {imported !== undefined ? (
               <>
                 <span style={{ color: 'var(--ok)' }}>imported · v{imported.version}</span>
-                <span style={{ color: 'var(--text-faint)', flex: 1, minWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <span style={{ color: 'var(--text-faint)', maxWidth: 'min(360px, 42vw)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {imported.installedPath}
                 </span>
                 <button
@@ -352,7 +535,7 @@ function CatalogCard({
                   disabled={busy}
                   onClick={() => void state.remove(kind, entry.id, imported.version)}
                 >
-                  remove
+                  <RuntimeIcon glyph={ICONS.trash} />
                 </button>
               </>
             ) : (
@@ -362,7 +545,7 @@ function CatalogCard({
                   onChange={(event) => setSourcePath(event.target.value)}
                   placeholder="C:\\path\\to\\exe-or-folder"
                   aria-label={`${entry.name} local path`}
-                  style={{ ...BTN, flex: 1, minWidth: 240, boxSizing: 'border-box' }}
+                  style={{ ...BTN, width: 'min(360px, 42vw)', minWidth: 220, boxSizing: 'border-box' }}
                   disabled={busy}
                 />
                 <input
@@ -379,16 +562,18 @@ function CatalogCard({
                   disabled={busy || sourcePath.trim() === '' || version.trim() === ''}
                   onClick={() => void state.importLocal(kind, entry.id, sourcePath, version)}
                 >
-                  {busy ? 'copying…' : 'copy to sandbox'}
+                  {busy ? 'copying…' : <><RuntimeIcon glyph={ICONS.copy} /> copy to sandbox</>}
                 </button>
               </>
             )}
           </div>
-          <div style={{ color: 'var(--text-faint)', fontSize: 10 }}>
+          <div className="rh-runtime-note">
             {imported === undefined
               ? 'No managed build is bundled for this entry. Select an existing Windows file or folder; it is copied under RuntimeHell cache.'
               : 'Stored in the RuntimeHell cache. This catalog entry has no execution adapter yet.'}
           </div>
+            </>
+          )}
         </>
       )}
     </div>
@@ -414,32 +599,34 @@ function RuntimeCard({
   const system = state.systemRuntimes[id] ?? null;
   const nvm = id === 'node' ? state.nvm : null;
   const managed = state.installed.filter((e) => e.kind === 'runtime' && e.id === id && e.installedPath !== undefined);
-  const installedVersions = new Set(managed.map((e) => e.version));
+  const managedByVersion = new Map(managed.map((e) => [e.version, e]));
   const available = state.availableVersions[id] ?? [];
   const availableError = state.availableErrors[id] ?? null;
   const selected = state.selected[id] ?? null;
   const isActiveRuntime = state.activeRuntime === id;
 
   const radioName = `runtime-${id}`;
-  const busy = state.progress !== null;
 
   return (
     <div
       style={{
         ...CARD,
-        gridColumn: '1 / -1',
+        maxWidth: '100%',
         ...(isActiveRuntime ? { border: '1px solid var(--result)' } : {})
       }}
     >
-      <CardHeader entry={entry} collapsed={collapsed} onToggle={onToggle} active={isActiveRuntime} />
+      <CardHeader
+        entry={entry}
+        collapsed={collapsed}
+        onToggle={onToggle}
+        active={isActiveRuntime}
+        summary={`${entry.description} · auto uses global → local`}
+      />
       {!collapsed && (
         <>
-      <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
-        {entry.description} Auto uses global → local; choose a managed version to pin the sandbox.
-      </div>
-
       {/* System (global) detection */}
       <div style={SUB_LABEL}>System</div>
+      <div className="rh-runtime-choice-stack">
       <div style={ROW}>
         <input
           type="radio"
@@ -448,7 +635,7 @@ function RuntimeCard({
           onChange={() => state.select(id, null)}
         />
         <span style={SOURCE_BADGE}>auto</span>
-        <span>prefer global, then local fallback</span>
+          <span>prefer global, then local fallback</span>
       </div>
       <div style={ROW}>
         <input
@@ -461,21 +648,22 @@ function RuntimeCard({
         {system !== null ? (
           <span>
             <span style={SOURCE_BADGE}>global</span>
-            <span style={{ marginLeft: 6 }}>
-              v{system.version} <span style={{ color: 'var(--text-faint)' }}>— {system.exePath}</span>
-            </span>
+            <strong style={{ marginLeft: 6 }}>v{system.version}</strong>
+            <RuntimeInfo entry={entry} version={system.version} path={system.exePath} source="global · system PATH" />
           </span>
         ) : (
           <span style={{ color: 'var(--warn)' }}>not detected on PATH</span>
         )}
+      </div>
       </div>
 
       {/* nvm-windows versions (Node only) */}
       {nvm !== null && (
         <>
           <div style={SUB_LABEL}>nvm-windows ({nvm.root})</div>
+          <div className="rh-runtime-version-grid">
           {nvm.versions.map((v) => (
-            <div key={v.version} style={ROW}>
+              <div key={v.version} className={`rh-runtime-version-row${selected === `nvm:${v.version}` ? ' is-selected' : ''}`} style={ROW}>
               <input
                 type="radio"
                 name={radioName}
@@ -485,71 +673,116 @@ function RuntimeCard({
               <span style={SOURCE_BADGE}>nvm</span>
               <strong style={{ width: 90, marginLeft: 6 }}>v{v.version}</strong>
               {v.active && <span style={{ color: 'var(--result)' }}>active</span>}
-              <span style={{ color: 'var(--text-faint)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {v.exePath}
-              </span>
+              <RuntimeInfo entry={entry} version={v.version} path={v.exePath} source="nvm-windows" />
             </div>
           ))}
+          </div>
         </>
       )}
 
-      {/* Managed installs */}
-      <div style={SUB_LABEL}>Managed installs</div>
-      {managed.length === 0 && (
-        <div style={{ color: 'var(--text-faint)', fontSize: 11 }}>none yet — install a version below</div>
-      )}
-      {managed.map((e) => (
-        <div key={e.version} style={ROW}>
-          <input
-            type="radio"
-            name={radioName}
-            checked={selected === e.version}
-            onChange={() => state.select(id, e.version)}
-          />
-          <span style={SOURCE_BADGE}>managed</span>
-          <strong style={{ width: 90, marginLeft: 6 }}>v{e.version}</strong>
-          <span style={{ color: 'var(--text-faint)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {e.installedPath}
-          </span>
-          {isActiveRuntime && runtimeVersion === e.version && runPhase === 'running' && (
-            <span style={{ color: 'var(--warn)' }}>in use — removal blocked</span>
-          )}
-          <button
-            style={BTN}
-            disabled={runPhase === 'running'}
-            title={runPhase === 'running' ? 'cannot remove while a run is active' : `remove ${e.version}`}
-            onClick={() => void state.remove('runtime', id, e.version)}
-          >
-            remove
-          </button>
-        </div>
-      ))}
+      {/* Installed and available versions share one compact control surface. */}
+      <div style={SUB_LABEL}><RuntimeIcon glyph={ICONS.versions} /> Versions</div>
+      <div className="rh-runtime-catalog-grid">
+        {available.map((row) => {
+          const installed = managedByVersion.get(row.version);
+          if (installed !== undefined) {
+            const isSelected = selected === installed.version;
+            const removalBlocked = isActiveRuntime && runtimeVersion === installed.version && runPhase === 'running';
+            return (
+              <div key={`managed:${installed.version}`} className={`rh-runtime-version-card is-managed${isSelected ? ' is-selected' : ''}`}>
+                <div className="rh-runtime-version-main">
+                  <input
+                    type="radio"
+                    name={radioName}
+                    checked={isSelected}
+                    onChange={() => state.select(id, installed.version)}
+                  />
+                  <strong>v{installed.version}</strong>
+                  {isSelected && <span className="rh-runtime-version-active"><RuntimeIcon glyph={ICONS.check} /> active</span>}
+                </div>
+                <RuntimeInfo entry={entry} version={installed.version} path={installed.installedPath} source="RuntimeHell cache" />
+                {removalBlocked && <span className="rh-runtime-version-status">in use — removal blocked</span>}
+                <button
+                  type="button"
+                  className="rh-runtime-icon-button"
+                  style={{ ...ICON_BTN, color: 'var(--err)' }}
+                  disabled={runPhase === 'running'}
+                  aria-label={`remove ${installed.version}`}
+                  title={runPhase === 'running' ? 'cannot remove while a run is active' : `remove ${installed.version}`}
+                  onClick={() => void state.remove('runtime', id, installed.version)}
+                >
+                  <RuntimeIcon glyph={ICONS.trash} />
+                </button>
+              </div>
+            );
+          }
 
-      {/* Available versions */}
-      <div style={SUB_LABEL}>Available</div>
-      {available.map((row) => {
-      const installing = state.progress?.id === id && state.progress?.version === row.version;
-        return (
-          <div key={row.version} style={ROW}>
-            <span style={{ width: 90 }}>
-              v{row.version} {row.lts === true ? <span style={{ color: 'var(--result)' }}>LTS</span> : ''}
-            </span>
-            <span style={{ color: 'var(--text-faint)', flex: 1 }}>{row.date}</span>
-            {installedVersions.has(row.version) ? (
-              <span style={{ color: 'var(--ok)' }}>installed</span>
-            ) : installing ? (
-              <span style={{ color: 'var(--warn)' }}>
-                {pct(state.progress?.receivedBytes ?? 0, state.progress?.totalBytes ?? null)}
-              </span>
-            ) : (
-              <button style={BTN} disabled={busy} onClick={() => void state.install('runtime', id, row.version)}>
-                install
-              </button>
-            )}
-          </div>
-        );
-      })}
-      {!state.loading && available.length === 0 && availableError === null && (
+          const installingProgress = Object.values(state.progress).find(
+            (progress) => progress.id === id && progress.version === row.version
+          );
+          const installing = installingProgress !== undefined;
+          return (
+            <div key={`available:${row.version}`} className="rh-runtime-version-card is-available">
+              <div className="rh-runtime-version-main">
+                <strong>v{row.version}</strong>
+                {row.lts === true && <span className="rh-runtime-version-lts">LTS</span>}
+                <span className="rh-runtime-version-date">{row.date}</span>
+              </div>
+              {installing ? (
+                <span className="rh-runtime-version-progress">
+                  {pct(installingProgress.receivedBytes, installingProgress.totalBytes)}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="rh-runtime-icon-button"
+                  style={{ ...ICON_BTN, color: 'var(--result)' }}
+                  disabled={installing}
+                  aria-label={`install ${entry.name} ${row.version}`}
+                  title={`install ${entry.name} ${row.version}`}
+                  onClick={() => void state.install('runtime', id, row.version)}
+                >
+                  <RuntimeIcon glyph={ICONS.download} />
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {managed
+          .filter((installed) => !available.some((row) => row.version === installed.version))
+          .map((installed) => {
+            const isSelected = selected === installed.version;
+            const removalBlocked = isActiveRuntime && runtimeVersion === installed.version && runPhase === 'running';
+            return (
+              <div key={`managed:${installed.version}`} className={`rh-runtime-version-card is-managed${isSelected ? ' is-selected' : ''}`}>
+                <div className="rh-runtime-version-main">
+                  <input
+                    type="radio"
+                    name={radioName}
+                    checked={isSelected}
+                    onChange={() => state.select(id, installed.version)}
+                  />
+                  <strong>v{installed.version}</strong>
+                  {isSelected && <span className="rh-runtime-version-active"><RuntimeIcon glyph={ICONS.check} /> active</span>}
+                </div>
+                <RuntimeInfo entry={entry} version={installed.version} path={installed.installedPath} source="RuntimeHell cache" />
+                {removalBlocked && <span className="rh-runtime-version-status">in use — removal blocked</span>}
+                <button
+                  type="button"
+                  className="rh-runtime-icon-button"
+                  style={{ ...ICON_BTN, color: 'var(--err)' }}
+                  disabled={runPhase === 'running'}
+                  aria-label={`remove ${installed.version}`}
+                  title={runPhase === 'running' ? 'cannot remove while a run is active' : `remove ${installed.version}`}
+                  onClick={() => void state.remove('runtime', id, installed.version)}
+                >
+                  <RuntimeIcon glyph={ICONS.trash} />
+                </button>
+              </div>
+            );
+          })}
+      </div>
+      {!state.loading && managed.length === 0 && available.length === 0 && availableError === null && (
         <div style={{ color: 'var(--text-faint)', fontSize: 11 }}>no versions listed</div>
       )}
       {availableError !== null && (
@@ -580,8 +813,9 @@ function EngineCard({
   const webkitRequirements = state.installed.find(
     (e) => e.kind === 'runtime-support' && e.id === 'webkit-requirements' && e.installedPath !== undefined
   );
-  const busy = state.progress !== null;
-  const installing = state.progress?.id === id;
+  const installingProgress = Object.values(state.progress).find((progress) => progress.id === id);
+  const busy = installingProgress !== undefined;
+  const installing = busy;
   const canPinVersion = id === 'v8' || id === 'd8-debug';
 
   const install = (): void => {
@@ -590,46 +824,44 @@ function EngineCard({
   };
 
   return (
-    <div style={{ ...CARD, gridColumn: '1 / -1' }}>
+    <div style={CARD}>
       <CardHeader entry={entry} collapsed={collapsed} onToggle={onToggle} />
       {!collapsed && (
         <>
-          <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{entry.description}</div>
-
           {id === 'javascriptcore' && (
-            <div style={{ ...ROW, color: webkitRequirements === undefined ? 'var(--text-faint)' : 'var(--ok)' }}>
+            <div className="rh-runtime-inline-row" style={{ color: webkitRequirements === undefined ? 'var(--text-faint)' : 'var(--ok)' }}>
               <span style={SOURCE_BADGE}>support</span>
               WebKitRequirements
-              <span style={{ flex: 1 }} />
               {webkitRequirements === undefined ? 'installed automatically with JSC' : `ready · ${webkitRequirements.version}`}
             </div>
           )}
 
-          <div style={SUB_LABEL}>Managed versions</div>
+          <div style={SUB_LABEL}>Versions</div>
           {managed.length === 0 && (
             <div style={{ color: 'var(--text-faint)', fontSize: 11 }}>none yet — install a version below</div>
           )}
+          <div className="rh-runtime-managed-grid">
           {managed.map((e) => (
-            <div key={`${e.id}:${e.version}`} style={ROW}>
-              <span style={SOURCE_BADGE}>managed</span>
-              <strong style={{ width: 110, marginLeft: 6 }}>v{e.version}</strong>
-              <span style={{ color: 'var(--text-faint)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {e.installedPath}
-              </span>
+            <div key={`${e.id}:${e.version}`} className="rh-runtime-managed-row">
+              <strong style={{ width: 110 }}>v{e.version}</strong>
+              <RuntimeInfo entry={entry} version={e.version} path={e.installedPath} source="RuntimeHell cache" />
               <button
                 type="button"
-                style={BTN}
+                className="rh-runtime-icon-button"
+                style={{ ...ICON_BTN, color: 'var(--err)' }}
                 disabled={runPhase === 'running' || busy}
+                aria-label={`remove ${e.version}`}
                 title={runPhase === 'running' ? 'cannot remove while a run is active' : `remove ${e.version}`}
                 onClick={() => void state.remove('engine', id, e.version)}
               >
-                remove
+                <RuntimeIcon glyph={ICONS.trash} />
               </button>
             </div>
           ))}
+          </div>
 
           <div style={SUB_LABEL}>Install</div>
-          <div style={{ ...ROW, borderBottom: 0, flexWrap: 'wrap' }}>
+          <div className="rh-runtime-inline-row">
             {canPinVersion && (
               <input
                 value={requestedVersion}
@@ -641,11 +873,13 @@ function EngineCard({
               />
             )}
             <button type="button" style={BTN} disabled={busy} onClick={install}>
-              {installing
-                ? `installing ${pct(state.progress?.receivedBytes ?? 0, state.progress?.totalBytes ?? null)}`
-                : canPinVersion && requestedVersion.trim() !== ''
-                  ? `install v${requestedVersion.trim()}`
-                  : 'install latest'}
+              {installing ? (
+                `installing ${pct(installingProgress.receivedBytes, installingProgress.totalBytes)}`
+              ) : canPinVersion && requestedVersion.trim() !== '' ? (
+                <><RuntimeIcon glyph={ICONS.download} /> install v{requestedVersion.trim()}</>
+              ) : (
+                <><RuntimeIcon glyph={ICONS.download} /> install latest</>
+              )}
             </button>
             {!canPinVersion && <span style={{ color: 'var(--text-faint)', fontSize: 10 }}>latest official build</span>}
           </div>
@@ -661,7 +895,8 @@ function EngineCard({
 const DEFAULT_RUNTIMES: readonly { id: RuntimeId; name: string }[] = [
   { id: 'node', name: 'Node.js' },
   { id: 'deno', name: 'Deno' },
-  { id: 'bun', name: 'Bun' }
+  { id: 'bun', name: 'Bun' },
+  { id: 'browser', name: 'Browser V8' }
 ];
 
 /**
@@ -722,7 +957,7 @@ export function RuntimesPanel(): React.JSX.Element {
             color: 'var(--text-dim)'
           }}
         >
-          Default runtime
+          <RuntimeIcon glyph={ICONS.play} /> Default runtime
         </span>
         {DEFAULT_RUNTIMES.map((r) => {
           const active = state.activeRuntime === r.id;
@@ -745,7 +980,7 @@ export function RuntimesPanel(): React.JSX.Element {
         })}
       </div>
 
-      <div style={GRID}>
+      <div style={STACK}>
         {installable.map((e) => (
           <RuntimeCard key={e.id} entry={e} collapsed={isCollapsed(e)} onToggle={() => toggleCollapsed(e)} />
         ))}
@@ -760,8 +995,8 @@ export function RuntimesPanel(): React.JSX.Element {
         ))}
       </div>
 
-      <div style={SECTION_TITLE}>🔧 Engines</div>
-      <div style={GRID}>
+      <div style={SECTION_TITLE}><RuntimeIcon glyph={ICONS.wrench} /> Engines</div>
+      <div style={STACK}>
         {installableEngines.map((e) => (
           <EngineCard key={e.id} entry={e} collapsed={isCollapsed(e)} onToggle={() => toggleCollapsed(e)} />
         ))}
@@ -776,8 +1011,8 @@ export function RuntimesPanel(): React.JSX.Element {
         ))}
       </div>
 
-      <div style={SECTION_TITLE}>📐 Standards &amp; Polyfills</div>
-      <div style={GRID}>
+      <div style={SECTION_TITLE}><RuntimeIcon glyph={ICONS.ruler} /> Standards &amp; Polyfills</div>
+      <div style={STACK}>
         {polyfills.map((e) => (
           <PolyfillCard
             key={e.id}

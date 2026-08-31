@@ -23,6 +23,7 @@ import type { IsolatedRun, IsolatedRunOptions } from '../execution/isolation.js'
 import { CapabilityGateError } from './engine-adapter.js';
 import type { EngineAdapter, EngineDescription, AnalysisContext } from './engine-adapter.js';
 import type { EngineRegistry } from './registry.js';
+import { loadNormalizedIrGraph } from './ir-graph-normalize.js';
 
 export { CapabilityGateError } from './engine-adapter.js';
 export type { IsolatedRun, IsolatedRunOptions, IsolatedRunResult } from '../execution/isolation.js';
@@ -201,6 +202,7 @@ export class V8EngineAdapter {
       if (run.timedOut) rawOutput += `\n[runtimehell] analysis timed out after ${timeoutMs}ms`;
 
       const artifacts = analysisType === 'ir-graph' ? await collectJsonArtifacts(workDir) : [];
+      const normalized = analysisType === 'ir-graph' ? await loadNormalizedIrGraph(artifacts) : undefined;
 
       results.push({
         source: req.code,
@@ -208,6 +210,7 @@ export class V8EngineAdapter {
         engineVersion,
         analysisType,
         rawOutput,
+        ...(normalized === undefined ? {} : { normalized }),
         artifacts,
         metadata: {
           flagsUsed: flags,

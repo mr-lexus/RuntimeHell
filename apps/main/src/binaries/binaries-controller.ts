@@ -24,9 +24,12 @@ import {
   listBunVersions,
   listDenoVersions
 } from '../runtimes/deno-bun.js';
+import { buildTxikiInstall, installStandalone, listTxikiVersions } from './standalone-downloader.js';
 import {
   detectNvmNode,
+  detectSystemBrowser,
   detectSystemRuntime,
+  type BrowserId,
   type DetectedRuntime,
   type RuntimeId
 } from '../runtimes/runtime-detection.js';
@@ -38,11 +41,16 @@ export interface BinariesControllerDeps {
   readonly fetchAvailable?: (id: string) => Promise<RuntimeVersionRow[]>;
   /** Injectable for tests; default = where.exe detection. */
   readonly detectSystem?: (id: string) => Promise<DetectedRuntime | null>;
+  /** Injectable for tests; default = PATH/common-install-location detection. */
+  readonly detectBrowser?: (id: BrowserId) => Promise<DetectedRuntime | null>;
   /** Injectable for tests; default = nvm-windows detection. */
   readonly detectNvm?: () => Promise<NvmInfo | null>;
 }
 
 const RUNTIME_IDS: RuntimeId[] = ['node', 'deno', 'bun'];
+const BROWSER_IDS: BrowserId[] = ['firefox'];
+const MANAGED_RUNTIME_IDS = ['node', 'deno', 'bun', 'txiki'] as const;
+type ManagedRuntimeId = (typeof MANAGED_RUNTIME_IDS)[number];
 
 /** GitHub releases API is rate-limited (60 req/hr unauthenticated) — cache 5 min. */
 const AVAILABLE_TTL_MS = 5 * 60 * 1000;
@@ -73,12 +81,24 @@ export class BinariesController {
     return p;
   }
 
+  private detectBrowser(id: BrowserId): Promise<SystemRuntimeInfo | null> {
+    const cacheKey = `browser:${id}`;
+    let p = this.systemCache.get(cacheKey);
+    if (!p) {
+      p = (this.deps.detectBrowser?.(id) ?? detectSystemBrowser(id)).then(
+        (d): SystemRuntimeInfo | null => (d ? { exePath: d.exePath, version: d.version } : null)
+      );
+      this.systemCache.set(cacheKey, p);
+    }
+    return p;
+  }
+
   private detectNvm(): Promise<NvmInfo | null> {
     this.nvmCache ??= this.deps.detectNvm?.() ?? detectNvmNode();
     return this.nvmCache;
   }
 
-  private async fetchAvailable(id: RuntimeId): Promise<RuntimeVersionRow[]> {
+  private async fetchAvailable(id: ManagedRuntimeId): Promise<RuntimeVersionRow[]> {
     const cached = this.availableCache.get(id);
     if (cached && Date.now() - cached.at < AVAILABLE_TTL_MS) return cached.rows;
     const rows = this.deps.fetchAvailable
@@ -87,26 +107,33 @@ export class BinariesController {
         ? toRows(await listNodeVersions())
         : id === 'deno'
           ? await listDenoVersions()
-          : await listBunVersions();
+          : id === 'bun'
+            ? await listBunVersions()
+            : await listTxikiVersions();
     this.availableCache.set(id, { at: Date.now(), rows });
     return rows;
   }
 
   async list(): Promise<BinariesListResponse> {
-    const [manifest, nvm, ...systems] = await Promise.all([
+    const [manifest, nvm, systems, browsers] = await Promise.all([
       readManifest(),
       this.detectNvm(),
-      ...RUNTIME_IDS.map((id) => this.detectSystem(id))
+      Promise.all(RUNTIME_IDS.map((id) => this.detectSystem(id))),
+      Promise.all(BROWSER_IDS.map((id) => this.detectBrowser(id)))
     ]);
     const systemRuntimes: Record<string, SystemRuntimeInfo | null> = {};
     RUNTIME_IDS.forEach((id, i) => {
       systemRuntimes[id] = systems[i] ?? null;
     });
+    const systemBrowsers: Record<string, SystemRuntimeInfo | null> = {};
+    BROWSER_IDS.forEach((id, i) => {
+      systemBrowsers[id] = browsers[i] ?? null;
+    });
 
     const availableVersions: Record<string, RuntimeVersionRow[]> = {};
     const availableErrors: Record<string, string> = {};
     await Promise.all(
-      RUNTIME_IDS.map(async (id) => {
+      MANAGED_RUNTIME_IDS.map(async (id) => {
         availableVersions[id] = [];
         try {
           const fetched = await this.fetchAvailable(id);
@@ -127,7 +154,7 @@ export class BinariesController {
     // Return every managed binary so the Runtimes panel can manage both
     // complete runtimes and low-level analysis engines from one surface.
     const installed = manifest.entries.filter((e) => e.installedPath !== undefined);
-    return { systemRuntimes, nvm, installed, availableVersions, availableErrors };
+    return { systemRuntimes, systemBrowsers, nvm, installed, availableVersions, availableErrors };
   }
 
   async install(kind: 'runtime' | 'engine', id: string, version?: string): Promise<BinaryInstallResponse> {
@@ -145,6 +172,27 @@ export class BinariesController {
           await ensureWebKitRequirements();
           const { installJscEngine } = await import('./jsc-downloader.js');
           const entry = await installJscEngine({ onProgress: (p) => this.deps.emitProgress({ kind: 'runtime', id, version: p.totalBytes === null ? '' : id, receivedBytes: p.receivedBytes, totalBytes: p.totalBytes }) });
+          this.deps.emitProgress({ kind: 'runtime', id, version: entry.version, receivedBytes: 0, totalBytes: null, done: true });
+          return { ok: true, entry };
+        }
+        if (id === 'quickjs' || id === 'graaljs' || id === 'hermes' || id === 'chakra' || id === 'moddable-xs') {
+          const { buildChakraInstall, buildGraalJsInstall, buildHermesInstall, buildModdableXsInstall, buildQuickJsInstall } = await import('./standalone-downloader.js');
+          const built = id === 'quickjs'
+            ? await buildQuickJsInstall()
+            : id === 'graaljs'
+              ? await buildGraalJsInstall()
+              : id === 'hermes'
+                ? await buildHermesInstall()
+                : id === 'moddable-xs'
+                  ? await buildModdableXsInstall()
+                  : await buildChakraInstall();
+          const entry = await installStandalone(built, (p) => this.deps.emitProgress({
+            kind: 'runtime',
+            id,
+            version: p.version,
+            receivedBytes: p.receivedBytes,
+            totalBytes: p.totalBytes
+          }));
           this.deps.emitProgress({ kind: 'runtime', id, version: entry.version, receivedBytes: 0, totalBytes: null, done: true });
           return { ok: true, entry };
         }
@@ -171,6 +219,18 @@ export class BinariesController {
       // Progress events carry the version WITHOUT the leading 'v' — the UI
       // compares against available-version rows (also v-less).
       const progressVersion = normalized.replace(/^v/, '');
+      if (id === 'txiki') {
+        const built = await buildTxikiInstall(progressVersion);
+        const entry = await installStandalone(built, (p) => this.deps.emitProgress({
+          kind: 'runtime',
+          id,
+          version: progressVersion,
+          receivedBytes: p.receivedBytes,
+          totalBytes: p.totalBytes
+        }));
+        this.deps.emitProgress({ kind: 'runtime', id, version: progressVersion, receivedBytes: 0, totalBytes: null, done: true });
+        return { ok: true, entry };
+      }
       const built =
         id === 'node'
           ? await buildNodeInstall(normalized, (received, total) => {

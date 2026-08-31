@@ -19,7 +19,7 @@ export type EngineKey = `${EngineId}:${Platform}:${Arch}`;
 export const V8_CANARY_BASE = 'https://storage.googleapis.com/chromium-v8/official/canary';
 
 export interface EngineSource {
-  kind: 'v8-canary' | 'sm-shell' | 'jsc-shell' | 'support-artifact' | 'future';
+  kind: 'v8-canary' | 'sm-shell' | 'jsc-shell' | 'github-release' | 'support-artifact' | 'future';
   enabled: boolean;
   /** Present when kind === 'support-artifact': the required companion id. */
   requiresSupport?: string;
@@ -55,11 +55,12 @@ export function resolveEngineArtifact(engineId: EngineId, platform: Platform, ar
     case 'javascriptcore':
       // jsvu win64 build REQUIRES WebKitRequirements bin64 DLLs (evidence 3).
       if (platform === 'win64' && arch === 'x64') {
-        return { kind: 'jsc-shell', enabled: false, requiresSupport: 'webkit-requirements', reason: 'JSC analysis lands in a later milestone' };
+        return { kind: 'jsc-shell', enabled: true, requiresSupport: 'webkit-requirements' };
       }
-      return { kind: 'jsc-shell', enabled: false, requiresSupport: undefined, reason: 'JSC analysis lands in a later milestone' };
+      return { kind: 'jsc-shell', enabled: false, customBuildRequired: true, reason: 'managed JSC download currently targets win64/x64' };
     case 'quickjs':
-      return { kind: 'future', enabled: false, reason: 'QuickJS-ng adapter is a post-v0.x target' };
+      if (platform === 'win64' && arch === 'x64') return { kind: 'github-release', enabled: true };
+      return { kind: 'github-release', enabled: false, customBuildRequired: true, reason: 'managed QuickJS-ng download currently targets win64/x64' };
   }
 }
 

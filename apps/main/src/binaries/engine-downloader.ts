@@ -46,9 +46,10 @@ export interface EngineInstallOutcome {
 /** Install a managed engine binary per the catalog. */
 export async function installEngine(req: EngineInstallRequest): Promise<EngineInstallOutcome> {
   const source = resolveEngineArtifact(req.engineId, 'win64', 'x64');
-  if (!source.enabled) {
-    throw new Error(source.reason ?? 'engine download unavailable');
-  }
+  // The IPC boundary accepts a string id. Keep malformed/legacy ids from
+  // turning an unsupported lookup into a cryptic "reading enabled" crash.
+  if (source === undefined) throw new Error(`unknown engine '${req.engineId}'`);
+  if (!source.enabled) throw new Error(source.reason ?? 'engine download unavailable');
   if (source.kind !== 'v8-canary') {
     // sm/jsc install flows activate with their adapter todos (24/25).
     throw new Error(`installer for ${req.engineId} is not active yet`);

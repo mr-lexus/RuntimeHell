@@ -112,14 +112,29 @@ export interface RuntimeInstallSpec {
   sha256: string;
 }
 
+/** Parse Deno's checksum sidecar in both Unix and Windows PowerShell formats. */
+export function parseDenoSha256(text: string): string | null {
+  const powerShellHash = /^\s*Hash\s*:\s*([a-f0-9]{64})\s*$/im.exec(text)?.[1];
+  if (powerShellHash) return powerShellHash.toLowerCase();
+
+  const standardHash = /^\s*([a-f0-9]{64})(?:\s+.*)?$/im.exec(text)?.[1];
+  if (standardHash) return standardHash.toLowerCase();
+
+  // Be tolerant of future Deno sidecar variants (for example a checksum
+  // surrounded by metadata or emitted with a different field alignment).
+  // The sidecar is fetched for one archive, so the first standalone 64-char
+  // hexadecimal token is the only useful checksum candidate.
+  return /\b([a-f0-9]{64})\b/i.exec(text)?.[1]?.toLowerCase() ?? null;
+}
+
 /** Deno: sha256 from the `.sha256sum` sidecar published next to the zip. */
 export async function buildDenoInstall(version: string): Promise<RuntimeInstallSpec> {
   const v = version.startsWith('v') ? version : `v${version}`;
   const url = denoDownloadUrl(v);
   const sidecar = await fetch(`${url}.sha256sum`);
   if (!sidecar.ok) throw new Error(`deno sha256 sidecar fetch failed: ${sidecar.status}`);
-  const sha256 = (await sidecar.text()).trim().split(/\s+/)[0] ?? '';
-  if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error(`invalid deno sha256: ${sha256}`);
+  const sha256 = parseDenoSha256(await sidecar.text());
+  if (sha256 === null) throw new Error('invalid deno sha256: checksum not found in sidecar');
   return {
     entry: {
       kind: 'runtime',

@@ -72,6 +72,44 @@ export const AnalysisResultSchema = z
   .strict();
 export type AnalysisResult = z.infer<typeof AnalysisResultSchema>;
 
+/** Compact, renderer-ready summary of V8 Turbolizer JSON artifacts. */
+export interface NormalizedIrGraphNode {
+  id: number;
+  label: string;
+  opcode: string;
+  properties: string;
+  live: boolean;
+  control: boolean;
+  sourcePosition?: number;
+}
+
+export interface NormalizedIrGraphEdge {
+  source: number;
+  target: number;
+  index?: number;
+  type?: string;
+}
+
+export interface NormalizedIrGraphPhase {
+  name: string;
+  type: string;
+  nodes: NormalizedIrGraphNode[];
+  edges: NormalizedIrGraphEdge[];
+  truncated: boolean;
+}
+
+export interface NormalizedIrGraphFunction {
+  name: string;
+  sourceName: string;
+  sourceText: string;
+  phases: NormalizedIrGraphPhase[];
+}
+
+export interface NormalizedIrGraph {
+  kind: 'ir-graph';
+  functions: NormalizedIrGraphFunction[];
+}
+
 export const AnalysisStartRequestSchema = z
   .object({
     requestId: z.string().min(8),

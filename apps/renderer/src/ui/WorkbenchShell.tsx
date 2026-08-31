@@ -8,6 +8,7 @@ import { InspectorPanel } from '../panels/inspector/InspectorPanel';
 import { AnalysisPanel } from '../panels/analysis/AnalysisPanel';
 import { PackagesPanel } from '../panels/packages/PackagesPanel';
 import { RuntimesPanel } from '../panels/runtimes/RuntimesPanel';
+import { PerformancePanel } from '../panels/performance/PerformancePanel';
 import { Button, InstrumentFrame, KeyboardHint, SegmentedControl, StatusIndicator } from './primitives';
 import { CommandPalette, type PaletteCommand } from './CommandPalette';
 import { SettingsView } from './SettingsView';
@@ -25,7 +26,7 @@ export interface WorkbenchShellProps {
   drawerTab: DrawerTab;
   drawerRatio: number;
   drawerOpen: boolean;
-  showInspector: boolean;
+  showOutputColumn: boolean;
   phase: 'idle' | 'running' | 'cancelling';
   runtimeVersion: string | null;
   lastRuntimeId: string | null;
@@ -44,7 +45,6 @@ export interface WorkbenchShellProps {
   settingsViewActive: boolean;
   commands: readonly PaletteCommand[];
   onClosePalette: () => void;
-  onOpenPalette: () => void;
   onOpenSettings: () => void;
   onSetWorkspaceView: (view: 'editor' | 'settings') => void;
   onSetActive: (id: string) => void;
@@ -67,9 +67,10 @@ export interface WorkbenchShellProps {
   onSetAutoRun: (value: boolean) => void;
   onCancel: () => void;
   onSetLang: (value: 'js' | 'ts') => void;
-  onSetInspector: (value: boolean) => void;
+  onSetOutputColumn: (value: boolean) => void;
   onPatchSettings: (patch: import('@rh/protocol').SettingsPatch) => void;
   onResetAppearance: () => void;
+  onResetEditor: () => void;
   onResetAll: () => void;
 }
 
@@ -78,7 +79,8 @@ const drawerItems: readonly { id: DrawerTab; label: string }[] = [
   { id: 'inspector', label: 'inspector' },
   { id: 'analysis', label: 'analysis' },
   { id: 'packages', label: 'packages' },
-  { id: 'runtimes', label: 'runtimes' }
+  { id: 'runtimes', label: 'runtimes' },
+  { id: 'performance', label: 'performance' }
 ];
 
 interface TabContextMenuState {
@@ -137,7 +139,10 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
       renameInputRef.current?.focus();
       renameInputRef.current?.select();
     }
-  }, [tabRename]);
+    // Select the initial name only when the rename dialog opens or switches
+    // to another tab. Do not re-run this after onChange: selecting here on
+    // every keystroke makes the next character replace the whole filename.
+  }, [tabRename?.fileId]);
   const statusKind = props.phase === 'running' ? 'running' : props.lastExit?.code === 0 ? 'ready' : props.lastExit?.code !== null && props.lastExit !== null ? 'error' : 'idle';
   const activeRuntimeLabel = props.activeRuntime ?? props.lastRuntimeId ?? 'node';
   const selectTab = (tab: DrawerTab): void => {
@@ -174,8 +179,12 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
     <div className="rh-app">
       <header className="rh-titlebar">
         <div className="rh-brand"><span className="rh-brand-mark">◈</span><span>RuntimeHell</span></div>
-        <button className="rh-command-trigger" onClick={props.onOpenPalette} aria-label="Open command palette"><span className="rh-command-prefix">&gt;</span><span>command</span><KeyboardHint>Ctrl+Shift+P</KeyboardHint></button>
-        <button className={`rh-top-settings ${props.settingsViewActive ? 'is-active' : ''}`} onClick={() => props.settingsViewActive ? props.onSetWorkspaceView('editor') : props.onOpenSettings()} aria-label={props.settingsViewActive ? 'Return to workspace' : 'Settings'} title={props.settingsViewActive ? 'Return to workspace' : 'Settings (Ctrl+,)'}><span className="rh-top-settings-mark" aria-hidden="true" /><span>{props.settingsViewActive ? 'workspace' : 'settings'}</span></button>
+        <div className="rh-titlebar-editor-controls" aria-label="Editor controls">
+          <Button variant="primary" className="rh-titlebar-run" onClick={props.onRun} disabled={!props.activeFile || props.phase !== 'idle'} title="Run source (Ctrl+Enter)"><span className="rh-action-marker">▶</span> run</Button>
+          <SegmentedControl aria-label="Language" className="rh-titlebar-language">{(['js', 'ts'] as const).map((item) => <button key={item} className={`rh-choice rh-language-choice ${props.lang === item ? 'is-selected' : ''}`} aria-label={`Use ${item.toUpperCase()} mode`} title={`${item.toUpperCase()} mode`} aria-pressed={props.lang === item} onClick={() => props.onSetLang(item)}><span className="rh-language-icon" aria-hidden="true">{item === 'js' ? '\u{e781}' : '\u{e628}'}</span></button>)}</SegmentedControl>
+          <Button className="rh-titlebar-output" variant={props.showOutputColumn ? 'active' : 'ghost'} onClick={() => props.onSetOutputColumn(!props.showOutputColumn)} aria-pressed={props.showOutputColumn} title="Show or hide the line output panel">output {props.showOutputColumn ? 'on' : 'off'}</Button>
+        </div>
+        <button className={`rh-top-settings ${props.settingsViewActive ? 'is-active' : ''}`} onClick={() => props.settingsViewActive ? props.onSetWorkspaceView('editor') : props.onOpenSettings()} aria-label={props.settingsViewActive ? 'Return to workspace' : 'Settings'} title={props.settingsViewActive ? 'Return to workspace' : 'Settings (Ctrl+,)'}><span className="rh-top-settings-icon" aria-hidden="true">{props.settingsViewActive ? '\u{f02dc}' : '\u{f0493}'}</span></button>
         <div className="rh-window-controls" aria-label="Window controls">
           <button className="rh-window-control" aria-label="Minimize" title="Minimize" onClick={() => { if (typeof window.api?.windowMinimize === 'function') void window.api.windowMinimize(); }}><span className="rh-window-glyph rh-window-glyph-minimize" aria-hidden="true" /></button>
           <button className="rh-window-control" aria-label={windowMaximized ? 'Restore' : 'Maximize'} title={windowMaximized ? 'Restore' : 'Maximize'} onClick={() => { if (typeof window.api?.windowToggleMaximize === 'function') void window.api.windowToggleMaximize().then(setWindowMaximized); }}><span className={`rh-window-glyph ${windowMaximized ? 'rh-window-glyph-restore' : 'rh-window-glyph-maximize'}`} aria-hidden="true" /></button>
@@ -184,22 +193,22 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
       </header>
       <div className="rh-workspace">
         <main className={`rh-main ${props.settingsViewActive ? 'is-settings' : ''}`}>
-          {props.settingsViewActive ? <div className="rh-settings-region"><SettingsView settings={props.settings} onPatch={props.onPatchSettings} onResetAppearance={props.onResetAppearance} onResetAll={props.onResetAll} onClose={() => props.onSetWorkspaceView('editor')} /></div> : <>
-            <InstrumentFrame index="SRC" title="SOURCE" metadata={props.activeFile ? `${props.lang.toUpperCase()} / LIVE${props.settings.editor.vimMode ? ' / VIM' : ''}` : 'NO SOURCE'} state="active" className="rh-source-frame" actions={<div className="rh-source-actions"><Button variant="primary" onClick={props.onRun} disabled={!props.activeFile || props.phase !== 'idle'}><span className="rh-action-marker">▶</span> run</Button><KeyboardHint>Ctrl+Enter</KeyboardHint><SegmentedControl aria-label="Language">{(['js', 'ts'] as const).map((item) => <button key={item} className={`rh-choice ${props.lang === item ? 'is-selected' : ''}`} aria-pressed={props.lang === item} onClick={() => props.onSetLang(item)}>{item.toUpperCase()}</button>)}</SegmentedControl><Button variant={props.showInspector ? 'active' : 'ghost'} onClick={() => props.onSetInspector(!props.showInspector)}>inline {props.showInspector ? 'on' : 'off'}</Button><Button variant="ghost" onClick={props.onOpenSettings}>settings</Button></div>}>
+          {props.settingsViewActive ? <div className="rh-settings-region"><SettingsView settings={props.settings} onPatch={props.onPatchSettings} onResetAppearance={props.onResetAppearance} onResetEditor={props.onResetEditor} onResetAll={props.onResetAll} onClose={() => props.onSetWorkspaceView('editor')} /></div> : <>
+            <InstrumentFrame index="SRC" title="SOURCE" metadata={props.activeFile ? `${props.lang.toUpperCase()} / LIVE${props.settings.editor.vimMode ? ' / VIM' : ''}` : 'NO SOURCE'} showHeader={false} state="active" className="rh-source-frame">
               <div className="rh-source-tabs" role="tablist" aria-label="Open files">
                 {props.files.map((file, index) => <button key={file.id} className={`rh-tab ${file.id === props.activeFileId ? 'is-active' : ''}`} role="tab" aria-selected={file.id === props.activeFileId} onClick={() => props.onSetActive(file.id)} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); setTabContextMenu({ fileId: file.id, x: event.clientX, y: event.clientY }); }}><span className="rh-tab-index">{String(index + 1).padStart(2, '0')}</span><span className="rh-tab-label" title={file.relPath}>{file.relPath}</span>{file.dirty && <span className="rh-tab-dirty">●</span>}<span className="rh-tab-close" onClick={(event) => { event.stopPropagation(); props.onCloseFile(file.id); }} role="button" aria-label={`Close ${file.relPath}`}>×</span></button>)}
                 <button className="rh-icon-button" onClick={props.onCreateTab} aria-label="New tab">+</button>
               </div>
               <div className="rh-editor-region">
-                <div className="rh-editor-host">{props.activeFile ? <CodeEditor key={props.activeFile.id} path={props.activeFile.relPath} value={props.activeFile.content} language={props.activeFile.language} theme={theme === 'light' ? 'rh-light' : 'rh-dark'} fontSize={editorFontSize} vimMode={props.settings.editor.vimMode} onChange={props.onChange} onSave={props.onSave} onRun={props.onRun} onFormatError={props.onFormatError} onSelectionChanged={(info) => { setSelection(info); props.onSelectionChanged(info); }} onScrollTop={props.onScrollTop} onLineCount={props.onLineCount} analyzeActions={props.analyzeActions} inlineOutputs={props.inlineByLine} inlineResults={props.resultByLine} onAnalyze={props.onAnalyze} /> : <div className="rh-empty-state"><div className="rh-empty-mark">◇</div><strong>No source open</strong><span>Open or create a source slot to begin.</span></div>}</div>
-                {props.activeFile && <div className="rh-inline-output"><LineOutputColumn fileId={props.activeFile.id} lineCount={props.lineCount} scrollTop={props.scrollTop} lineHeight={editorLineHeight} allowExpand={props.showInspector} /></div>}
+                <div className="rh-editor-host">{props.activeFile ? <CodeEditor key={props.activeFile.id} path={props.activeFile.relPath} value={props.activeFile.content} language={props.activeFile.language} theme={theme === 'light' ? 'rh-light' : 'rh-dark'} fontSize={editorFontSize} editorSettings={props.settings.editor} vimMode={props.settings.editor.vimMode} onChange={props.onChange} onSave={props.onSave} onRun={props.onRun} onFormatError={props.onFormatError} onSelectionChanged={(info) => { setSelection(info); props.onSelectionChanged(info); }} onScrollTop={props.onScrollTop} onLineCount={props.onLineCount} analyzeActions={props.analyzeActions} inlineOutputs={props.inlineByLine} inlineResults={props.resultByLine} onAnalyze={props.onAnalyze} /> : <div className="rh-empty-state"><div className="rh-empty-mark">◇</div><strong>No source open</strong><span>Open or create a source slot to begin.</span></div>}</div>
+                {props.activeFile && props.showOutputColumn && <div className="rh-inline-output"><LineOutputColumn fileId={props.activeFile.id} lineCount={props.lineCount} scrollTop={props.scrollTop} lineHeight={editorLineHeight} allowExpand /></div>}
               </div>
             </InstrumentFrame>
           </>}
           {!props.settingsViewActive && <>
             <div className="rh-dock-resizer" role="separator" aria-orientation="horizontal" tabIndex={0} aria-label="Resize bottom dock" onMouseDown={(event) => { event.preventDefault(); const startY = event.clientY; const startRatio = props.drawerRatio; const move = (moveEvent: MouseEvent): void => props.onSetDrawerRatio(Math.min(.85, Math.max(.08, startRatio + (startY - moveEvent.clientY) / Math.max(1, window.innerHeight)))); const up = (): void => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); }; window.addEventListener('mousemove', move); window.addEventListener('mouseup', up); }} onKeyDown={(event) => { if (event.key === 'ArrowUp') props.onSetDrawerRatio(Math.min(.85, props.drawerRatio + .03)); if (event.key === 'ArrowDown') props.onSetDrawerRatio(Math.max(.08, props.drawerRatio - .03)); }} />
             <InstrumentFrame index="TOOLS" title={props.drawerTab.toUpperCase()} state={props.drawerOpen ? 'active' : 'idle'} className={`rh-dock ${props.drawerOpen ? '' : 'is-collapsed'}`} style={{ height: `${Math.round(props.drawerRatio * 100)}%` }} actions={<><div className="rh-dock-tabs" role="tablist" aria-label="Tool windows">{drawerItems.map((item) => <button key={item.id} className={`rh-dock-tab ${props.drawerTab === item.id ? 'is-active' : ''}`} role="tab" aria-label={item.id} aria-selected={props.drawerTab === item.id} onClick={() => selectTab(item.id)}>{item.label}</button>)}</div><Button onClick={() => props.onSetDrawerOpen(!props.drawerOpen)} aria-label={props.drawerOpen ? 'Collapse bottom dock' : 'Expand bottom dock'}>{props.drawerOpen ? 'collapse' : 'expand'}</Button></>}>
-            <div className="rh-dock-body"><div className="rh-dock-content">{props.drawerTab === 'console' && <ConsolePanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}{props.drawerTab === 'inspector' && <InspectorPanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}{props.drawerTab === 'analysis' && <AnalysisPanel code={props.activeFile?.content ?? ''} selection={selection} lang={props.activeFile?.language === 'typescript' ? 'ts' : 'js'} onLoadDemo={props.onLoadAnalysisDemo} />}{props.drawerTab === 'packages' && <PackagesPanel />}{props.drawerTab === 'runtimes' && <RuntimesPanel />}</div></div>
+            <div className="rh-dock-body"><div className={`rh-dock-content ${props.drawerTab === 'analysis' ? 'is-analysis' : ''}`}>{props.drawerTab === 'console' && <ConsolePanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}{props.drawerTab === 'inspector' && <InspectorPanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}{props.drawerTab === 'analysis' && <AnalysisPanel code={props.activeFile?.content ?? ''} selection={selection} lang={props.activeFile?.language === 'typescript' ? 'ts' : 'js'} onLoadDemo={props.onLoadAnalysisDemo} />}{props.drawerTab === 'packages' && <PackagesPanel />}{props.drawerTab === 'runtimes' && <RuntimesPanel />}{props.drawerTab === 'performance' && <PerformancePanel activeFile={props.activeFile} selection={selection} />}</div></div>
             </InstrumentFrame>
           </>}
           <footer className="rh-statusbar">

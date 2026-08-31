@@ -5,7 +5,23 @@ export const DEFAULT_RENDERER_SETTINGS: AppSettings = {
   schemaVersion: 2,
   prefs: { timeoutMs: 5000, autorun: false, ignoreScripts: true, defaultRuntime: 'node' },
   appearance: { theme: 'dark', accent: 'cyan', background: 'topology', intensity: 'standard', motion: 'system', density: 'compact', uiScale: 100 },
-  editor: { fontSize: 13, inlineInspector: true, vimMode: false },
+  editor: {
+    fontSize: 13,
+    fontLigatures: true,
+    tabSize: 2,
+    insertSpaces: true,
+    wordWrap: 'off',
+    lineNumbers: 'on',
+    minimap: false,
+    folding: true,
+    renderWhitespace: 'selection',
+    bracketPairColorization: true,
+    smoothScrolling: true,
+    stickyScroll: false,
+    cursorStyle: 'line',
+    inlineInspector: true,
+    vimMode: false
+  },
   layout: { drawerOpen: true, drawerRatio: 0.35, drawerTab: 'console', inlineOutputWidth: 320 },
   session: { tabs: [], activeRelPath: null }
 };
@@ -16,6 +32,7 @@ interface SettingsState {
   hydrate: () => Promise<void>;
   patch: (patch: SettingsPatch) => Promise<void>;
   resetAppearance: () => Promise<void>;
+  resetEditor: () => Promise<void>;
   resetAll: () => Promise<void>;
 }
 
@@ -61,6 +78,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
     if (next) set({ settings: next });
   },
   resetAppearance: async () => get().patch({ appearance: DEFAULT_RENDERER_SETTINGS.appearance }),
+  resetEditor: async () => get().patch({ editor: DEFAULT_RENDERER_SETTINGS.editor }),
   resetAll: async () => {
     const next = await window.api?.settingsSet({ appearance: DEFAULT_RENDERER_SETTINGS.appearance, editor: DEFAULT_RENDERER_SETTINGS.editor }).catch(() => undefined);
     set({ settings: next ?? { ...get().settings, appearance: DEFAULT_RENDERER_SETTINGS.appearance, editor: DEFAULT_RENDERER_SETTINGS.editor } });

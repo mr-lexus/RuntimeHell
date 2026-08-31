@@ -63,6 +63,9 @@ importers:
       extract-zip:
         specifier: ^2.0.1
         version: 2.0.1
+      mitata:
+        specifier: ^1.0.34
+        version: 1.0.34
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -1172,6 +1175,9 @@ packages:
   memoize-one@5.2.1:
     resolution: {integrity: sha512-zYiwtZUcYyXKo/np96AGZAckk+FWWsUdJ3cHGGmld7+AhvcWmQyGCYUh1hc4Q/pkOhb65dQR/pqCyK0cOaHz4Q==}
 
+  mitata@1.0.34:
+    resolution: {integrity: sha512-Mc3zrtNBKIMeHSCQ0XqRLo1vbdIx1wvFV9c8NJAiyho6AjNfMY8bVhbS12bwciUdd1t4rj8099CH3N3NFahaUA==}
+
   monaco-editor@0.56.0:
     resolution: {integrity: sha512-sXboRm3BeBeLm938eaiyLMe0OxzfXIlZvbv4ir/jVgQy1zDhWjgmny0WoN45fuDKhCCQsYMbBJrv/A6jd8aCUg==}
 
@@ -2233,6 +2239,8 @@ snapshots:
   marked@14.0.0: {}
 
   memoize-one@5.2.1: {}
+
+  mitata@1.0.34: {}
 
   monaco-editor@0.56.0:
     dependencies:

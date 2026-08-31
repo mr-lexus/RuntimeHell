@@ -24,6 +24,12 @@ export const IPC = {
   analysisCancel: 'analysis:cancel',
   analysisEvent: 'analysis:event', // main -> renderer stream (todo 19)
 
+  // performance lab
+  performanceStart: 'performance:start',
+  performanceCancel: 'performance:cancel',
+  performanceCatalog: 'performance:catalog',
+  performanceEvent: 'performance:event', // main -> renderer stream
+
   // binaries (runtimes + engines)
   binariesList: 'binaries:list',
   binariesInstall: 'binaries:install',

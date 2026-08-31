@@ -4,6 +4,8 @@
  */
 import {
   AnalysisStartRequestSchema,
+  PerformanceCancelRequestSchema,
+  PerformanceStartRequestSchema,
   BinaryInstallRequestSchema,
   BinaryRemoveRequestSchema,
   BinariesListRequestSchema,
@@ -25,6 +27,7 @@ import type { ExecutionManager } from '../execution/execution-manager.js';
 import type { BinariesController } from '../binaries/binaries-controller.js';
 import type { PackageService } from '../packages/package-service.js';
 import type { AnalysisManager } from '../engines/analysis-manager.js';
+import type { PerformanceManager } from '../performance/performance-manager.js';
 
 type Register = (channel: string, handler: (payload: unknown) => Promise<unknown>) => void;
 
@@ -105,6 +108,19 @@ export function registerAnalysisHandlers(register: Register, manager: AnalysisMa
     const req = (payload ?? {}) as { requestId?: string };
     if (typeof req.requestId !== 'string') throw new Error('requestId required');
     return { ok: await manager.cancel(req.requestId) };
+  });
+}
+
+/** Performance Lab handlers. Results and progress are streamed by the manager. */
+export function registerPerformanceHandlers(register: Register, manager: PerformanceManager): void {
+  register(IPC.performanceCatalog, async () => manager.catalog());
+  register(IPC.performanceStart, async (payload) => {
+    const req = PerformanceStartRequestSchema.parse(payload);
+    return manager.start(req);
+  });
+  register(IPC.performanceCancel, async (payload) => {
+    const req = PerformanceCancelRequestSchema.parse(payload);
+    return manager.cancel(req.requestId);
   });
 }
 
