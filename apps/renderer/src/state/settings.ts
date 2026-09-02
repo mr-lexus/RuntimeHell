@@ -49,6 +49,11 @@ function legacyPatch(): SettingsPatch {
   return patch;
 }
 
+// Settings responses contain the complete object. Keep writes ordered and only
+// accept a response when no newer optimistic patch has been applied locally.
+let patchQueue: Promise<void> = Promise.resolve();
+let localPatchRevision = 0;
+
 export const useSettings = create<SettingsState>((set, get) => ({
   settings: DEFAULT_RENDERER_SETTINGS,
   hydrated: false,
@@ -66,6 +71,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
     set({ settings, hydrated: true });
   },
   patch: async (patch) => {
+    const revision = ++localPatchRevision;
     set((state) => ({ settings: {
       ...state.settings,
       prefs: { ...state.settings.prefs, ...patch.prefs },
@@ -74,13 +80,15 @@ export const useSettings = create<SettingsState>((set, get) => ({
       layout: { ...state.settings.layout, ...patch.layout },
       session: { ...state.settings.session, ...patch.session }
     } }));
-    const next = await window.api?.settingsSet(patch).catch(() => undefined);
-    if (next) set({ settings: next });
+
+    const request = patchQueue.then(async () => {
+      const next = await window.api?.settingsSet(patch).catch(() => undefined);
+      if (next && revision === localPatchRevision) set({ settings: next });
+    });
+    patchQueue = request.catch(() => undefined);
+    await request;
   },
   resetAppearance: async () => get().patch({ appearance: DEFAULT_RENDERER_SETTINGS.appearance }),
   resetEditor: async () => get().patch({ editor: DEFAULT_RENDERER_SETTINGS.editor }),
-  resetAll: async () => {
-    const next = await window.api?.settingsSet({ appearance: DEFAULT_RENDERER_SETTINGS.appearance, editor: DEFAULT_RENDERER_SETTINGS.editor }).catch(() => undefined);
-    set({ settings: next ?? { ...get().settings, appearance: DEFAULT_RENDERER_SETTINGS.appearance, editor: DEFAULT_RENDERER_SETTINGS.editor } });
-  }
+  resetAll: async () => get().patch({ appearance: DEFAULT_RENDERER_SETTINGS.appearance, editor: DEFAULT_RENDERER_SETTINGS.editor })
 }));
