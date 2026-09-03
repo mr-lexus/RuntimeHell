@@ -3,6 +3,7 @@ import { useRun, type InlineConsoleEntry } from '../../state/run';
 import { useUi } from '../../state/ui';
 import type { SerializedValue } from '@rh/protocol';
 import { detectConsoleTable, detectTable, type TableShape } from './table-shape';
+import { BlockLoader } from '../../ui/primitives';
 
 /* ── colour palette ──────────────────────────────────────────────────── */
 
@@ -433,6 +434,7 @@ export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' });
@@ -440,11 +442,16 @@ export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
+    setHistoryLoading(true);
     void (async () => {
-      const response = (await window.api?.historyList('default')) as
-        | { ok: boolean; records: HistoryRow[] }
-        | undefined;
-      if (!cancelled && response?.ok === true) setHistory(response.records.slice().reverse());
+      try {
+        const response = (await window.api?.historyList('default')) as
+          | { ok: boolean; records: HistoryRow[] }
+          | undefined;
+        if (!cancelled && response?.ok === true) setHistory(response.records.slice().reverse());
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
     })();
     return () => { cancelled = true; };
   }, [visibleLines.length]);
@@ -486,6 +493,7 @@ export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
       {/* ── toolbar ── */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, paddingBottom: 4, flexShrink: 0 }}>
         {visibleNotice !== null && <span style={{ color: 'var(--warn)', fontSize: 11 }}>{visibleNotice}</span>}
+        {historyLoading && <BlockLoader className="rh-inline-loader" label="loading history" />}
         <button onClick={() => setShowHistory((v) => !v)} style={btnStyle}>
           history ({history.length})
         </button>

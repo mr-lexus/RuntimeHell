@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import type { PerformanceCase, PerformanceRunResult, PerformanceTargetOption } from '@rh/protocol';
 import type { SelectionInfo } from '../../editor/selection-service';
-import { Button, EmptyState, InstrumentFrame } from '../../ui/primitives';
+import { BarLoader, BlockLoader, Button, EmptyState, InstrumentFrame } from '../../ui/primitives';
 import { performanceTargetKey, usePerformance } from '../../state/performance';
 
 interface ActiveFileLike { relPath: string; content: string }
@@ -45,6 +45,7 @@ export function PerformancePanel({ activeFile, selection }: PerformancePanelProp
   const cellCount = groupCount * state.cases.length;
   const workload = cellCount * state.measurement.samples * state.measurement.iterationsPerSample;
   const canAdd = activeFile !== null && Boolean((selection?.text ?? activeFile.content).trim()) && state.cases.length < 12 && !state.running;
+  const progressPercent = state.totalGroups > 0 ? Math.min(100, Math.round((state.completedGroups / state.totalGroups) * 100)) : undefined;
 
   const addCase = (): void => {
     if (!activeFile) return;
@@ -86,7 +87,7 @@ export function PerformancePanel({ activeFile, selection }: PerformancePanelProp
 
         <section className="rh-perf-section">
           <div className="rh-perf-section-title"><span>WHERE × HOW · TARGETS / PROFILES</span><span>{groupCount} process groups</span></div>
-          {state.loadingCatalog && <div className="rh-perf-muted">probing installed runtimes and V8 flags…</div>}
+          {state.loadingCatalog && <div className="rh-loading-state"><BlockLoader label="probing installed runtimes and V8 flags" /><BarLoader width={20} /></div>}
           {!state.loadingCatalog && (state.catalog?.targets.length ?? 0) === 0 && <EmptyState title="No benchmark targets" detail="Install a runtime in the Runtimes tool." />}
           <div className="rh-perf-targets">
             {(state.catalog?.targets ?? []).map((target) => {
@@ -128,6 +129,10 @@ export function PerformancePanel({ activeFile, selection }: PerformancePanelProp
       {(state.results.length > 0 || Object.keys(state.errors).length > 0) && <Button onClick={state.clearResults} disabled={state.running}>clear results</Button>}
     </>}>
       {Object.entries(state.errors).map(([key, message]) => <div className="rh-perf-error" key={key}><strong>{key}</strong><span>{message}</span></div>)}
+      {state.running && <div className="rh-perf-progress" role="status" aria-live="polite">
+        <div className="rh-perf-progress-heading"><BlockLoader label={state.progress} /><span>{state.completedGroups}/{state.totalGroups} groups</span></div>
+        <BarLoader progress={progressPercent} width={32} label={`${progressPercent ?? 0}%`} />
+      </div>}
       {state.results.length === 0 && Object.keys(state.errors).length === 0 && <div className="rh-perf-muted">No measurements yet. Each row will represent one target/profile process.</div>}
       {state.results.length > 0 && <div className="rh-perf-matrix-wrap"><table className="rh-perf-matrix">
         <thead><tr><th>target / profile</th>{state.cases.map((item) => <th key={item.id}>{item.label}<small>median ns/op</small></th>)}</tr></thead>

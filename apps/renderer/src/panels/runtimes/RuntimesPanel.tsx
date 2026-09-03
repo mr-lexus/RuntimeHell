@@ -3,6 +3,7 @@ import type { RuntimeId } from '@rh/protocol';
 import { useRuntimes, type RuntimeDetection } from '../../state/runtimes';
 import { useRun } from '../../state/run';
 import { usePackages } from '../../state/packages';
+import { BarLoader, BlockLoader } from '../../ui/primitives';
 import type { RuntimeCatalogEntry } from './runtime-catalog';
 
 const MONO = "'JetBrainsMono Nerd Font Mono', 'Cascadia Mono', Consolas, monospace";
@@ -427,7 +428,7 @@ function PolyfillCard({
                     disabled={busy}
                     onClick={() => void installVersioned(packageName, requestedVersion.trim() || undefined)}
                   >
-                    {busy ? 'installing…' : <><RuntimeIcon glyph={ICONS.download} /> install locally</>}
+                    {busy ? <><BlockLoader /> installing…</> : <><RuntimeIcon glyph={ICONS.download} /> install locally</>}
                   </button>
                 </>
               )}
@@ -730,7 +731,11 @@ function RuntimeCard({
               </div>
               {installing ? (
                 <span className="rh-runtime-version-progress">
-                  {pct(installingProgress.receivedBytes, installingProgress.totalBytes)}
+                  <BarLoader
+                    width={12}
+                    progress={installingProgress.totalBytes !== null && installingProgress.totalBytes > 0 ? (installingProgress.receivedBytes / installingProgress.totalBytes) * 100 : undefined}
+                    label={pct(installingProgress.receivedBytes, installingProgress.totalBytes)}
+                  />
                 </span>
               ) : (
                 <button
@@ -874,7 +879,7 @@ function EngineCard({
             )}
             <button type="button" style={BTN} disabled={busy} onClick={install}>
               {installing ? (
-                `installing ${pct(installingProgress.receivedBytes, installingProgress.totalBytes)}`
+                <><BlockLoader /> installing {pct(installingProgress.receivedBytes, installingProgress.totalBytes)}</>
               ) : canPinVersion && requestedVersion.trim() !== '' ? (
                 <><RuntimeIcon glyph={ICONS.download} /> install v{requestedVersion.trim()}</>
               ) : (
@@ -945,6 +950,7 @@ export function RuntimesPanel(): React.JSX.Element {
   return (
     <div style={{ fontSize: 12, color: 'var(--text)', paddingBottom: 8 }}>
       {state.notice !== null && <div style={{ color: 'var(--err)', marginBottom: 6 }}>{state.notice}</div>}
+      {state.loading && <div className="rh-loading-state"><BlockLoader label="loading runtime catalog" /></div>}
 
       {/* Default runtime: which runtime executes code (Ctrl+Enter / auto-run). */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>

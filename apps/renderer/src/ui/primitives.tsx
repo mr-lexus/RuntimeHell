@@ -47,6 +47,75 @@ export function Button({ variant = 'ghost', className = '', children, ...props }
   return <button className={`rh-button rh-button-${variant} ${className}`} {...props}>{children}</button>;
 }
 
+const BLOCK_LOADER_PATTERNS: readonly string[] = [
+  '⠁⠂⠄⡀⢀⠠⠐⠈',
+  '⣾⣽⣻⢿⡿⣟⣯⣷',
+  '▖▘▝▗',
+  '▁▂▃▄▅▆▇█',
+  '▉▊▋▌▍▎▏',
+  '←↖↑↗→↘↓↙',
+  '┤┘┴└├┌┬┐',
+  '◢◣◤◥',
+  '◰◳◲◱',
+  '◴◷◶◵',
+  '◐◓◑◒',
+  '...'
+];
+
+/** Terminal-style animated single-character loader. */
+export function BlockLoader({ mode = 1, interval = 80, label, className = '' }: { mode?: number; interval?: number; label?: string; className?: string }): React.JSX.Element {
+  const pattern = BLOCK_LOADER_PATTERNS[Math.max(0, Math.min(BLOCK_LOADER_PATTERNS.length - 1, Math.round(mode)))] ?? BLOCK_LOADER_PATTERNS[1]!;
+  const frames = Array.from(pattern);
+  const style = {
+    '--rh-loader-duration': `${Math.max(200, frames.length * interval)}ms`,
+    '--rh-loader-steps': String(frames.length),
+    '--rh-loader-distance': `-${(frames.length * 1.1).toFixed(2)}em`
+  } as React.CSSProperties;
+  const accessibility = label === undefined
+    ? { 'aria-hidden': true }
+    : { role: 'status' as const, 'aria-label': label };
+  return (
+    <span className={`rh-block-loader ${className}`} style={style} {...accessibility}>
+      <span className="rh-block-loader-glyph" aria-hidden="true">
+        <span className="rh-block-loader-track">
+          {frames.concat(frames[0]!).map((frame, index) => <span key={`${frame}-${index}`}>{frame}</span>)}
+        </span>
+      </span>
+      {label !== undefined && <span className="rh-loader-label">{label}</span>}
+    </span>
+  );
+}
+
+/** Terminal-style determinate or indeterminate horizontal loader. */
+export function BarLoader({ progress, width = 20, fillChar = '█', emptyChar = '░', interval = 100, label, className = '' }: { progress?: number; width?: number; fillChar?: string; emptyChar?: string; interval?: number; label?: string; className?: string }): React.JSX.Element {
+  const safeWidth = Math.max(4, Math.round(width));
+  const value = progress === undefined ? undefined : Math.max(0, Math.min(100, progress));
+  const fillCount = value === undefined ? Math.max(2, Math.round(safeWidth * .18)) : Math.round(safeWidth * value / 100);
+  const style = {
+    '--rh-bar-block-width': `${fillCount}ch`,
+    '--rh-bar-travel': `${Math.max(0, safeWidth - fillCount)}ch`,
+    '--rh-bar-duration': `${Math.max(600, safeWidth * interval)}ms`
+  } as React.CSSProperties;
+  const accessibility = value === undefined
+    ? label === undefined
+      ? { 'aria-hidden': true }
+      : { role: 'status' as const, 'aria-label': label }
+    : { role: 'progressbar' as const, 'aria-label': label ?? 'Progress', 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-valuenow': value };
+  return (
+    <span className={`rh-bar-loader ${value === undefined ? 'is-indeterminate' : 'is-determinate'} ${className}`} style={style} {...accessibility}>
+      <span className="rh-bar-loader-visual" aria-hidden="true">
+        <span className="rh-bar-loader-bracket">[</span>
+        <span className="rh-bar-loader-track">
+          <span className="rh-bar-loader-empty">{emptyChar.repeat(safeWidth)}</span>
+          {fillCount > 0 && <span className={`rh-bar-loader-fill ${value === undefined ? 'is-indeterminate' : ''}`} style={value === undefined ? undefined : { width: `${fillCount}ch` }}>{fillChar.repeat(fillCount)}</span>}
+        </span>
+        <span className="rh-bar-loader-bracket">]</span>
+      </span>
+      {label !== undefined && <span className="rh-loader-label">{label}</span>}
+    </span>
+  );
+}
+
 export function SegmentedControl({ className = '', children, ...props }: HTMLAttributes<HTMLDivElement>): React.JSX.Element {
   return <div className={`rh-segmented ${className}`} role="group" {...props}>{children}</div>;
 }
@@ -63,7 +132,7 @@ export function TechnicalToggle({ label, checked, onChange, detail }: { label: s
 
 export function StatusIndicator({ status, label }: { status: 'ready' | 'running' | 'warning' | 'error' | 'idle'; label: string }): React.JSX.Element {
   const glyph = status === 'ready' ? '✓' : status === 'running' ? '↻' : status === 'warning' ? '!' : status === 'error' ? '×' : '○';
-  return <span className={`rh-status rh-status-${status}`}><span aria-hidden="true">{glyph}</span>{label}</span>;
+  return <span className={`rh-status rh-status-${status}`}>{status === 'running' ? <BlockLoader /> : <span aria-hidden="true">{glyph}</span>}{label}</span>;
 }
 
 export function Separator({ vertical = false, ...props }: HTMLAttributes<HTMLDivElement> & { vertical?: boolean }): React.JSX.Element {

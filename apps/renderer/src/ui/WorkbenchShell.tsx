@@ -9,7 +9,7 @@ import { AnalysisPanel } from '../panels/analysis/AnalysisPanel';
 import { PackagesPanel } from '../panels/packages/PackagesPanel';
 import { RuntimesPanel } from '../panels/runtimes/RuntimesPanel';
 import { PerformancePanel } from '../panels/performance/PerformancePanel';
-import { Button, InstrumentFrame, KeyboardHint, StatusIndicator } from './primitives';
+import { BlockLoader, Button, InstrumentFrame, KeyboardHint, StatusIndicator } from './primitives';
 import { CommandPalette, type PaletteCommand } from './CommandPalette';
 import { SettingsView } from './SettingsView';
 import type { AtaStatus } from '../editor/ata';
@@ -263,7 +263,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [props.files, props.activeFileId, props.onCloseFile, props.onMoveFile, props.onSetActive]);
-  const statusKind = props.phase === 'running' ? 'running' : props.lastExit?.code === 0 ? 'ready' : props.lastExit?.code !== null && props.lastExit !== null ? 'error' : 'idle';
+  const statusKind = props.phase !== 'idle' ? 'running' : props.lastExit?.code === 0 ? 'ready' : props.lastExit?.code !== null && props.lastExit !== null ? 'error' : 'idle';
   const activeRuntimeLabel = props.activeRuntime ?? props.lastRuntimeId ?? 'node';
   const selectTab = (tab: DrawerTab): void => {
     if (props.settingsViewActive) {
@@ -309,7 +309,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
         <div className="rh-brand"><span className="rh-brand-mark">◈</span><span>RuntimeHell</span></div>
         <div className="rh-titlebar-actions">
           <div className="rh-titlebar-editor-controls" aria-label="Editor controls">
-          <Button variant="primary" className="rh-titlebar-run" onClick={props.onRun} disabled={!props.activeFile || props.phase !== 'idle'} aria-label="Run source (Ctrl+Enter)" title="Run source (Ctrl+Enter)"><span className="rh-action-marker" aria-hidden="true">▶</span></Button>
+          <Button variant="primary" className="rh-titlebar-run" onClick={props.onRun} disabled={!props.activeFile || props.phase !== 'idle'} aria-label={props.phase === 'idle' ? 'Run source (Ctrl+Enter)' : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'} title={props.phase === 'idle' ? 'Run source (Ctrl+Enter)' : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'}><span className="rh-action-marker" aria-hidden="true">{props.phase === 'idle' ? '▶' : <BlockLoader />}</span></Button>
           <div ref={languageMenuRef} className="rh-titlebar-language-picker">
             <button type="button" className="rh-titlebar-language-trigger" aria-label={`Language: ${props.lang.toUpperCase()}`} title={`Language: ${props.lang.toUpperCase()}`} aria-haspopup="menu" aria-expanded={languageMenuOpen} onClick={() => setLanguageMenuOpen((open) => !open)}>
               <span className="rh-language-icon" aria-hidden="true">{props.lang === 'js' ? '\u{e781}' : '\u{e628}'}</span>
@@ -406,7 +406,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
             <span className="rh-status-separator">/</span>
             <button className="rh-status-action" onClick={() => { props.onSetDrawerTab('runtimes'); props.onSetDrawerOpen(true); }} aria-label="Open runtime selector">runtime {activeRuntimeLabel.toUpperCase()} {props.runtimeVersion ? `v${props.runtimeVersion}` : 'version —'}</button>
             <button className={`rh-status-action ${props.autoRun ? 'is-active' : ''}`} onClick={() => props.onSetAutoRun(!props.autoRun)} aria-pressed={props.autoRun}>auto-run {props.autoRun ? 'on' : 'off'}</button>
-            <span className="rh-status-types">types {props.ataStatus === 'ready' ? 'ready' : props.ataStatus === 'loading' ? 'loading' : 'offline'}</span>
+            <span className="rh-status-types">types {props.ataStatus === 'loading' ? <><BlockLoader /> loading</> : props.ataStatus === 'ready' ? 'ready' : 'offline'}</span>
             {props.settings.editor.vimMode && <span className="rh-status-vim" title="Vim mode">-- {vimMode.toUpperCase()} --{vimCommandLine !== '' ? ` :${vimCommandLine}` : ''}</span>}
             <span className="rh-statusbar-right"><span>engine {props.lastRuntimeId ? props.lastRuntimeId.toUpperCase() : '—'}</span></span>
           </footer>

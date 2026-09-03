@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PkgSearchRow } from '@rh/protocol';
 import { usePackages, useDebouncedSearch } from '../../state/packages';
+import { BlockLoader } from '../../ui/primitives';
 
 const MONO = "'JetBrainsMono Nerd Font Mono', 'Cascadia Mono', Consolas, monospace";
 const HOVER_BG = 'rgba(255,255,255,0.04)';
@@ -181,7 +182,7 @@ function InstalledRow({ name, range }: { name: string; range: string }): React.J
       {open && (
         <div style={PICKER}>
           {meta === undefined ? (
-            <span style={PICKER_LABEL}>loading version list from registry…</span>
+            <span style={PICKER_LABEL}><BlockLoader label="loading version list from registry" /></span>
           ) : (
             <>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
@@ -332,6 +333,7 @@ export function PackagesPanel(): React.JSX.Element {
   const installed = usePackages((s) => s.installed);
   const results = usePackages((s) => s.results);
   const searching = usePackages((s) => s.searching);
+  const busy = usePackages((s) => s.busy);
   const log = usePackages((s) => s.log);
   const query = usePackages((s) => s.query);
   const checking = usePackages((s) => s.checking);
@@ -381,11 +383,12 @@ export function PackagesPanel(): React.JSX.Element {
       }}
     >
       <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="search npm…" style={SEARCH_INPUT} />
+      {busy && <div className="rh-loading-state"><BlockLoader label="updating workspace packages" /></div>}
 
       <div style={{ flex: 1, overflow: 'auto', minHeight: 60 }}>
         {queryActive && (
           <>
-            <div style={{ ...SECTION_TITLE, marginTop: 2 }}>search results{searching ? ' …' : ''}</div>
+            <div style={{ ...SECTION_TITLE, marginTop: 2 }}>search results{searching && <BlockLoader className="rh-inline-loader" label="searching registry" />}</div>
             {!searching && results.length === 0 && (
               <div style={{ color: 'var(--text-faint)', fontSize: 11 }}>no packages match “{query.trim()}”</div>
             )}
@@ -396,7 +399,7 @@ export function PackagesPanel(): React.JSX.Element {
         )}
 
         <div style={SECTION_TITLE}>
-          installed ({names.length}){checking ? ' — checking updates…' : ''}
+          installed ({names.length}){checking && <BlockLoader className="rh-inline-loader" label="checking updates" />}
         </div>
         {names.length === 0 && <div style={{ color: 'var(--text-faint)', fontSize: 11 }}>no dependencies yet</div>}
         {names.map((name) => (

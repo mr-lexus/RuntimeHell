@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useCompare, terminologyFor } from '../../state/compare';
+import { BlockLoader } from '../../ui/primitives';
 
 const BTN: React.CSSProperties = {
   background: '#2a2a2a',
@@ -55,7 +56,7 @@ export function ComparePanel({ code }: { code: string }): React.JSX.Element {
           disabled={running || selectedEngines.length < 2}
           style={BTN}
         >
-          {running ? 'comparing…' : 'compare'}
+          {running ? <><BlockLoader /> comparing…</> : 'compare'}
         </button>
         <button onClick={() => setShowExport(!showExport)} style={BTN}>
           export md
@@ -102,7 +103,7 @@ export function ComparePanel({ code }: { code: string }): React.JSX.Element {
                 {entry.rawOutput.slice(0, 3000)}
               </pre>
             )}
-            {entry.status === 'running' && <div style={{ color: '#dcdcaa' }}>analyzing…</div>}
+            {entry.status === 'running' && <div style={{ color: '#dcdcaa' }}><BlockLoader label="analyzing" /></div>}
             {entry.status === 'error' && entry.reason !== null && (
               <div style={{ color: '#f48771' }}>{entry.reason}</div>
             )}

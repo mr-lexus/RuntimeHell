@@ -6,6 +6,7 @@ import { scanFunctions, type ScannedFunction } from '../../editor/scan-functions
 import { ANALYSIS_ALL_TYPES, useAnalysis, type AnalysisEngineId, type TypeState } from '../../state/analysis';
 import { hasAnalysisNormalizer, ResultViewer, ResultViewerTabs, type DrawerTab } from './ResultViewer';
 import { ANALYSIS_ACTION_ICON, ANALYSIS_HELP, ANALYSIS_ICON } from './analysis-help';
+import { BlockLoader } from '../../ui/primitives';
 
 const TYPE_LABEL: Record<AnalysisType, string> = {
   ast: 'AST',
@@ -224,7 +225,7 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo }: { code: str
               className={`rh-analysis-action ${active ? 'is-active' : ''} ${t.status === 'running' ? 'is-running' : ''}`}
             >
               <span className="rh-analysis-icon" aria-hidden="true">{ANALYSIS_ICON[type]}</span> {TYPE_LABEL[type]}
-              {t.status === 'running' ? '…' : ''}
+              {t.status === 'running' && <BlockLoader />}
             </button>
           );
         })}
@@ -274,7 +275,7 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo }: { code: str
                     `${t.result.engine}@${t.result.engineVersion} · ${t.result.metadata.durationMs}ms`}
                 </span>
               </div>
-              {t.status === 'running' && <div className="rh-analysis-notice is-warning">running…</div>}
+              {t.status === 'running' && <div className="rh-analysis-notice is-warning"><BlockLoader label="running analysis" /></div>}
               {t.status === 'unsupported' && <div className="rh-analysis-notice is-error">unsupported — {t.reason}</div>}
               {t.status === 'error' && <div className="rh-analysis-notice is-error">{t.reason}</div>}
               {t.result !== null && <ResultViewer result={t.result} focusFunction={state.focusFunction} tab={resultTab} />}
