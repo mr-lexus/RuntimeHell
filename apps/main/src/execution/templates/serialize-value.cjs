@@ -16,10 +16,15 @@ function isPlainOrObject(v) {
   return typeof v === 'object';
 }
 
+function isArrayIndexKey(key) {
+  var index = Number(key);
+  return key !== '' && Number.isInteger(index) && index >= 0 && index < 4294967295 && String(index) === key;
+}
+
 function makeSerializer(userCaps) {
   var caps = Object.assign({}, DEFAULT_CAPS, userCaps || {});
 
-  function serializeValue(value, depth, ancestors, state) {
+  function serializeValue(value, depth, ancestors, state, includePrototype) {
     if (state.nodeCount >= caps.maxNodes) {
       return { t: 'object', prim: '<node cap reached>', truncated: true };
     }
@@ -40,7 +45,19 @@ function makeSerializer(userCaps) {
     }
     if (t === 'function') {
       var isClass = /^class[\s{]/.test(Function.prototype.toString.call(value));
-      return { t: isClass ? 'class' : 'function', label: value.name || '(anonymous)', size: value.length };
+      var fnNode = { t: isClass ? 'class' : 'function', label: value.name || '(anonymous)', size: value.length, children: [] };
+      if (depth >= caps.maxDepth) {
+        fnNode.truncated = true;
+        return fnNode;
+      }
+      var fnAncIndex = ancestors.indexOf(value);
+      if (fnAncIndex !== -1) return { t: 'object', prim: '[Circular]', refId: fnAncIndex };
+      if (includePrototype !== false) {
+        ancestors.push(value);
+        appendPrototypeChain(fnNode, value, depth, ancestors, state);
+        ancestors.pop();
+      }
+      return fnNode;
     }
 
     // Depth cap for containers.
@@ -57,6 +74,7 @@ function makeSerializer(userCaps) {
     // Errors.
     if (value instanceof Error) {
       var errNode = { t: 'error', label: value.name || 'Error', children: [] };
+      ancestors.push(value);
       if (state.nodeCount < caps.maxNodes) {
         state.nodeCount++;
         errNode.children.push({ k: 'message', node: { t: 'string', prim: String(value.message) } });
@@ -69,23 +87,43 @@ function makeSerializer(userCaps) {
               : { t: 'string', prim: stack }
         });
       }
+      if (includePrototype !== false) appendPrototypeChain(errNode, value, depth, ancestors, state);
+      ancestors.pop();
       return errNode;
     }
 
     // Dates.
     if (value instanceof Date) {
-      return { t: 'date', prim: value.toISOString() };
+      var dateNode = { t: 'date', prim: value.toISOString(), children: [] };
+      if (includePrototype !== false) {
+        ancestors.push(value);
+        appendPrototypeChain(dateNode, value, depth, ancestors, state);
+        ancestors.pop();
+      }
+      return dateNode;
     }
 
     // RegExp.
     if (value instanceof RegExp) {
-      return { t: 'regexp', prim: value.source, label: value.flags };
+      var regexpNode = { t: 'regexp', prim: value.source, label: value.flags, children: [] };
+      if (includePrototype !== false) {
+        ancestors.push(value);
+        appendPrototypeChain(regexpNode, value, depth, ancestors, state);
+        ancestors.pop();
+      }
+      return regexpNode;
     }
 
     // Promises are reported by the bootstrap (async settlement); here we can
     // only mark the immediate placeholder.
     if (value instanceof Promise) {
-      return { t: 'promise', label: 'promise (settlement reported separately)' };
+      var promiseNode = { t: 'promise', label: 'promise (settlement reported separately)', children: [] };
+      if (includePrototype !== false) {
+        ancestors.push(value);
+        appendPrototypeChain(promiseNode, value, depth, ancestors, state);
+        ancestors.pop();
+      }
+      return promiseNode;
     }
 
     // Typed arrays / DataView.
@@ -99,6 +137,7 @@ function makeSerializer(userCaps) {
             ? value.byteLength
             : 0;
       var node = { t: 'typedarray', label: ctor, size: len, children: [] };
+      ancestors.push(value);
       var show = Math.min(len, 50);
       for (var i = 0; i < show; i++) {
         if (state.nodeCount >= caps.maxNodes) {
@@ -109,6 +148,8 @@ function makeSerializer(userCaps) {
         node.children.push({ k: String(i), node: { t: 'number', prim: String(value[i]) } });
       }
       if (show < len) node.truncated = true;
+      if (includePrototype !== false) appendPrototypeChain(node, value, depth, ancestors, state);
+      ancestors.pop();
       return node;
     }
 
@@ -123,6 +164,28 @@ function makeSerializer(userCaps) {
         }
         arrNode.children.push({ k: String(ai), node: serializeValue(value[ai], depth + 1, ancestors, state) });
       }
+      var arrayKeys;
+      try {
+        arrayKeys = Object.keys(value);
+      } catch (e) {
+        arrayKeys = [];
+      }
+      for (var aki = 0; aki < arrayKeys.length; aki++) {
+        var arrayKey = arrayKeys[aki];
+        if (isArrayIndexKey(arrayKey)) continue;
+        if (state.nodeCount >= caps.maxNodes) {
+          arrNode.truncated = true;
+          break;
+        }
+        var arrayChild;
+        try {
+          arrayChild = value[arrayKey];
+        } catch (e) {
+          arrayChild = '<threw>';
+        }
+        arrNode.children.push({ k: arrayKey, node: serializeValue(arrayChild, depth + 1, ancestors, state) });
+      }
+      if (includePrototype !== false) appendPrototypeChain(arrNode, value, depth, ancestors, state);
       ancestors.pop();
       return arrNode;
     }
@@ -141,6 +204,7 @@ function makeSerializer(userCaps) {
         mapNode.children.push({ k: '[' + mi + '] value', node: serializeValue(mv, depth + 1, ancestors, state) });
         mi++;
       });
+      if (includePrototype !== false) appendPrototypeChain(mapNode, value, depth, ancestors, state);
       ancestors.pop();
       return mapNode;
     }
@@ -158,6 +222,7 @@ function makeSerializer(userCaps) {
         setNode.children.push({ k: String(si), node: serializeValue(sv, depth + 1, ancestors, state) });
         si++;
       });
+      if (includePrototype !== false) appendPrototypeChain(setNode, value, depth, ancestors, state);
       ancestors.pop();
       return setNode;
     }
@@ -187,7 +252,7 @@ function makeSerializer(userCaps) {
       state.nodeCount++;
       objNode.children.push({ k: key, node: serializeValue(childVal, depth + 1, ancestors, state) });
     }
-    appendPrototypeChain(objNode, value, depth, ancestors, state);
+    if (includePrototype !== false) appendPrototypeChain(objNode, value, depth, ancestors, state);
     ancestors.pop();
     return objNode;
   }
@@ -271,7 +336,7 @@ function makeSerializer(userCaps) {
           pVal = '<threw>';
         }
         state.nodeCount++;
-        protoNode.children.push({ k: pk, node: serializeValue(pVal, chainDepth + 2, ancestors, state) });
+        protoNode.children.push({ k: pk, node: serializeValue(pVal, chainDepth + 2, ancestors, state, false) });
       }
       ancestors.pop();
 

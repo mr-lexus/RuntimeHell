@@ -5,8 +5,13 @@ import type { SerializedValue } from '@rh/protocol';
 function formatValue(v: { t: string; prim?: string; label?: string }): string {
   if (v.t === 'string') return JSON.stringify(v.prim ?? '');
   if (['number', 'boolean', 'null', 'undefined', 'bigint'].includes(v.t)) return v.prim ?? v.t;
+  if (v.t === 'array') return 'Array exotic object';
   if (v.label) return v.label + (v.prim ? ` ${v.prim}` : '');
   return v.prim ?? v.t;
+}
+
+function isPrototypeKey(key: string): boolean {
+  return key === '[[Prototype]]';
 }
 
 /** Recursive inspector node: click to expand one level of children. */
@@ -33,7 +38,9 @@ function ValueNode({ node, depth }: { node: SerializedValue; depth: number }): R
       {open &&
         kids.map((k, i) => (
           <div key={`${k.k}-${i}`} style={{ paddingLeft: 14, borderLeft: '1px solid var(--border)', marginLeft: 4 }}>
-            <span style={{ color: 'var(--text-dim)' }}>{k.k}: </span>
+            <span style={{ color: isPrototypeKey(k.k) ? 'var(--accent)' : 'var(--text-dim)', fontStyle: isPrototypeKey(k.k) ? 'italic' : 'normal', fontWeight: isPrototypeKey(k.k) ? 600 : 400 }}>
+              {isPrototypeKey(k.k) ? '[[Prototype]] → ' : `${k.k}: `}
+            </span>
             <ValueNode node={k.node} depth={depth + 1} />
           </div>
         ))}

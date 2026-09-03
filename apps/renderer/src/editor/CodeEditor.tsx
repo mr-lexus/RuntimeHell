@@ -1,8 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as monaco from 'monaco-editor';
 import type { AppSettings } from '@rh/protocol';
 import { getSelectionInfo, type SelectionInfo } from './selection-service';
-import { VimModeController } from './vim-mode';
+import { VimModeController, type VimMode, type PendingHint } from './vim-mode';
 
 export type AnalyzeType = 'ast' | 'bytecode' | 'optcode' | 'ir-graph' | 'deopts' | 'gc';
 
@@ -38,6 +38,14 @@ export interface CodeEditorProps {
   editorSettings?: AppSettings['editor'];
   /** Opt-in modal Vim/Neovim-style keybindings. */
   vimMode?: boolean;
+  /** Fired when the Vim mode changes (normal/insert/visual/visual-line). */
+  onVimModeChange?: (mode: VimMode) => void;
+  /** Fired when the user completes the `:help` command. */
+  onVimHelp?: () => void;
+  /** Fired when the `:` command-line buffer changes ('' when idle). */
+  onVimCommandChange?: (command: string) => void;
+  /** Fired when the `:` command line becomes active or inactive. */
+  onVimCommandActive?: (active: boolean) => void;
 }
 
 let prettierWorker: Worker | null = null;
@@ -72,6 +80,14 @@ const DEFAULT_EDITOR_SETTINGS: AppSettings['editor'] = {
   vimMode: false
 };
 
+const VIM_MODE_LABELS: Record<VimMode, string> = {
+  normal: 'NORMAL',
+  insert: 'INSERT',
+  visual: 'VISUAL',
+  'visual-line': 'VISUAL LINE',
+  replace: 'REPLACE'
+};
+
 export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -79,6 +95,13 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
   const modelsRef = useRef<Map<string, monaco.editor.ITextModel>>(new Map());
   const propsRef = useRef(props);
   propsRef.current = props;
+  const vimRef = useRef<VimModeController | null>(null);
+  const commandInputRef = useRef<HTMLInputElement | null>(null);
+  const [vimMode, setVimMode] = useState<VimMode>('normal');
+  const [vimCommandActive, setVimCommandActive] = useState(false);
+  const [vimCommandLine, setVimCommandLine] = useState('');
+  const [vimPending, setVimPending] = useState<string | null>(null);
+  const [vimPendingHints, setVimPendingHints] = useState<PendingHint[]>([]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -281,9 +304,44 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor || !props.vimMode) return;
-    const vim = new VimModeController({ editor });
-    return () => vim.dispose();
+    const vim = new VimModeController({
+      editor,
+      onModeChange: (mode) => {
+        setVimMode(mode);
+        propsRef.current.onVimModeChange?.(mode);
+      },
+      onHelp: propsRef.current.onVimHelp,
+      onCommandChange: (command) => {
+        setVimCommandLine(command);
+        propsRef.current.onVimCommandChange?.(command);
+      },
+      onCommandActive: (active) => {
+        setVimCommandActive(active);
+        propsRef.current.onVimCommandActive?.(active);
+      },
+      onPendingChange: (pending, hints) => {
+        setVimPending(pending);
+        setVimPendingHints(hints);
+      }
+    });
+    vimRef.current = vim;
+    return () => {
+      vim.dispose();
+      vimRef.current = null;
+      setVimMode('normal');
+      setVimCommandActive(false);
+      setVimCommandLine('');
+      setVimPending(null);
+      setVimPendingHints([]);
+      propsRef.current.onVimModeChange?.('normal');
+      propsRef.current.onVimCommandChange?.('');
+    };
   }, [props.vimMode]);
+
+  // Focus the `:` command-line input as soon as it appears.
+  useEffect(() => {
+    if (vimCommandActive) commandInputRef.current?.focus();
+  }, [vimCommandActive]);
 
   // Tab switching: one Monaco model per file path; external content updates
   // (history restore, initial open) are pushed into the existing model.
@@ -366,5 +424,47 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     }
   }, [props.inlineOutputs, props.inlineResults]);
 
-  return <div ref={containerRef} style={{ width: '100%', height: '100%' }} />;
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div ref={containerRef} style={{ flex: 1, minHeight: 0 }} />
+      {props.vimMode && (
+        <div className="rh-vim-statusline">
+          <span className="rh-vim-mode">{vimCommandActive ? 'COMMAND' : VIM_MODE_LABELS[vimMode]}</span>
+          {vimCommandActive && (
+            <input
+              ref={commandInputRef}
+              className="rh-vim-commandline"
+              value={vimCommandLine}
+              onChange={(event) => vimRef.current?.setCommandLine(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  vimRef.current?.submitCommand(vimCommandLine);
+                } else if (event.key === 'Escape') {
+                  event.preventDefault();
+                  vimRef.current?.cancelCommand();
+                }
+              }}
+              placeholder=":"
+              spellCheck={false}
+              aria-label="Vim command line"
+            />
+          )}
+          {vimPending !== null && vimPendingHints.length > 0 && (
+            <div className="rh-vim-pending-hints" role="tooltip" aria-label={`Vim ${vimPending} key hints`}>
+              <span className="rh-vim-pending-prefix">{vimPending}</span>
+              <div className="rh-vim-pending-hints-grid">
+                {vimPendingHints.map((hint) => (
+                  <div key={`${vimPending}-${hint.key}`} className="rh-vim-pending-hint">
+                    <kbd>{hint.key}</kbd>
+                    <span>{hint.description}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }

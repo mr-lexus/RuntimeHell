@@ -75,26 +75,125 @@ export function buildBrowserScript(source: string): string {
       return String(value);
     } catch (_) { return String(value); }
   }
-  function serialize(value, depth, ancestors, state) {
+  function appendPrototypeChain(target, value, depth, ancestors, state) {
+    let current = value;
+    let currentTarget = target;
+    let chainDepth = depth;
+    const seen = [];
+    const skip = new Set(['length', 'name', 'caller', 'arguments', 'prototype', '__proto__', 'constructor']);
+
+    while (chainDepth < 20) {
+      let proto;
+      try { proto = Object.getPrototypeOf(current); } catch (_) { return; }
+      if (proto === null) {
+        if (state.nodes >= 5000) { currentTarget.truncated = true; return; }
+        state.nodes++;
+        currentTarget.children.push({ k: '[[Prototype]]', node: { t: 'null' } });
+        return;
+      }
+      if (seen.includes(proto)) { currentTarget.truncated = true; return; }
+      seen.push(proto);
+      if (state.nodes >= 5000) { currentTarget.truncated = true; return; }
+
+      let protoLabel;
+      try {
+        const descriptor = Object.getOwnPropertyDescriptor(proto, 'constructor');
+        const ctor = descriptor && 'value' in descriptor ? descriptor.value : undefined;
+        protoLabel = typeof ctor?.name === 'string' && ctor.name ? ctor.name : undefined;
+      } catch (_) {}
+      const protoNode = { t: 'object', label: protoLabel, children: [] };
+      state.nodes++;
+      currentTarget.children.push({ k: '[[Prototype]]', node: protoNode });
+
+      let protoKeys = [];
+      try { protoKeys = Object.getOwnPropertyNames(proto); } catch (_) {}
+      ancestors.push(proto);
+      for (const key of protoKeys.slice(0, 200)) {
+        if (skip.has(key)) continue;
+        if (state.nodes >= 5000) { protoNode.truncated = true; break; }
+        let child;
+        try {
+          const descriptor = Object.getOwnPropertyDescriptor(proto, key);
+          if (descriptor && 'value' in descriptor) child = descriptor.value;
+          else if (descriptor) child = descriptor.get && descriptor.set ? '[Getter/Setter]' : descriptor.get ? '[Getter]' : '[Setter]';
+        } catch (_) { child = '<threw>'; }
+        protoNode.children.push({ k: key, node: serialize(child, chainDepth + 2, ancestors, state, false) });
+      }
+      ancestors.pop();
+      current = proto;
+      currentTarget = protoNode;
+      chainDepth++;
+    }
+    currentTarget.truncated = true;
+  }
+  function serialize(value, depth, ancestors, state, includePrototype) {
     if (state.nodes++ >= 5000) return { t: 'object', prim: '<node cap reached>', truncated: true };
     const type = typeof value;
     if (value === null) return { t: 'null' };
     if (type === 'undefined') return { t: 'undefined' };
     if (type === 'boolean' || type === 'number' || type === 'bigint' || type === 'symbol') return { t: type === 'bigint' ? 'bigint' : type, prim: String(value) };
     if (type === 'string') return value.length > 10000 ? { t: 'string', prim: value.slice(0, 10000), size: value.length, truncated: true } : { t: 'string', prim: value };
-    if (type === 'function') return { t: /^class[\\s{]/.test(Function.prototype.toString.call(value)) ? 'class' : 'function', label: value.name || '(anonymous)', size: value.length };
+    if (type === 'function') {
+      const node = { t: /^class[\\s{]/.test(Function.prototype.toString.call(value)) ? 'class' : 'function', label: value.name || '(anonymous)', size: value.length, children: [] };
+      if (depth >= 20) { node.truncated = true; return node; }
+      const backEdge = ancestors.indexOf(value);
+      if (backEdge !== -1) return { t: 'object', prim: '[Circular]', refId: backEdge };
+      if (includePrototype !== false) {
+        ancestors.push(value);
+        appendPrototypeChain(node, value, depth, ancestors, state);
+        ancestors.pop();
+      }
+      return node;
+    }
     if (depth >= 20) return { t: 'object', prim: '<depth cap reached>', truncated: true };
     const backEdge = ancestors.indexOf(value);
     if (backEdge !== -1) return { t: 'object', prim: '[Circular]', refId: backEdge };
-    if (value instanceof Error) return { t: 'error', label: value.name || 'Error', children: [{ k: 'message', node: { t: 'string', prim: String(value.message) } }, { k: 'stack', node: { t: 'string', prim: String(value.stack || '') } }] };
-    if (value instanceof Date) return { t: 'date', prim: value.toISOString() };
-    if (value instanceof RegExp) return { t: 'regexp', prim: value.source, label: value.flags };
-    if (typeof Promise !== 'undefined' && value instanceof Promise) return { t: 'promise', label: 'promise (settlement reported separately)' };
-    if (ArrayBuffer.isView(value)) return { t: 'typedarray', label: value.constructor?.name || 'TypedArray', size: value.length ?? value.byteLength ?? 0 };
+    if (value instanceof Error) {
+      const node = { t: 'error', label: value.name || 'Error', children: [{ k: 'message', node: { t: 'string', prim: String(value.message) } }, { k: 'stack', node: { t: 'string', prim: String(value.stack || '') } }] };
+      ancestors.push(value);
+      if (includePrototype !== false) appendPrototypeChain(node, value, depth, ancestors, state);
+      ancestors.pop();
+      return node;
+    }
+    if (value instanceof Date) {
+      const node = { t: 'date', prim: value.toISOString(), children: [] };
+      if (includePrototype !== false) {
+        ancestors.push(value);
+        appendPrototypeChain(node, value, depth, ancestors, state);
+        ancestors.pop();
+      }
+      return node;
+    }
+    if (value instanceof RegExp) {
+      const node = { t: 'regexp', prim: value.source, label: value.flags, children: [] };
+      if (includePrototype !== false) {
+        ancestors.push(value);
+        appendPrototypeChain(node, value, depth, ancestors, state);
+        ancestors.pop();
+      }
+      return node;
+    }
+    if (typeof Promise !== 'undefined' && value instanceof Promise) {
+      const node = { t: 'promise', label: 'promise (settlement reported separately)', children: [] };
+      if (includePrototype !== false) {
+        ancestors.push(value);
+        appendPrototypeChain(node, value, depth, ancestors, state);
+        ancestors.pop();
+      }
+      return node;
+    }
+    if (ArrayBuffer.isView(value)) {
+      const node = { t: 'typedarray', label: value.constructor?.name || 'TypedArray', size: value.length ?? value.byteLength ?? 0, children: [] };
+      ancestors.push(value);
+      if (includePrototype !== false) appendPrototypeChain(node, value, depth, ancestors, state);
+      ancestors.pop();
+      return node;
+    }
     if (Array.isArray(value)) {
       const node = { t: 'array', size: value.length, children: [] };
       ancestors.push(value);
       for (let i = 0; i < value.length && state.nodes < 5000; i++) node.children.push({ k: String(i), node: serialize(value[i], depth + 1, ancestors, state) });
+      if (includePrototype !== false) appendPrototypeChain(node, value, depth, ancestors, state);
       ancestors.pop();
       if (node.children.length < value.length) node.truncated = true;
       return node;
@@ -109,6 +208,7 @@ export function buildBrowserScript(source: string): string {
       try { child = value[key]; } catch (_) { child = '<threw>'; }
       node.children.push({ k: key, node: serialize(child, depth + 1, ancestors, state) });
     }
+    if (includePrototype !== false) appendPrototypeChain(node, value, depth, ancestors, state);
     ancestors.pop();
     return node;
   }

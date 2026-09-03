@@ -59,7 +59,8 @@ export function InspectorPanel({ fileId }: InspectorPanelProps): React.JSX.Eleme
   const Row = ({ index, style }: ListChildComponentProps): React.JSX.Element => {
     const item = allRows[index];
     if (!item) return <div style={style} />;
-    const arrow = item.row.hasChildren ? '›' : '';
+    const isPrototype = item.row.isPrototype;
+    const arrow = item.row.hasChildren ? (item.row.isExpanded ? '⌄' : '›') : '';
     return (
       <div
         style={{
@@ -70,7 +71,10 @@ export function InspectorPanel({ fileId }: InspectorPanelProps): React.JSX.Eleme
           fontSize: 12,
           whiteSpace: 'pre',
           cursor: item.row.hasChildren ? 'pointer' : 'default',
-          color: item.row.depth === 0 ? 'var(--accent-strong)' : 'var(--text-secondary)'
+          color: item.row.depth === 0 ? 'var(--accent-strong)' : isPrototype ? 'var(--accent)' : 'var(--text-secondary)',
+          fontWeight: isPrototype ? 600 : 400,
+          borderLeft: isPrototype ? '2px solid var(--accent)' : '2px solid transparent',
+          background: isPrototype ? 'color-mix(in srgb, var(--accent) 6%, transparent)' : 'transparent'
         }}
         onClick={() => item.row.hasChildren && toggle(item.rootIndex, item.row.key)}
       >
@@ -79,8 +83,10 @@ export function InspectorPanel({ fileId }: InspectorPanelProps): React.JSX.Eleme
         </span>
         <span style={{ width: 12, color: 'var(--text-faint)' }}>{arrow}</span>
         <span>
-          {item.row.depth > 0 ? `${GUTTER.repeat(item.row.depth - 1)}${item.row.childKey}: ` : ''}
-          {item.row.label}
+          {item.row.depth > 0 && (isPrototype
+            ? <><span style={{ fontStyle: 'italic' }}>[[Prototype]]</span><span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> → </span><span>{item.row.label}</span></>
+            : `${GUTTER.repeat(item.row.depth - 1)}${item.row.childKey}: `)}
+          {item.row.depth === 0 || !isPrototype ? item.row.label : null}
         </span>
       </div>
     );

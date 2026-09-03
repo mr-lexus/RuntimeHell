@@ -99,6 +99,18 @@ describe('capture prelude (executed under real node)', () => {
     ]);
   });
 
+  it('includes enumerable named array properties in console frames', async () => {
+    const program = [
+      'var arr = [1, 2, 3];',
+      'arr.someKey = "someValue";',
+      '__rh.console(3, "log", [arr]);'
+    ].join('\n');
+    const { stderr } = await runProgram(program);
+    const value = consoleFrames(stderr)[0]?.args?.[0];
+    expect(value?.t).toBe('array');
+    expect(value?.children?.find((child) => child.k === 'someKey')?.node).toEqual({ t: 'string', prim: 'someValue' });
+  });
+
   it('serializes Map/Set/circular refs/Date/Error like the node serializer', async () => {
     const program = [
       'var m = new Map([["k", 1]]);',
@@ -113,7 +125,7 @@ describe('capture prelude (executed under real node)', () => {
     expect(frames).toHaveLength(5);
 
     expect(frames[0]?.value).toMatchObject({ t: 'map', size: 1 });
-    expect(frames[0]?.value?.children?.map((c) => c.k)).toEqual(['[0] key', '[0] value']);
+    expect(frames[0]?.value?.children?.filter((c) => c.k !== '[[Prototype]]').map((c) => c.k)).toEqual(['[0] key', '[0] value']);
     expect(frames[1]?.value).toMatchObject({ t: 'set', size: 1 });
     expect(frames[2]?.value?.t).toBe('object');
     const selfEdge = frames[2]?.value?.children?.find((c) => c.k === 'self')?.node;

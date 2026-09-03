@@ -91,7 +91,7 @@ function inlineText(v: SerializedValue): string {
   if (v.t === 'map') return `Map(${v.size ?? 0})`;
   if (v.t === 'set') return `Set(${v.size ?? 0})`;
   if (v.t === 'typedarray') return `${v.label ?? 'TypedArray'}(${v.size ?? 0})`;
-  if (v.t === 'array') return `Array(${v.size ?? v.children?.length ?? 0})`;
+  if (v.t === 'array') return `Array exotic object(${v.size ?? v.children?.length ?? 0})`;
   if (v.t === 'object') {
     const label = v.label ?? 'Object';
     const first = v.children?.[0];
@@ -155,7 +155,7 @@ function previewText(v: SerializedValue): string {
 
 function typeTag(v: SerializedValue): string | null {
   switch (v.t) {
-    case 'array': return `Array(${v.size ?? v.children?.length ?? 0})`;
+    case 'array': return `Array exotic object(${v.size ?? v.children?.length ?? 0})`;
     case 'map': return `Map(${v.size ?? 0})`;
     case 'set': return `Set(${v.size ?? 0})`;
     case 'typedarray': return `${v.label ?? 'TypedArray'}(${v.size ?? 0})`;
@@ -231,11 +231,9 @@ function TreeChild({ k, node, inMap }: { k: string; node: SerializedValue; inMap
   const sep = inMap ? ' =>' : ':';
   const protoLabel = proto ? (node.label ?? node.t) : null;
 
-  const keySpan = (
-    <span style={{ color: proto ? C.proto : C.key, fontSize: 11, fontWeight: proto ? 600 : 400, fontStyle: proto ? 'italic' : 'normal' }}>
-      {k}{protoLabel ? `: ${protoLabel}` : ''}{protoLabel ? '' : sep}{' '}
-    </span>
-  );
+  const keySpan = proto
+    ? <><span style={{ color: C.proto, fontSize: 11, fontWeight: 600, fontStyle: 'italic' }}>[[Prototype]]</span><span style={{ color: C.dim, fontSize: 11 }}> → </span><span style={{ color: C.proto, fontSize: 11, fontWeight: 600 }}>{protoLabel}</span></>
+    : <span style={{ color: C.key, fontSize: 11 }}>{k}{sep}{' '}</span>;
 
   if (!expandable) {
     return (
@@ -501,7 +499,7 @@ export function LineOutputColumn({
       } else if (out.logs.length > 0) {
         for (const log of out.logs) {
           if (log.args && log.args.length > 0) {
-            out.primary = log.args[0] ?? null;
+            out.primary = log.args.find((arg) => isExpandable(arg)) ?? log.args[0] ?? null;
             break;
           }
         }

@@ -13,6 +13,8 @@ export interface TreeRow {
   readonly childKey: string;
   readonly label: string;
   readonly hasChildren: boolean;
+  readonly isPrototype: boolean;
+  readonly isExpanded: boolean;
 }
 
 export function describeNode(node: SerializedValue): string {
@@ -45,7 +47,7 @@ export function describeNode(node: SerializedValue): string {
     case 'typedarray':
       return `${node.label ?? 'TypedArray'}(${node.size ?? 0})`;
     case 'array':
-      return `Array(${node.size ?? node.children?.length ?? 0})${node.truncated ? ' [truncated]' : ''}`;
+      return `Array exotic object(${node.size ?? node.children?.length ?? 0})${node.truncated ? ' [truncated]' : ''}`;
     case 'object': {
       if (node.refId !== undefined) return `[Circular ↑${node.refId}]`;
       const size = node.size ?? node.children?.length ?? 0;
@@ -63,7 +65,15 @@ export function flattenValue(root: SerializedValue, expanded: ReadonlySet<string
   const rows: TreeRow[] = [];
   const walk = (node: SerializedValue, childKey: string, depth: number, key: string): void => {
     const hasChildren = (node.children?.length ?? 0) > 0;
-    rows.push({ key, depth, childKey, label: describeNode(node), hasChildren });
+    rows.push({
+      key,
+      depth,
+      childKey,
+      label: describeNode(node),
+      hasChildren,
+      isPrototype: childKey === '[[Prototype]]',
+      isExpanded: expanded.has(key)
+    });
     if (!hasChildren || !expanded.has(key)) return;
     for (const child of node.children ?? []) {
       walk(child.node, child.k, depth + 1, `${key}\u0000${child.k}`);
@@ -71,7 +81,7 @@ export function flattenValue(root: SerializedValue, expanded: ReadonlySet<string
   };
   // Root row renders without a child-key gutter.
   const hasChildren = (root.children?.length ?? 0) > 0;
-  rows.push({ key: 'root', depth: 0, childKey: '', label: describeNode(root), hasChildren });
+  rows.push({ key: 'root', depth: 0, childKey: '', label: describeNode(root), hasChildren, isPrototype: false, isExpanded: expanded.has('root') });
   if (hasChildren && expanded.has('root')) {
     for (const child of root.children ?? []) {
       walk(child.node, child.k, 1, `root\u0000${child.k}`);

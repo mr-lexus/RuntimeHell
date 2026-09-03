@@ -9,7 +9,7 @@ const num = (n: number): SerializedValue => ({ t: 'number', prim: String(n) });
 
 describe('describeNode', () => {
   it('labels container kinds with sizes', () => {
-    expect(describeNode({ t: 'array', size: 10, children: [] })).toBe('Array(10)');
+    expect(describeNode({ t: 'array', size: 10, children: [] })).toBe('Array exotic object(10)');
     expect(describeNode({ t: 'map', size: 2 })).toBe('Map(2)');
     expect(describeNode({ t: 'set', size: 3 })).toBe('Set(3)');
     expect(describeNode({ t: 'typedarray', label: 'Uint8Array', size: 4 })).toBe('Uint8Array(4)');
@@ -71,5 +71,26 @@ describe('flattenValue', () => {
     const rows = flattenValue(root, new Set(['root']));
     const nameRow = rows.find((r) => r.childKey === 'name');
     expect(nameRow?.hasChildren).toBe(false);
+  });
+
+  it('keeps prototype links visible and expandable', () => {
+    const value: SerializedValue = {
+      t: 'object',
+      label: 'Child',
+      children: [{
+        k: '[[Prototype]]',
+        node: {
+          t: 'object',
+          label: 'Child',
+          children: [{ k: 'childMethod', node: { t: 'function', label: 'childMethod', size: 0 } }]
+        }
+      }]
+    };
+
+    const rows = flattenValue(value, new Set(['root', 'root\u0000[[Prototype]]']));
+    const prototypeRow = rows.find((row) => row.childKey === '[[Prototype]]');
+    expect(prototypeRow).toMatchObject({ isPrototype: true, isExpanded: true, label: 'Child' });
+    expect(rows.map((row) => [row.childKey, row.label])).toContainEqual(['[[Prototype]]', 'Child']);
+    expect(rows.map((row) => row.childKey)).toContain('childMethod');
   });
 });

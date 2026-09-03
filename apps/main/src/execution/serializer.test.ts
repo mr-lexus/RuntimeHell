@@ -6,6 +6,9 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CAPS, makeSerializer } from './templates/serialize-value.cjs';
 
+const ownChildren = (node: { children?: { k: string; node: unknown }[] }): { k: string; node: unknown }[] =>
+  (node.children ?? []).filter((child) => child.k !== '[[Prototype]]');
+
 describe('structural serializer', () => {
   it('serializes primitives', () => {
     const s = makeSerializer();
@@ -63,7 +66,7 @@ describe('structural serializer', () => {
   it('serializes Date as ISO and RegExp as source+flags', () => {
     const s = makeSerializer();
     const date = new Date('2026-01-02T03:04:05.000Z');
-    expect(s(date)).toEqual({ t: 'date', prim: '2026-01-02T03:04:05.000Z' });
+    expect(s(date)).toMatchObject({ t: 'date', prim: '2026-01-02T03:04:05.000Z' });
     const re = s(/ab+c/gi);
     expect(re.t).toBe('regexp');
     expect(re.prim).toBe('ab+c');
@@ -87,9 +90,9 @@ describe('structural serializer', () => {
     );
     expect(node.t).toBe('map');
     expect(node.size).toBe(2);
-    expect(node.children?.map((c) => c.k)).toEqual(['[0] key', '[0] value', '[1] key', '[1] value']);
-    expect(node.children?.[0]?.node.prim).toBe('k1');
-    expect(node.children?.[1]?.node.prim).toBe('11');
+    expect(ownChildren(node).map((c) => c.k)).toEqual(['[0] key', '[0] value', '[1] key', '[1] value']);
+    expect((ownChildren(node)[0]?.node as { prim?: string }).prim).toBe('k1');
+    expect((ownChildren(node)[1]?.node as { prim?: string }).prim).toBe('11');
   });
 
   it('serializes Set members', () => {
@@ -97,7 +100,7 @@ describe('structural serializer', () => {
     const node = s(new Set([1, 2]));
     expect(node.t).toBe('set');
     expect(node.size).toBe(2);
-    expect(node.children?.map((c) => c.node.prim)).toEqual(['1', '2']);
+    expect(ownChildren(node).map((c) => (c.node as { prim?: string }).prim)).toEqual(['1', '2']);
   });
 
   it('serializes typed arrays with kind, length and first 50 elements', () => {
@@ -110,9 +113,19 @@ describe('structural serializer', () => {
 
     const big = s(new Float64Array(100).fill(7));
     expect(big.size).toBe(100);
-    expect(big.children?.length).toBe(50);
+    expect(ownChildren(big)).toHaveLength(50);
     expect(big.truncated).toBe(true);
     expect(big.children?.[0]?.node.prim).toBe('7');
+  });
+
+  it('serializes enumerable named properties on arrays after their indexed elements', () => {
+    const s = makeSerializer();
+    const array = [1, 2, 3] as number[] & { someKey?: string };
+    array.someKey = 'someValue';
+
+    const node = s(array);
+    expect(ownChildren(node).map((child) => child.k)).toEqual(['0', '1', '2', 'someKey']);
+    expect(ownChildren(node).find((child) => child.k === 'someKey')?.node).toEqual({ t: 'string', prim: 'someValue' });
   });
 
   it('sizes DataView by byteLength', () => {
@@ -155,6 +168,27 @@ describe('structural serializer', () => {
     expect(baseProto?.children?.some((c) => c.k === 'baseMethod')).toBe(true);
     expect(objectProto?.label).toBe('Object');
     expect(nullProto).toEqual({ t: 'null' });
+  });
+
+  it('adds a prototype chain to every non-primitive value kind', () => {
+    const s = makeSerializer();
+    const values: unknown[] = [
+      [],
+      new Map(),
+      new Set(),
+      new Date('2026-01-02T03:04:05.000Z'),
+      /runtimehell/,
+      new Uint8Array([1]),
+      Promise.resolve(1),
+      function sample(): void {},
+      class Sample {}
+    ];
+
+    for (const value of values) {
+      const node = s(value);
+      const prototype = node.children?.find((child) => child.k === '[[Prototype]]');
+      expect(prototype?.node.t, `prototype for ${Object.prototype.toString.call(value)}`).toBe('object');
+    }
   });
 
   it('emits refId back-edges for circular references', () => {

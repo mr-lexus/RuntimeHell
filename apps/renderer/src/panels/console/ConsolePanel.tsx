@@ -67,7 +67,7 @@ function inlineText(v: SerializedValue): string {
   if (v.t === 'map') return `Map(${v.size ?? 0})`;
   if (v.t === 'set') return `Set(${v.size ?? 0})`;
   if (v.t === 'typedarray') return `${v.label ?? 'TypedArray'}(${v.size ?? 0})`;
-  if (v.t === 'array') return `Array(${v.size ?? v.children?.length ?? 0})`;
+  if (v.t === 'array') return `Array exotic object(${v.size ?? v.children?.length ?? 0})`;
   if (v.t === 'object') {
     const label = v.label ?? 'Object';
     const first = v.children?.[0];
@@ -125,7 +125,7 @@ function previewText(v: SerializedValue): string {
 
 function typeTag(v: SerializedValue): string | null {
   switch (v.t) {
-    case 'array': return `Array(${v.size ?? v.children?.length ?? 0})`;
+    case 'array': return `Array exotic object(${v.size ?? v.children?.length ?? 0})`;
     case 'map': return `Map(${v.size ?? 0})`;
     case 'set': return `Set(${v.size ?? 0})`;
     case 'typedarray': return `${v.label ?? 'TypedArray'}(${v.size ?? 0})`;
@@ -202,11 +202,9 @@ function TreeChild({ k, node, inMap }: { k: string; node: SerializedValue; inMap
   const sep = inMap ? ' =>' : ':';
   const protoLabel = proto ? (node.label ?? node.t) : null;
 
-  const keySpan = (
-    <span style={{ color: proto ? C.proto : C.key, fontSize: 11, fontWeight: proto ? 600 : 400, fontStyle: proto ? 'italic' : 'normal' }}>
-      {k}{protoLabel ? `: ${protoLabel}` : ''}{protoLabel ? '' : sep}{' '}
-    </span>
-  );
+  const keySpan = proto
+    ? <><span style={{ color: C.proto, fontSize: 11, fontWeight: 600, fontStyle: 'italic' }}>[[Prototype]]</span><span style={{ color: C.dim, fontSize: 11 }}> → </span><span style={{ color: C.proto, fontSize: 11, fontWeight: 600 }}>{protoLabel}</span></>
+    : <span style={{ color: C.key, fontSize: 11 }}>{k}{sep}{' '}</span>;
 
   if (!expandable) {
     return (
@@ -290,7 +288,7 @@ function ConsoleEntryRow({
   result: SerializedValue | null;
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false);
-  const primary = entry?.args?.[0] ?? result ?? null;
+  const primary = entry?.args?.find((arg) => isExpandable(arg)) ?? entry?.args?.[0] ?? result ?? null;
   const table = entry?.level === 'table' && entry.args
     ? detectConsoleTable(entry.args)
     : primary && entry === null
@@ -484,7 +482,7 @@ export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
   const hasStructured = structuredLineNums.length > 0;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+    <div className="rh-console-panel">
       {/* ── toolbar ── */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, paddingBottom: 4, flexShrink: 0 }}>
         {visibleNotice !== null && <span style={{ color: 'var(--warn)', fontSize: 11 }}>{visibleNotice}</span>}
@@ -524,7 +522,7 @@ export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
       )}
 
       {/* ── console output ── */}
-      <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+      <div className="rh-console-output">
         {/* Structured console entries + expression results */}
         {hasStructured && structuredLineNums.map((ln) => {
           const entries = visibleInlineByLine[ln] ?? [];

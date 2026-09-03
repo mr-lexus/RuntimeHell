@@ -10,3 +10,4 @@ dist/
 .omo/notepads/
 .playwright-mcp/
 alignment-check.png
+/.opencode

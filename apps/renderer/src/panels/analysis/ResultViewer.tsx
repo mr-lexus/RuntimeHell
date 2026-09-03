@@ -1,12 +1,52 @@
 import { useId, useMemo, useRef, useState } from 'react';
-import type { AnalysisResult, NormalizedIrGraph, NormalizedIrGraphFunction, NormalizedIrGraphPhase } from '@rh/protocol';
+import type { AnalysisResult, AnalysisType, NormalizedIrGraph, NormalizedIrGraphFunction, NormalizedIrGraphPhase } from '@rh/protocol';
 import { parseV8Bytecode, parseV8Deopts } from '@rh/engine-parsers';
 import { parseEmbeddedJson, parseSourceAst } from './ast-normalize';
 import { parseV8Gc, type NormalizedGcEvent } from './gc-normalize';
 import { parseV8Optcode } from './optcode-normalize';
-import { ANALYSIS_ACTION_ICON, ANALYSIS_HELP, ANALYSIS_VIEW_ICONS } from './analysis-help';
+import { ANALYSIS_ACTION_ICON, ANALYSIS_VIEW_ICONS } from './analysis-help';
 
-type DrawerTab = 'normalized' | 'raw' | 'artifacts';
+export type DrawerTab = 'normalized' | 'raw' | 'artifacts';
+
+const NORMALIZED_ANALYSIS_TYPES: readonly AnalysisType[] = ['ast', 'bytecode', 'optcode', 'ir-graph', 'deopts', 'gc'];
+
+export function hasAnalysisNormalizer(type: AnalysisType): boolean {
+  return NORMALIZED_ANALYSIS_TYPES.includes(type);
+}
+
+export function ResultViewerTabs({
+  tab,
+  onChange,
+  hasNormalizer,
+  artifactCount
+}: {
+  tab: DrawerTab;
+  onChange: (tab: DrawerTab) => void;
+  hasNormalizer: boolean;
+  artifactCount: number;
+}): React.JSX.Element {
+  return (
+    <div className="rh-analysis-view-tabs" role="tablist" aria-label="Analysis result view">
+      {(['normalized', 'raw', 'artifacts'] as const).map((t) => {
+        const disabled = t === 'normalized' && !hasNormalizer;
+        return (
+          <button
+            key={t}
+            type="button"
+            role="tab"
+            aria-selected={tab === t}
+            onClick={() => !disabled && onChange(t)}
+            disabled={disabled}
+            className={`rh-analysis-view-tab ${tab === t ? 'is-active' : ''}`}
+          >
+            <span className="rh-analysis-icon" aria-hidden="true">{ANALYSIS_VIEW_ICONS[t]}</span> {t}
+          </button>
+        );
+      })}
+      {artifactCount > 0 && <span className="rh-analysis-result-artifacts">{artifactCount} artifact(s)</span>}
+    </div>
+  );
+}
 
 const MAX_ROWS = 400;
 
@@ -267,7 +307,7 @@ function NormalizedAstView({ raw, source, engine }: { raw: string; source: strin
           <div style={{ background: 'color-mix(in srgb, var(--accent) 12%, transparent)', color: 'var(--accent-strong)', padding: '2px 6px', marginBottom: 4, fontSize: 11 }}>
             source AST tree · V8 textual dump remains available in raw
           </div>
-          <div style={{ fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", fontSize: 12, overflow: 'auto', maxHeight: 520 }}>
+          <div className="rh-analysis-ast-tree">
             <AstNode name="Program" node={sourceAst} depth={0} />
           </div>
         </div>
@@ -279,7 +319,7 @@ function NormalizedAstView({ raw, source, engine }: { raw: string; source: strin
           <div style={{ background: 'color-mix(in srgb, var(--warn) 12%, transparent)', color: 'var(--warn)', padding: '2px 6px', marginBottom: 4, fontSize: 11 }}>
             {engine === 'v8' ? 'textual AST output — raw output is authoritative' : 'AST payload is not JSON — raw output is authoritative'}
           </div>
-          <pre style={{ margin: 0, maxHeight: 420, overflow: 'auto', color: 'var(--text-secondary)', fontFamily: 'inherit', fontSize: 11, lineHeight: '15px', whiteSpace: 'pre-wrap' }}>{raw}</pre>
+          <pre className="rh-analysis-raw-output">{raw}</pre>
         </div>
       );
     }
@@ -291,7 +331,7 @@ function NormalizedAstView({ raw, source, engine }: { raw: string; source: strin
       <div style={{ background: '#3a3325', color: '#dcdcaa', padding: '2px 6px', marginBottom: 4, fontSize: 11 }}>
         parsed AST tree — raw output is authoritative
       </div>
-      <div style={{ fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", fontSize: 12, overflow: 'auto', maxHeight: 520 }}>
+      <div className="rh-analysis-ast-tree">
         <AstNode name="Program" node={parsed} depth={0} />
       </div>
     </div>
@@ -611,7 +651,7 @@ function IrGraphCanvas({ phase, selectedNodeId, onSelectNode }: { phase: Normali
   };
 
   return (
-    <div className="rh-ir-graph-shell" style={{ border: '1px solid #292929', background: '#0d0d0d', height: '100%', minHeight: 0, flex: '1 1 auto' }}>
+    <div className="rh-ir-graph-shell">
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', flex: '0 0 auto', padding: '4px 6px', borderBottom: '1px solid #242424', color: '#888', fontSize: 10 }}>
         <span style={{ color: '#79b8e8' }}>● control</span>
         <span style={{ color: '#8fca99' }}>● value</span>
@@ -633,7 +673,6 @@ function IrGraphCanvas({ phase, selectedNodeId, onSelectNode }: { phase: Normali
         className="rh-ir-graph-viewport"
         tabIndex={0}
         aria-label="Scrollable IR graph viewport"
-        style={{ height: 'auto', minHeight: 0, flex: '1 1 auto', overflow: 'auto', overscrollBehavior: 'contain', scrollbarGutter: 'stable both-edges' }}
       >
       <svg width={layout.width * zoom} height={layout.height * zoom} viewBox={`0 0 ${layout.width} ${layout.height}`} style={{ display: 'block', minWidth: 620, minHeight: Math.min(layout.height * zoom, 260) }} role="img" aria-label={`${phase.name} IR graph`}>
         <defs>
@@ -731,7 +770,7 @@ function IrGraphPayloadView({ graph, onCopyRaw }: { graph: NormalizedIrGraph; on
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, height: '100%', minHeight: 0 }}>
+    <div className="rh-ir-graph-result">
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         <span style={{ color: 'var(--accent-strong)', fontWeight: 600 }}>TurboFan IR</span>
         <span style={{ color: '#777' }}>{currentFunction.name}</span>
@@ -829,66 +868,12 @@ function NormalizedIrGraphView({ normalized, artifacts, onCopyRaw }: { normalize
  * Per-type result viewer (plan todo 19): Normalized view first-class,
  * raw as fallback, artifact listing.
  */
-export function ResultViewer({ result, focusFunction }: { result: AnalysisResult; focusFunction?: string | null }): React.JSX.Element {
-  /** Which normalizer to show for this analysis type. */
-  const hasNormalizer = result.analysisType === 'bytecode' || result.analysisType === 'deopts' || result.analysisType === 'ast' || result.analysisType === 'optcode' || result.analysisType === 'ir-graph' || result.analysisType === 'gc';
-  const [tab, setTab] = useState<DrawerTab>(() => (hasNormalizer ? 'normalized' : 'raw'));
-
+export function ResultViewer({ result, focusFunction, tab }: { result: AnalysisResult; focusFunction?: string | null; tab: DrawerTab }): React.JSX.Element {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, height: '100%', minHeight: 0, flex: '1 1 auto' }}>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-        {(['normalized', 'raw', 'artifacts'] as const).map((t) => {
-          const disabled = t === 'normalized' && !hasNormalizer;
-          return (
-            <button
-              key={t}
-              onClick={() => !disabled && setTab(t)}
-              disabled={disabled}
-              style={{
-                background: tab === t ? '#333' : 'transparent',
-                color: disabled ? '#555' : '#ccc',
-                border: 'none',
-                padding: '1px 8px',
-                cursor: disabled ? 'not-allowed' : 'pointer',
-                fontSize: 11,
-                opacity: disabled ? 0.5 : 1
-              }}
-            >
-              <span className="rh-analysis-icon" aria-hidden="true">{ANALYSIS_VIEW_ICONS[t]}</span> {t}
-            </button>
-          );
-        })}
-        <details className="rh-analysis-info">
-          <summary className="rh-analysis-info-trigger" title="help: reading analysis output" aria-label={`Help for ${ANALYSIS_HELP[result.analysisType].title}`}>
-            <span aria-hidden="true">{ANALYSIS_ACTION_ICON.info}</span>
-          </summary>
-          <div className="rh-analysis-info-popover" role="tooltip">
-            <strong>{ANALYSIS_HELP[result.analysisType].title}</strong>
-            <span>{ANALYSIS_HELP[result.analysisType].summary}</span>
-            <p>{ANALYSIS_HELP[result.analysisType].details}</p>
-            <small>Normalized is a best-effort view; Raw remains authoritative.</small>
-          </div>
-        </details>
-        <span style={{ flex: 1 }} />
-        {result.artifacts.length > 0 && <span style={{ color: 'var(--accent-strong)', fontSize: 11 }}>{result.artifacts.length} artifact(s)</span>}
-      </div>
-
-      <div style={{ flex: '1 1 auto', minHeight: 0, overflow: result.analysisType === 'ir-graph' ? 'hidden' : 'auto' }}>
+    <div className="rh-analysis-result-viewer">
+      <div className={`rh-analysis-result-content ${result.analysisType === 'ir-graph' ? 'is-ir-graph' : ''}`}>
       {tab === 'raw' && (
-        <pre
-          style={{
-            height: '100%',
-            boxSizing: 'border-box',
-            margin: 0,
-            background: '#111',
-            padding: 6,
-            overflow: 'auto',
-            fontSize: 11,
-            lineHeight: '15px',
-            whiteSpace: 'pre-wrap',
-            color: '#ccc'
-          }}
-        >
+        <pre className="rh-analysis-result-raw">
           {result.rawOutput}
         </pre>
       )}

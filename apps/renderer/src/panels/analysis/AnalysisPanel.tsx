@@ -4,7 +4,7 @@ import { useRef } from 'react';
 import type { SelectionInfo } from '../../editor/selection-service';
 import { scanFunctions, type ScannedFunction } from '../../editor/scan-functions';
 import { ANALYSIS_ALL_TYPES, useAnalysis, type AnalysisEngineId, type TypeState } from '../../state/analysis';
-import { ResultViewer } from './ResultViewer';
+import { hasAnalysisNormalizer, ResultViewer, ResultViewerTabs, type DrawerTab } from './ResultViewer';
 import { ANALYSIS_ACTION_ICON, ANALYSIS_HELP, ANALYSIS_ICON } from './analysis-help';
 
 const TYPE_LABEL: Record<AnalysisType, string> = {
@@ -35,10 +35,12 @@ function AnalysisInfo({ type }: { type: AnalysisType }): React.JSX.Element {
       <summary className="rh-analysis-info-trigger" title={`help: ${help.title}`} aria-label={`Help for ${help.title}`}>
         <span aria-hidden="true">{ANALYSIS_ACTION_ICON.info}</span>
       </summary>
-      <div className="rh-analysis-info-popover" role="tooltip">
+      <div className="rh-analysis-info-popover" role="dialog" aria-label={help.title}>
+        <button type="button" className="rh-analysis-info-close" aria-label="Close help" title="Close" onClick={(event) => { event.stopPropagation(); const details = event.currentTarget.closest('details'); if (details) details.open = false; }}>×</button>
         <strong>{help.title}</strong>
         <span>{help.summary}</span>
         <p>{help.details}</p>
+        <small>Normalized is a best-effort view; Raw remains authoritative.</small>
       </div>
     </details>
   );
@@ -106,6 +108,7 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo }: { code: str
   // an idle state: it displays no results and triggers no analysis.
   const [lastAnalysisTypes, setLastAnalysisTypes] = useState<AnalysisType[]>([]);
   const [selectedAnalysisType, setSelectedAnalysisType] = useState<AnalysisType | null>(null);
+  const [resultTab, setResultTab] = useState<DrawerTab>('normalized');
   const previousSelectedFunctionRef = useRef<ScannedFunction | null>(selectedFunction);
 
   // When the function selector changes, immediately recalculate its results.
@@ -114,6 +117,7 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo }: { code: str
     previousSelectedFunctionRef.current = selectedFunction;
     if (state.requestId !== null) return; // don't interrupt running analysis
     if (lastAnalysisTypes.length === 0) return;
+    setResultTab('normalized');
     runAnalysis(lastAnalysisTypes);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedFunction]);
@@ -142,7 +146,7 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo }: { code: str
     : 0;
 
   return (
-    <div className="rh-analysis-panel" style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: 'var(--text-secondary)', minHeight: 0, height: '100%' }}>
+    <div className="rh-analysis-panel">
       <div className="rh-analysis-controls is-compact">
         <label>
           engine:{' '}
@@ -166,6 +170,7 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo }: { code: str
           className="rh-analysis-action"
           onClick={() => {
             setSelectedAnalysisType((current) => current ?? ANALYSIS_ALL_TYPES.find((type) => caps?.[CAPABILITY_FOR_TYPE[type]] === true) ?? null);
+            setResultTab('normalized');
             runAnalysis([...ANALYSIS_ALL_TYPES]);
           }}
           disabled={state.requestId !== null || supportedCount === 0}
@@ -210,7 +215,10 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo }: { code: str
               disabled={state.requestId !== null || !supported}
               onClick={() => {
                 setSelectedAnalysisType(type);
-                if (t.status !== 'done') runAnalysis([type]);
+                if (t.status !== 'done') {
+                  setResultTab('normalized');
+                  runAnalysis([type]);
+                }
               }}
               aria-pressed={active}
               className={`rh-analysis-action ${active ? 'is-active' : ''} ${t.status === 'running' ? 'is-running' : ''}`}
@@ -240,7 +248,7 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo }: { code: str
         showWrapper && <pre className="rh-analysis-generated">{state.generatedCode}</pre>
       )}
 
-      <div className="rh-analysis-results" style={{ display: 'flex', flexDirection: 'column', gap: 8, overflow: 'hidden', minHeight: 0 }}>
+      <div className="rh-analysis-results">
         {selectedAnalysisType === null && (
           <div className="rh-analysis-empty-tab">Select an analysis tab to run it. Run all keeps the results available here without stacking six scroll areas.</div>
         )}
@@ -253,6 +261,14 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo }: { code: str
                   <strong style={{ color: statusColor(t) }}><span className="rh-analysis-icon" aria-hidden="true">{ANALYSIS_ICON[type]}</span> {TYPE_LABEL[type]}</strong>
                   <AnalysisInfo type={type} />
                 </span>
+                {t.result !== null && (
+                  <ResultViewerTabs
+                    tab={resultTab}
+                    onChange={setResultTab}
+                    hasNormalizer={hasAnalysisNormalizer(type)}
+                    artifactCount={t.result.artifacts.length}
+                  />
+                )}
                 <span className="rh-analysis-result-meta">
                   {t.result !== null &&
                     `${t.result.engine}@${t.result.engineVersion} · ${t.result.metadata.durationMs}ms`}
@@ -261,7 +277,7 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo }: { code: str
               {t.status === 'running' && <div className="rh-analysis-notice is-warning">running…</div>}
               {t.status === 'unsupported' && <div className="rh-analysis-notice is-error">unsupported — {t.reason}</div>}
               {t.status === 'error' && <div className="rh-analysis-notice is-error">{t.reason}</div>}
-              {t.result !== null && <ResultViewer result={t.result} focusFunction={state.focusFunction} />}
+              {t.result !== null && <ResultViewer result={t.result} focusFunction={state.focusFunction} tab={resultTab} />}
             </div>
           );
         })}
