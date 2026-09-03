@@ -314,7 +314,6 @@ function OutputRow({ out, ln, canExpand, expanded, onToggle, lineHeight }: {
   onToggle: () => void;
   lineHeight: number;
 }): React.JSX.Element {
-  const hasExpand = canExpand && isExpandable(out.primary);
   const isTableEntry = out.logs.some((entry) => entry.level === 'table');
   const tableEntry = out.logs.find((entry) => entry.level === 'table');
   const table = tableEntry?.args
@@ -322,6 +321,16 @@ function OutputRow({ out, ln, canExpand, expanded, onToggle, lineHeight }: {
     : isTableEntry && out.primary
       ? detectTable(out.primary)
       : null;
+  const consoleValues = out.logs.flatMap((entry) => entry.args ?? []);
+  const detailValues = [
+    ...consoleValues,
+    ...(out.result
+      ? [out.result]
+      : consoleValues.length === 0 && out.primary
+        ? [out.primary]
+        : []),
+  ];
+  const hasExpand = canExpand && (table !== null || detailValues.some((value) => isExpandable(value)));
 
   const tableLabel = (entry: InlineConsoleEntry): string => {
     if (entry.level === 'table' && entry.args && entry.args.length > 0) {
@@ -382,7 +391,7 @@ function OutputRow({ out, ln, canExpand, expanded, onToggle, lineHeight }: {
       </div>
 
       {/* ── expanded inspector (INLINE — no portal needed) ── */}
-      {expanded && out.primary && (
+      {expanded && detailValues.length > 0 && (
         <div
           data-inspector-overlay
           style={{
@@ -397,7 +406,14 @@ function OutputRow({ out, ln, canExpand, expanded, onToggle, lineHeight }: {
         >
           {table
             ? <TableView shape={table} depth={0} />
-            : <Tree node={out.primary} />}
+            : detailValues.map((value, index) => (
+              <div key={index} style={{ marginTop: detailValues.length > 1 && index > 0 ? 6 : 0 }}>
+                {detailValues.length > 1 && (
+                  <div style={{ color: C.dim, fontSize: 10, margin: '0 0 2px 14px' }}>argument {index + 1}</div>
+                )}
+                <Tree node={value} />
+              </div>
+            ))}
         </div>
       )}
     </div>

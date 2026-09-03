@@ -17,7 +17,7 @@ import { probeFd3Support } from './fd3-probe.js';
 import { injectCapture } from './result-capture.js';
 import { ProcessRunner, type RunHandle } from './process-runner.js';
 import { StackLineRemapper } from './stack-remapper.js';
-import { needsTranspile, passthroughTo, transpileTo } from '../transpile/transpile-service.js';
+import { bundleBrowserTo, needsTranspile, passthroughTo, transpileTo } from '../transpile/transpile-service.js';
 import { detectSystemNode } from '../runtimes/node/node-runtime.js';
 import { detectNvmNode } from '../runtimes/runtime-detection.js';
 import { resolveRuntimeChoice } from '../runtimes/runtime-resolver.js';
@@ -70,6 +70,13 @@ type RuntimeResolver = (runtimeId: RuntimeId, requestedVersion?: string) => Prom
 
 let systemNodeCache: Promise<{ exePath: string; version: string } | null> | null = null;
 let nvmCache: Promise<NvmInfo | null> | null = null;
+
+/** Browser pages have no Node module loader. Bundle only module-bearing source
+ * so ordinary script snippets (including the existing top-level `return`
+ * convenience) keep the browser lane's original evaluation semantics. */
+function needsBrowserBundle(source: string): boolean {
+  return /\brequire\s*\(\s*['"]|^\s*(?:import|export)\b/m.test(source);
+}
 
 function ensureSystemDetected(): Promise<{ exePath: string; version: string } | null> {
   systemNodeCache ??= detectSystemNode();
@@ -190,7 +197,12 @@ export class ExecutionManager {
     // capture parity for no benefit — documented decision.
     const forcePassthrough = req.lang === 'js';
     const shouldTranspile = !forcePassthrough && needsTranspile(req.relPath);
-    if (shouldTranspile) {
+    if (isBrowser && needsBrowserBundle(captured.code)) {
+      const result = await bundleBrowserTo(buildDir, root, req.relPath, captured.code);
+      if (!result.ok) return { ok: false, stage: 'transpile', errors: result.errors };
+      entryPath = result.outputPath;
+      mapPath = result.mapPath;
+    } else if (shouldTranspile) {
       const result = await transpileTo(buildDir, req.relPath, captured.code, isNode || isBrowser ? {} : { banner: prelude });
       if (!result.ok) return { ok: false, stage: 'transpile', errors: result.errors };
       entryPath = result.outputPath;

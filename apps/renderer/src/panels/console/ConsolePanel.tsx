@@ -279,6 +279,21 @@ function ConsoleValueRow({ entry }: { entry: InlineConsoleEntry }): React.JSX.El
   );
 }
 
+function ConsoleArgsTree({ values }: { values: readonly SerializedValue[] }): React.JSX.Element {
+  return (
+    <>
+      {values.map((value, index) => (
+        <div key={index} style={{ marginTop: values.length > 1 && index > 0 ? 6 : 0 }}>
+          {values.length > 1 && (
+            <div style={{ color: C.dim, fontSize: 10, margin: '0 0 2px 14px' }}>argument {index + 1}</div>
+          )}
+          <Tree node={value} />
+        </div>
+      ))}
+    </>
+  );
+}
+
 /* ── single console entry row (Chrome DevTools style) ────────────────── */
 
 function ConsoleEntryRow({
@@ -289,13 +304,14 @@ function ConsoleEntryRow({
   result: SerializedValue | null;
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false);
-  const primary = entry?.args?.find((arg) => isExpandable(arg)) ?? entry?.args?.[0] ?? result ?? null;
+  const values = entry?.args ?? (result ? [result] : []);
+  const primary = values.find((arg) => isExpandable(arg)) ?? values[0] ?? null;
   const table = entry?.level === 'table' && entry.args
     ? detectConsoleTable(entry.args)
     : primary && entry === null
       ? detectTable(primary)
       : null;
-  const hasExpand = isExpandable(primary) || table !== null;
+  const hasExpand = values.some((value) => isExpandable(value)) || table !== null;
 
   const isWarn = entry?.level === 'warn';
   const isError = entry?.level === 'error';
@@ -380,11 +396,11 @@ function ConsoleEntryRow({
       </div>
 
       {/* ── expanded tree ── */}
-      {expanded && primary && (
+      {expanded && values.length > 0 && (
         <div style={{ padding: '4px 8px 8px 20px', borderRadius: '0 0 2px 2px' }}>
           {table
             ? <TableView shape={table} />
-            : <Tree node={primary} />}
+            : <ConsoleArgsTree values={values} />}
         </div>
       )}
     </div>

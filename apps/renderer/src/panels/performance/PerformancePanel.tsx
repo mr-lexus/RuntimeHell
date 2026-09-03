@@ -1,10 +1,12 @@
-import { useEffect, useMemo } from 'react';
-import type { PerformanceCase, PerformanceRunResult, PerformanceTargetOption } from '@rh/protocol';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import type { PerformanceCase, PerformanceCaseResult, PerformanceRunResult, PerformanceTargetOption } from '@rh/protocol';
 import type { SelectionInfo } from '../../editor/selection-service';
 import { BarLoader, BlockLoader, Button, EmptyState, InstrumentFrame } from '../../ui/primitives';
 import { performanceTargetKey, usePerformance } from '../../state/performance';
+import { useUi } from '../../state/ui';
 
-interface ActiveFileLike { relPath: string; content: string }
+interface ActiveFileLike { id?: string; relPath: string; content: string; language: string }
 interface PerformancePanelProps { activeFile: ActiveFileLike | null; selection: SelectionInfo | null }
 
 function formatNs(value: number): string {
@@ -14,13 +16,27 @@ function formatNs(value: number): string {
   return `${value.toFixed(2)} ns`;
 }
 
+function caseLetter(index: number): string {
+  let value = index + 1;
+  let label = '';
+  while (value > 0) {
+    value -= 1;
+    label = String.fromCharCode(65 + (value % 26)) + label;
+    value = Math.floor(value / 26);
+  }
+  return label;
+}
+
 function makeCase(activeFile: ActiveFileLike, selection: SelectionInfo | null, index: number): PerformanceCase | null {
   const body = (selection?.text ?? activeFile.content).trim();
   if (!body) return null;
   const id = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `case-${Date.now()}-${index}`;
+  const lines = activeFile.content.split(/\r?\n/);
+  const lastLine = Math.max(1, lines.length);
+  const fileRange = { ...(activeFile.id ? { fileId: activeFile.id } : {}), relPath: activeFile.relPath, startLine: 1, startCol: 1, endLine: lastLine, endCol: (lines[lastLine - 1]?.length ?? 0) + 1 };
   return {
-    id, label: `Case ${String.fromCharCode(65 + (index % 26))}`, sourceLabel: activeFile.relPath, body, sourceSnapshot: body,
-    ...(selection ? { sourceRef: { relPath: activeFile.relPath, startLine: selection.startLine, startCol: selection.startCol, endLine: selection.endLine, endCol: selection.endCol } } : {})
+    id, label: `Case ${caseLetter(index)}`, sourceLabel: activeFile.relPath, body, mode: /\bawait\b/.test(body) ? 'async' : 'sync', sourceSnapshot: body,
+    sourceMode: selection ? 'selection' : 'file', sourceRef: selection ? { ...(activeFile.id ? { fileId: activeFile.id } : {}), relPath: activeFile.relPath, startLine: selection.startLine, startCol: selection.startCol, endLine: selection.endLine, endCol: selection.endCol } : fileRange
   };
 }
 
@@ -32,124 +48,240 @@ function exportJson(results: readonly PerformanceRunResult[], cases: readonly Pe
   anchor.click(); URL.revokeObjectURL(url);
 }
 
-function targetTitle(target: PerformanceTargetOption): string {
-  return `${target.label} · ${target.engineId ?? 'engine unknown'}`;
+function groupLabel(group: PerformanceRunResult): string {
+  return `${group.environment.runtimeId} ${group.environment.runtimeVersion} / ${group.profile.label ?? group.profile.id}`;
+}
+
+function caseResult(group: PerformanceRunResult, caseId: string): PerformanceCaseResult | undefined {
+  return group.results.find((item) => item.caseId === caseId);
+}
+
+function percentDelta(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '—';
+  return `${value > 0 ? '+' : ''}${value.toFixed(1)}%`;
+}
+
+interface ProfileMultiSelectProps {
+  caseLabel: string;
+  profiles: PerformanceTargetOption['profiles'];
+  selectedIds: readonly string[];
+  selectedLabels: readonly string[];
+  disabled: boolean;
+  onToggle: (profileId: string) => void;
+}
+
+function ProfileMultiSelect({ caseLabel, profiles, selectedIds, selectedLabels, disabled, onToggle }: ProfileMultiSelectProps): React.JSX.Element {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0, width: 250 });
+  const updatePosition = (): void => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const width = Math.max(rect.width, 250);
+    const margin = 8;
+    const left = Math.min(Math.max(margin, rect.left), Math.max(margin, window.innerWidth - width - margin));
+    const menuHeight = menuRef.current?.getBoundingClientRect().height ?? 280;
+    const below = rect.bottom + 4;
+    const top = below + menuHeight <= window.innerHeight - margin || rect.top < menuHeight + margin + 4
+      ? below
+      : Math.max(margin, rect.top - menuHeight - 4);
+    setPosition({ top, left, width });
+  };
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updatePosition();
+    const onViewportChange = (): void => updatePosition();
+    window.addEventListener('resize', onViewportChange);
+    window.addEventListener('scroll', onViewportChange, true);
+    return () => {
+      window.removeEventListener('resize', onViewportChange);
+      window.removeEventListener('scroll', onViewportChange, true);
+    };
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent): void => {
+      const target = event.target;
+      if (target instanceof Node && (triggerRef.current?.contains(target) || menuRef.current?.contains(target))) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent): void => { if (event.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+  const summary = selectedLabels.length ? `profiles · ${selectedLabels.length} selected` : 'select optimizer profiles';
+  return <>
+    <div className="rh-perf-case-profiles">
+      <button ref={triggerRef} type="button" className="rh-perf-profile-trigger" aria-label={`${caseLabel} optimizer profiles`} aria-expanded={open} disabled={disabled} title={selectedLabels.join(', ')} onClick={() => setOpen((value) => !value)}>{summary}</button>
+    </div>
+    {open && createPortal(<div ref={menuRef} className="rh-perf-profile-menu" role="listbox" aria-label={`${caseLabel} optimizer profiles`} aria-multiselectable="true" style={{ top: position.top, left: position.left, width: position.width }} onPointerDown={(event) => event.stopPropagation()}>
+      {profiles.filter((profile) => profile.available).map((profile) => <label key={profile.id} title={profile.description}>
+        <input type="checkbox" checked={selectedIds.includes(profile.id)} disabled={disabled} onChange={() => onToggle(profile.id)} />
+        <span>{profile.label}</span><small>{profile.classification}</small>
+      </label>)}
+    </div>, document.body)}
+  </>;
+}
+
+function PerformanceChart({ results, cases }: { results: readonly PerformanceRunResult[]; cases: readonly PerformanceCase[] }): React.JSX.Element | null {
+  const rows = results.flatMap((group) => cases.map((item, index) => {
+    const result = caseResult(group, item.id);
+    return result === undefined ? null : { group, item, result, index };
+  })).filter((item): item is { group: PerformanceRunResult; item: PerformanceCase; result: PerformanceCaseResult; index: number } => item !== null);
+  const max = Math.max(...rows.map((row) => row.result.metrics.medianNsPerOp), 0);
+  if (rows.length === 0 || max <= 0) return null;
+  return <section className="rh-perf-chart" aria-label="Median benchmark chart">
+    <div className="rh-perf-chart-head"><strong>MEDIAN TIME / OPERATION</strong><span>shorter bars are faster</span></div>
+    <div className="rh-perf-chart-legend">{cases.map((item, index) => <span key={item.id}><i className={`is-case-${index % 2}`} />{item.label}</span>)}</div>
+    <div className="rh-perf-chart-rows">
+      {rows.map((row) => {
+        const value = row.result.metrics.medianNsPerOp;
+        const width = Math.max(2, Math.min(100, (value / max) * 100));
+        return <div className="rh-perf-chart-row" key={`${row.group.groupId}:${row.item.id}`}>
+          <span className="rh-perf-chart-label" title={`${groupLabel(row.group)} · ${row.item.label}`}>{groupLabel(row.group)} · {row.item.label}</span>
+          <div className="rh-perf-chart-track"><span className={`is-case-${row.index % 2}`} style={{ width: `${width}%` }} /></div>
+          <strong>{formatNs(value)}</strong>
+        </div>;
+      })}
+    </div>
+  </section>;
 }
 
 export function PerformancePanel({ activeFile, selection }: PerformancePanelProps): React.JSX.Element {
   const state = usePerformance();
+  const files = useUi((current) => current.files);
+  const [baselineGroupId, setBaselineGroupId] = useState<string>('');
+  const [compactView, setCompactView] = useState<'cases' | 'results'>('cases');
   useEffect(() => { void usePerformance.getState().refreshCatalog(); }, []);
+  useEffect(() => {
+    if (!state.results.some((item) => item.groupId === baselineGroupId)) setBaselineGroupId(state.results[0]?.groupId ?? '');
+  }, [baselineGroupId, state.results]);
 
-  const selectedTargets = useMemo(() => (state.catalog?.targets ?? []).filter((target) => (state.selectedProfiles[performanceTargetKey(target)]?.length ?? 0) > 0), [state.catalog, state.selectedProfiles]);
-  const groupCount = selectedTargets.reduce((sum, target) => sum + (state.selectedProfiles[performanceTargetKey(target)]?.length ?? 0), 0);
-  const cellCount = groupCount * state.cases.length;
-  const workload = cellCount * state.measurement.samples * state.measurement.iterationsPerSample;
-  const canAdd = activeFile !== null && Boolean((selection?.text ?? activeFile.content).trim()) && state.cases.length < 12 && !state.running;
-  const progressPercent = state.totalGroups > 0 ? Math.min(100, Math.round((state.completedGroups / state.totalGroups) * 100)) : undefined;
+  const sourceText = (selection?.text ?? activeFile?.content ?? '').trim();
+  const canCapture = activeFile !== null && Boolean(sourceText) && !state.running;
+  const canAdd = canCapture;
+  const progressPercent = state.progressTotal > 0 ? Math.min(100, Math.round((state.progressCompleted / state.progressTotal) * 100)) : 0;
+  const baselineGroup = state.results.find((item) => item.groupId === baselineGroupId) ?? state.results[0];
+  const baselineCase = state.cases[0];
+  const fastest = useMemo(() => state.results.flatMap((group) => group.results.map((result) => ({ group, result }))).filter((item) => item.result.metrics.medianNsPerOp > 0).sort((a, b) => a.result.metrics.medianNsPerOp - b.result.metrics.medianNsPerOp)[0], [state.results]);
+  const slowest = useMemo(() => state.results.flatMap((group) => group.results.map((result) => ({ group, result }))).filter((item) => item.result.metrics.medianNsPerOp > 0).sort((a, b) => b.result.metrics.medianNsPerOp - a.result.metrics.medianNsPerOp)[0], [state.results]);
+  const spread = fastest && slowest ? ((slowest.result.metrics.medianNsPerOp / fastest.result.metrics.medianNsPerOp) - 1) * 100 : null;
 
   const addCase = (): void => {
     if (!activeFile) return;
     const item = makeCase(activeFile, selection, state.cases.length);
     if (item) state.addCase(item);
   };
-  const setSetup = (): void => {
-    if (!activeFile) return;
-    const value = (selection?.text ?? activeFile.content).trim();
-    if (value) state.setSetup(value);
-  };
 
-  return <div className="rh-perf">
-    <InstrumentFrame index="PERF" title="EXPERIMENT" metadata={`${state.cases.length} CASES / ${groupCount} GROUPS / ${cellCount} CELLS`} state={state.running ? 'focused' : 'active'} actions={<>
-      <Button onClick={setSetup} disabled={!canAdd}>set shared setup</Button>
-      <Button onClick={addCase} disabled={!canAdd}>add selection</Button>
-      <Button variant="primary" onClick={() => void state.run()} disabled={state.running || state.cases.length === 0 || groupCount === 0}>run experiment</Button>
-      {state.running && <Button variant="danger" onClick={() => void state.cancel()}>cancel</Button>}
-    </>}>
+  return <div className={`rh-perf is-${compactView}`}>
+    <div className="rh-perf-view-switch" role="tablist" aria-label="Performance sections">
+      <button type="button" role="tab" aria-selected={compactView === 'cases'} className={compactView === 'cases' ? 'is-active' : ''} onClick={() => setCompactView('cases')}>
+        cases <span>{state.cases.length}</span>
+      </button>
+      <button type="button" role="tab" aria-selected={compactView === 'results'} className={compactView === 'results' ? 'is-active' : ''} onClick={() => setCompactView('results')}>
+        results <span>{state.running ? 'running' : state.results.length}</span>
+      </button>
+    </div>
+    <InstrumentFrame className="rh-perf-cases-frame" index="PERF" title="CASES" showHeader={false} state={state.running ? 'focused' : 'active'}>
       <div className="rh-perf-builder">
         <section className="rh-perf-section">
-          <div className="rh-perf-section-title"><span>WHAT · CASES</span><span>{state.cases.length}/12</span></div>
-          {state.cases.length === 0 && <EmptyState title="Add benchmark cases" detail="Select code in the source editor. One-case experiments are supported." />}
+         <div className="rh-perf-section-title"><span>CASES</span><span className="rh-perf-section-actions"><span>{state.cases.length}</span><Button onClick={addCase} disabled={!canAdd}>{selection ? '+ selection' : '+ file'}</Button></span></div>
+          {state.cases.length === 0 && <EmptyState title="Add a code sample" detail="Add the active file or a selection. Add more cases to compare them." />}
           <div className="rh-perf-cases">
-            {state.cases.map((item, index) => <div className="rh-perf-case" key={item.id}>
-              <span className="rh-perf-case-index">{String.fromCharCode(65 + index)}</span>
-              <input aria-label={`Case ${index + 1} label`} value={item.label} disabled={state.running} onChange={(event) => state.renameCase(item.id, event.target.value)} />
-              <span className="rh-perf-case-source" title={item.body}>{item.sourceRef ? `${item.sourceRef.relPath}:${item.sourceRef.startLine}` : item.sourceLabel ?? 'snapshot'}</span>
-              <span className="rh-perf-case-code" title={item.body}>{item.body.replace(/\s+/g, ' ')}</span>
-              <Button onClick={() => state.removeCase(item.id)} disabled={state.running}>remove</Button>
-            </div>)}
-          </div>
-          <div className={`rh-perf-setup ${state.setup ? 'is-set' : ''}`}>
-            <span>SHARED SETUP</span>
-            <code title={state.setup}>{state.setup ? state.setup.replace(/\s+/g, ' ') : 'not set · setup is excluded from measurement'}</code>
-            {state.setup && <Button onClick={state.clearSetup} disabled={state.running}>clear</Button>}
-          </div>
-        </section>
-
-        <section className="rh-perf-section">
-          <div className="rh-perf-section-title"><span>WHERE × HOW · TARGETS / PROFILES</span><span>{groupCount} process groups</span></div>
-          {state.loadingCatalog && <div className="rh-loading-state"><BlockLoader label="probing installed runtimes and V8 flags" /><BarLoader width={20} /></div>}
-          {!state.loadingCatalog && (state.catalog?.targets.length ?? 0) === 0 && <EmptyState title="No benchmark targets" detail="Install a runtime in the Runtimes tool." />}
-          <div className="rh-perf-targets">
-            {(state.catalog?.targets ?? []).map((target) => {
-              const key = performanceTargetKey(target);
-              const selected = state.selectedProfiles[key] ?? [];
-              return <div className={`rh-perf-target ${selected.length ? 'is-selected' : ''} ${target.available ? '' : 'is-disabled'}`} key={key}>
-                <label className="rh-perf-target-head" title={target.reason ?? targetTitle(target)}>
-                  <input type="checkbox" checked={selected.length > 0} disabled={state.running || !target.available} onChange={() => state.toggleTarget(target)} />
-                  <strong>{target.label}</strong><span>{target.engineId ?? '—'}</span>
-                </label>
-                {target.reason && <div className="rh-perf-target-reason">{target.reason}</div>}
-                <div className="rh-perf-profiles">
-                  {target.profiles.map((profile) => <label key={profile.id} title={profile.description} className={profile.available ? '' : 'is-disabled'}>
-                    <input type="checkbox" checked={selected.includes(profile.id)} disabled={state.running || !target.available || !profile.available} onChange={() => state.toggleProfile(target, profile.id)} />
-                    <span>{profile.label}</span><small>{profile.classification}</small>
-                  </label>)}
-                </div>
-              </div>;
+            {state.cases.map((item, index) => {
+              const selectedTarget = item.target
+                ? state.catalog?.targets.find((candidate) => performanceTargetKey(candidate) === performanceTargetKey(item.target!))
+                : undefined;
+              const linkedFile = item.sourceRef === undefined ? undefined : files.find((file) => (item.sourceRef?.fileId !== undefined && file.id === item.sourceRef.fileId) || file.relPath === item.sourceRef?.relPath);
+              const selectedProfileIds = item.profileIds ?? ['natural'];
+              const selectedProfileLabels = selectedTarget?.profiles.filter((profile) => selectedProfileIds.includes(profile.id)).map((profile) => profile.label) ?? [];
+              return <article className={`rh-perf-case ${item.body.trim() ? '' : 'is-invalid'}`} key={item.id}>
+              <div className="rh-perf-case-head">
+                <span className="rh-perf-case-index">{caseLetter(index)}</span>
+                <input aria-label={`Case ${index + 1} label`} value={item.label} disabled={state.running} onChange={(event) => state.renameCase(item.id, event.target.value)} />
+                <select aria-label={`${item.label} execution mode`} value={item.mode} disabled={state.running} onChange={(event) => state.setCaseMode(item.id, event.target.value as PerformanceCase['mode'])}>
+                  <option value="sync">sync</option><option value="async">async / await</option>
+                </select>
+                <Button className="rh-perf-icon-button" aria-label={`Clone ${item.label}`} title="Clone case" onClick={() => state.duplicateCase(item.id)} disabled={state.running}>⧉</Button>
+                <Button className="rh-perf-icon-button" aria-label={`Remove ${item.label}`} title="Remove case" onClick={() => state.removeCase(item.id)} disabled={state.running}>×</Button>
+              </div>
+              <div className="rh-perf-case-runtime">
+                <label>runtime<select aria-label={`${item.label} runtime`} value={selectedTarget ? performanceTargetKey(selectedTarget) : ''} disabled={state.running || state.loadingCatalog} onChange={(event) => {
+                  const target = state.catalog?.targets.find((candidate) => performanceTargetKey(candidate) === event.target.value);
+                  state.setCaseTarget(item.id, target);
+                }}>
+                  <option value="">select runtime…</option>
+                  {(state.catalog?.targets ?? []).filter((target) => target.available).map((target) => <option key={performanceTargetKey(target)} value={performanceTargetKey(target)}>{target.label} · {target.engineId ?? 'engine'}</option>)}
+                </select></label>
+                {selectedTarget && <ProfileMultiSelect caseLabel={item.label} profiles={selectedTarget.profiles} selectedIds={selectedProfileIds} selectedLabels={selectedProfileLabels} disabled={state.running} onToggle={(profileId) => state.toggleCaseProfile(item.id, profileId)} />}
+                {!selectedTarget && !state.loadingCatalog && <small className="rh-perf-case-warning">Choose a runtime for this case.</small>}
+              </div>
+              {item.sourceRef ? <div className="rh-perf-case-reference" title={item.sourceRef.relPath}>
+                <span>{item.sourceMode === 'selection' ? `selection · ${linkedFile ? 'live' : 'snapshot'}` : `file · ${linkedFile ? 'live' : 'snapshot'}`}</span>
+                <code>{item.sourceRef.relPath}</code>
+                {item.sourceMode === 'selection' && <small>L{item.sourceRef.startLine}:{item.sourceRef.startCol}–L{item.sourceRef.endLine}:{item.sourceRef.endCol}</small>}
+              </div> : <div className="rh-perf-case-reference is-missing"><span>source</span><code>link unavailable</code></div>}
+              {!item.body.trim() && <small className="rh-perf-case-warning">Case code cannot be empty.</small>}
+            </article>;
             })}
           </div>
         </section>
 
-        <section className="rh-perf-section rh-perf-settings">
-          <div className="rh-perf-section-title"><span>MEASUREMENT</span><span>{workload.toLocaleString()} planned operations</span></div>
-          <div className="rh-perf-presets">
-            {(['quick', 'reliable', 'cold', 'steady'] as const).map((preset) => <Button key={preset} onClick={() => state.applyPreset(preset)} disabled={state.running}>{preset}</Button>)}
-          </div>
-          <label>samples<input type="number" min={3} max={200} value={state.measurement.samples} disabled={state.running} onChange={(event) => state.setMeasurement({ samples: Math.max(3, Math.min(200, Number(event.target.value) || 3)) })} /></label>
-          <label>warmup rounds<input type="number" min={0} max={10_000} value={state.measurement.warmupRounds} disabled={state.running} onChange={(event) => state.setMeasurement({ warmupRounds: Math.max(0, Math.min(10_000, Number(event.target.value) || 0)) })} /></label>
-          <label>cycles / sample<input type="number" min={1} max={10_000_000} value={state.measurement.iterationsPerSample} disabled={state.running} onChange={(event) => state.setMeasurement({ iterationsPerSample: Math.max(1, Math.min(10_000_000, Number(event.target.value) || 1)) })} /></label>
-          <label>timeout ms<input type="number" min={1_000} max={600_000} value={state.measurement.timeoutMs} disabled={state.running} onChange={(event) => state.setMeasurement({ timeoutMs: Math.max(1_000, Math.min(600_000, Number(event.target.value) || 1_000)) })} /></label>
-          <span className="rh-perf-isolation">isolation: fresh process per target/profile</span>
-        </section>
+        {state.loadingCatalog && <div className="rh-loading-state"><BlockLoader label="probing installed runtimes and engine flags" /><BarLoader width={20} /></div>}
+        {!state.loadingCatalog && (state.catalog?.targets.length ?? 0) === 0 && <EmptyState title="No benchmark targets" detail="Install a runtime in the Runtimes tool." />}
       </div>
     </InstrumentFrame>
 
-    <InstrumentFrame index="RUN" title="RESULT MATRIX" metadata={state.running ? `${state.completedGroups}/${state.totalGroups} · ${state.progress}` : state.progress} state={Object.keys(state.errors).length ? 'error' : state.running ? 'focused' : 'idle'} actions={<>
+    <InstrumentFrame className="rh-perf-results-frame" index="RUN" title="RESULT MATRIX" metadata={state.running ? `${state.completedGroups}/${state.totalGroups} successful · ${state.progress}` : state.progress} state={Object.keys(state.errors).length ? 'error' : state.running ? 'focused' : 'idle'} actions={<>
       {state.results.length > 0 && <Button onClick={() => exportJson(state.results, state.cases)} disabled={state.running}>export JSON</Button>}
       {(state.results.length > 0 || Object.keys(state.errors).length > 0) && <Button onClick={state.clearResults} disabled={state.running}>clear results</Button>}
     </>}>
       {Object.entries(state.errors).map(([key, message]) => <div className="rh-perf-error" key={key}><strong>{key}</strong><span>{message}</span></div>)}
       {state.running && <div className="rh-perf-progress" role="status" aria-live="polite">
-        <div className="rh-perf-progress-heading"><BlockLoader label={state.progress} /><span>{state.completedGroups}/{state.totalGroups} groups</span></div>
-        <BarLoader progress={progressPercent} width={32} label={`${progressPercent ?? 0}%`} />
+        <div className="rh-perf-progress-heading"><BlockLoader label={state.progress} /><span>{state.progressPhase ?? 'starting'} · {state.completedGroups}/{state.totalGroups} successful groups</span></div>
+        <div className="rh-perf-progress-track" role="progressbar" aria-label="Performance experiment progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div>
+        <div className="rh-perf-progress-meta"><span>{state.progressCompleted.toLocaleString()} / {state.progressTotal.toLocaleString()} work units</span><strong>{progressPercent}%</strong></div>
       </div>}
-      {state.results.length === 0 && Object.keys(state.errors).length === 0 && <div className="rh-perf-muted">No measurements yet. Each row will represent one target/profile process.</div>}
-      {state.results.length > 0 && <div className="rh-perf-matrix-wrap"><table className="rh-perf-matrix">
-        <thead><tr><th>target / profile</th>{state.cases.map((item) => <th key={item.id}>{item.label}<small>median ns/op</small></th>)}</tr></thead>
-        <tbody>{state.results.map((group) => <tr key={group.groupId}>
-          <th><strong>{group.environment.runtimeId} {group.environment.runtimeVersion}</strong><span>{group.profile.label ?? group.profile.id}</span><small>{group.environment.engineId} {group.environment.engineVersion ?? '—'}</small></th>
-          {state.cases.map((item) => {
-            const result = group.results.find((candidate) => candidate.caseId === item.id);
-            const comparison = group.comparisons.find((candidate) => candidate.candidateCaseId === item.id);
-            return <td key={item.id} className={comparison?.significance === 'candidate-faster' ? 'is-faster' : comparison?.significance === 'baseline-faster' ? 'is-slower' : ''}>
-              {result ? <><strong>{formatNs(result.metrics.medianNsPerOp)}</strong><span>{result.metrics.throughput.toFixed(0)} ops/s</span>{comparison && <small>{comparison.percentChange > 0 ? '+' : ''}{comparison.percentChange.toFixed(1)}% · {comparison.significance.replaceAll('-', ' ')}</small>}{result.warnings.map((warning) => <small className="is-warning" title={warning.code} key={warning.code}>⚠ {warning.message}</small>)}</> : '—'}
-            </td>;
-          })}
-        </tr>)}</tbody>
-      </table></div>}
-      {state.results.map((group) => <details className="rh-perf-details" key={`${group.groupId}:details`}><summary>{group.environment.runtimeId} {group.environment.runtimeVersion} / {group.profile.label ?? group.profile.id} · raw details</summary><div><code>{group.environment.executable} {group.environment.flags.join(' ')}</code>{group.results.map((item) => <span key={item.caseId}>{item.label}: mean {formatNs(item.metrics.meanNsPerOp)}, p95 {formatNs(item.metrics.p95NsPerOp)}, p99 {formatNs(item.metrics.p99NsPerOp)}, σ {formatNs(item.metrics.stddevNsPerOp)}, {item.metrics.sampleCount} samples</span>)}</div></details>)}
+      {state.results.length === 0 && Object.keys(state.errors).length === 0 && <div className="rh-perf-muted">No measurements yet. Each row will represent one isolated runtime/profile process.</div>}
+      {state.results.length > 0 && <div className="rh-perf-results-scroll">
+        <div className="rh-perf-insights" aria-label="Performance summary">
+          <div><small>FASTEST CELL</small><strong>{fastest ? formatNs(fastest.result.metrics.medianNsPerOp) : '—'}</strong><span>{fastest ? `${groupLabel(fastest.group)} · ${fastest.result.label}` : 'Run an experiment first'}</span></div>
+          <div><small>SPREAD</small><strong>{spread === null ? '—' : percentDelta(spread)}</strong><span>{slowest && fastest ? `${formatNs(slowest.result.metrics.medianNsPerOp)} slowest → ${formatNs(fastest.result.metrics.medianNsPerOp)} fastest` : 'Across completed cells'}</span></div>
+          <div><small>COMPLETED</small><strong>{state.results.length}/{state.totalGroups || state.results.length}</strong><span>{state.cases.length > 1 ? `${state.cases.length} cases · compared with ${baselineCase?.label ?? 'Code A'}` : 'runtime/profile comparison'}</span></div>
+        </div>
+        <PerformanceChart results={state.results} cases={state.cases} />
+        <div className="rh-perf-compare-controls">
+          <strong>COMPARE</strong>
+           <span>{state.cases.length > 1 ? `${state.cases.length} cases · each vs ${baselineCase?.label ?? 'Code A'}` : 'same code across runtimes / profiles'}</span>
+          {state.cases.length === 1 && <label>baseline runtime<select value={baselineGroup?.groupId ?? ''} onChange={(event) => setBaselineGroupId(event.target.value)}>{state.results.map((group) => <option value={group.groupId} key={group.groupId}>{groupLabel(group)}</option>)}</select></label>}
+          <span>Negative delta is faster; positive delta is slower.</span>
+        </div>
+        <div className="rh-perf-matrix-wrap"><table className="rh-perf-matrix">
+           <thead><tr><th>runtime / profile</th>{state.cases.map((item, index) => <th key={item.id}>{item.label}<small>{index > 0 ? `delta vs ${baselineCase?.label ?? 'Code A'}` : 'median time / operation'}</small></th>)}</tr></thead>
+          <tbody>{state.results.map((group) => <tr key={group.groupId} className={state.cases.length === 1 && group.groupId === baselineGroup?.groupId ? 'is-baseline-row' : ''}>
+            <th><strong>{group.environment.runtimeId} {group.environment.runtimeVersion}</strong><span>{group.profile.label ?? group.profile.id}</span><small>{group.environment.engineId} {group.environment.engineVersion ?? '—'} · GC {group.environment.gcMode}</small></th>
+            {state.cases.map((item, index) => {
+              const result = caseResult(group, item.id);
+              const baseline = state.cases.length > 1 ? caseResult(group, baselineCase?.id ?? '') : caseResult(baselineGroup ?? group, item.id);
+              const isBaseline = state.cases.length > 1 ? index === 0 : group.groupId === baselineGroup?.groupId;
+              const delta = result && baseline && baseline.metrics.medianNsPerOp > 0 && !isBaseline ? ((result.metrics.medianNsPerOp / baseline.metrics.medianNsPerOp) - 1) * 100 : null;
+              const paired = state.cases.length > 1 && index > 0 ? group.comparisons.find((candidate) => candidate.candidateCaseId === item.id) : undefined;
+              return <td key={item.id} className={isBaseline ? 'is-baseline' : delta !== null && delta < 0 ? 'is-faster' : delta !== null && delta > 0 ? 'is-slower' : ''}>
+                {result ? <><strong>{formatNs(result.metrics.medianNsPerOp)}</strong><span>{result.metrics.throughput.toFixed(0)} ops/s</span>{isBaseline ? <small>baseline</small> : delta !== null && <small>{percentDelta(delta)}{paired ? ` · ${paired.significance.replaceAll('-', ' ')}` : ' · median ratio'}</small>}{result.warnings.map((warning) => <small className="is-warning" title={warning.code} key={warning.code}>⚠ {warning.message}</small>)}</> : '—'}
+              </td>;
+            })}
+          </tr>)}</tbody>
+        </table></div>
+        {state.results.map((group) => <details className="rh-perf-details" key={`${group.groupId}:details`}><summary>{groupLabel(group)} · diagnostics</summary><div><code>{group.environment.executable} {group.environment.flags.join(' ')}</code><span>GC policy: {group.environment.gcMode}</span>{group.results.map((item) => <span key={item.caseId}>{item.label}: mean {formatNs(item.metrics.meanNsPerOp)}, p95 {formatNs(item.metrics.p95NsPerOp)}, p99 {formatNs(item.metrics.p99NsPerOp)}, σ {formatNs(item.metrics.stddevNsPerOp)}, {item.metrics.sampleCount} samples</span>)}</div></details>)}
+      </div>}
     </InstrumentFrame>
 
-    <div className="rh-perf-footer"><Button onClick={state.clearExperiment} disabled={state.running}>reset experiment</Button><span>Definitions and the last result matrix persist across tool switches and app restarts.</span></div>
   </div>;
 }

@@ -6,6 +6,7 @@ export interface InstrumentFrameProps extends HTMLAttributes<HTMLElement> {
   index: string;
   title: string;
   metadata?: ReactNode;
+  titleSuffix?: ReactNode;
   actions?: ReactNode;
   showHeader?: boolean;
   state?: FrameState;
@@ -14,13 +15,14 @@ export interface InstrumentFrameProps extends HTMLAttributes<HTMLElement> {
 }
 
 /** Shared Runtime Hell frame: the geometry carries state, not a card fill. */
-export function InstrumentFrame({ index, title, metadata, actions, showHeader = true, state = 'idle', connectedEdges = 'all', readout, className = '', children, ...props }: InstrumentFrameProps): React.JSX.Element {
+export function InstrumentFrame({ index, title, titleSuffix, metadata, actions, showHeader = true, state = 'idle', connectedEdges = 'all', readout, className = '', children, ...props }: InstrumentFrameProps): React.JSX.Element {
   const id = useId();
   return (
     <section className={`rh-instrument-frame rh-frame-state-${state} rh-frame-connect-${connectedEdges} ${className}`} aria-labelledby={showHeader ? `${id}-title` : undefined} {...props}>
       {showHeader && <header>
           <span className="rh-frame-index">{index}</span>
           <span className="rh-frame-title" id={`${id}-title`}>{title}</span>
+          {titleSuffix && <div className="rh-frame-title-suffix">{titleSuffix}</div>}
           <span className="rh-frame-rule" aria-hidden="true" />
           {metadata && <span className="rh-frame-meta">{metadata}</span>}
           {actions && <div className="rh-frame-actions">{actions}</div>}

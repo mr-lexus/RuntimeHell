@@ -4,7 +4,7 @@
  * through unchanged. Transform failures return structured diagnostics; the
  * runner is never invoked for broken sources.
  */
-import { transform, type TransformFailure } from 'esbuild';
+import { build, transform, type BuildFailure, type TransformFailure } from 'esbuild';
 import { dirname, join } from 'node:path';
 import { promises as fs } from 'node:fs';
 import { originalPositionFor, TraceMap, type TraceMap as TraceMapType } from '@jridgewell/trace-mapping';
@@ -21,6 +21,57 @@ export interface TranspileFailure {
 }
 
 export type TranspileResult = TranspileSuccess | TranspileFailure;
+
+/**
+ * Browser bundles are written to the same build directory as regular entries.
+ * The browser lane has no Node module loader, so workspace imports and
+ * CommonJS `require('package')` calls must be resolved before the source is
+ * handed to Chromium. Keeping this beside the regular transpiler makes the
+ * boundary explicit and gives the caller structured esbuild diagnostics.
+ */
+export async function bundleBrowserTo(
+  buildDir: string,
+  workspaceDir: string,
+  relPath: string,
+  source: string
+): Promise<TranspileResult> {
+  const outName = outputNameFor(relPath);
+  const outputPath = join(buildDir, outName);
+  const resolveDir = join(workspaceDir, dirname(relPath));
+  const loader = relPath.endsWith('.tsx') ? 'tsx' : relPath.endsWith('.ts') || relPath.endsWith('.mts') ? 'ts' : 'js';
+
+  try {
+    const result = await build({
+      stdin: { contents: source, loader, sourcefile: relPath, resolveDir },
+      bundle: true,
+      write: false,
+      format: 'iife',
+      platform: 'browser',
+      target: 'es2020',
+      treeShaking: false,
+      sourcemap: false,
+      logLevel: 'silent'
+    });
+    const output = result.outputFiles[0];
+    if (output === undefined) throw new Error('esbuild returned no browser bundle');
+    await fs.mkdir(dirname(outputPath), { recursive: true });
+    await fs.writeFile(outputPath, output.text, 'utf8');
+    return { ok: true, outputPath, mapPath: null };
+  } catch (err) {
+    const failure = err as BuildFailure & { errors?: { text: string; location?: { line?: number; column?: number } }[] };
+    if (failure.errors) {
+      return {
+        ok: false,
+        errors: failure.errors.map((e) => ({
+          text: e.text,
+          line: e.location?.line,
+          column: e.location?.column
+        }))
+      };
+    }
+    return { ok: false, errors: [{ text: err instanceof Error ? err.message : String(err) }] };
+  }
+}
 
 export function needsTranspile(relPath: string): boolean {
   return relPath.endsWith('.ts') || relPath.endsWith('.tsx') || relPath.endsWith('.mts');

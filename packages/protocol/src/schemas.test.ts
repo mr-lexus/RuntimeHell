@@ -7,6 +7,7 @@ import {
   IPC,
   PingRequestSchema,
   PingResponseSchema,
+  PerformanceStartRequestSchema,
   RunEventSchema,
   RunRequestSchema,
   RunResultSchema,
@@ -111,6 +112,20 @@ describe('analysis contract', () => {
     };
     expect(AnalysisResultSchema.parse(res)).toEqual(res);
     expect(() => AnalysisResultSchema.parse({ ...res, engine: 'spidermonkeyX' })).toThrow();
+  });
+});
+
+describe('performance contract', () => {
+  it('migrates legacy cases and measurement settings to explicit execution and GC modes', () => {
+    const request = PerformanceStartRequestSchema.parse({
+      requestId: 'perf-12345678', workspaceId: 'ws1', name: 'comparison', setup: '',
+      cases: [{ id: 'case-a', label: 'A', body: 'return 1;' }],
+      targets: [{ target: { source: 'runtime', id: 'node' }, profiles: [{ id: 'natural' }] }],
+      measurement: { samples: 3, warmupRounds: 0, iterationsPerSample: 1, timeoutMs: 1_000 },
+      isolation: { mode: 'target-profile' }
+    });
+    expect(request.cases[0]?.mode).toBe('sync');
+    expect(request.measurement.gcMode).toBe('runtime');
   });
 });
 

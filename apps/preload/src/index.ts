@@ -61,6 +61,7 @@ import {
   type PerformanceStartResponse,
   type PerformanceCancelResponse
 } from '@rh/protocol';
+import { isLegacyPerformanceContractError, toLegacyPerformanceStartRequest } from './performance-compat.js';
 
 const api = {
   ping: async (sentAt: number): Promise<unknown> => {
@@ -237,7 +238,15 @@ const api = {
     return PerformanceCatalogResponseSchema.parse(await ipcRenderer.invoke(IPC.performanceCatalog, {}));
   },
   performanceStart: async (req: unknown): Promise<PerformanceStartResponse> => {
-    return PerformanceStartResponseSchema.parse(await ipcRenderer.invoke(IPC.performanceStart, PerformanceStartRequestSchema.parse(req)));
+    const request = PerformanceStartRequestSchema.parse(req);
+    try {
+      return PerformanceStartResponseSchema.parse(await ipcRenderer.invoke(IPC.performanceStart, request));
+    } catch (error) {
+      if (!isLegacyPerformanceContractError(error)) throw error;
+      return PerformanceStartResponseSchema.parse(
+        await ipcRenderer.invoke(IPC.performanceStart, toLegacyPerformanceStartRequest(request))
+      );
+    }
   },
   performanceCancel: async (requestId: string): Promise<PerformanceCancelResponse> => {
     return PerformanceCancelResponseSchema.parse(await ipcRenderer.invoke(IPC.performanceCancel, PerformanceCancelRequestSchema.parse({ requestId })));

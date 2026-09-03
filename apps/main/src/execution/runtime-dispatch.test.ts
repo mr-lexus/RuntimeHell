@@ -4,6 +4,7 @@
  * transport, prelude injection, and runtime-naming error messages. All
  * against a FAKE runner; no real processes spawn here.
  */
+import { promises as fs } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -144,6 +145,32 @@ describe('ExecutionManager runtime dispatch', () => {
     const entry = await readFile(join(workspaceRoot('default'), '.rhbuild', 'entry.cjs'), 'utf8');
     expect(entry).not.toContain('Runtime-agnostic result-capture prelude');
     expect(entry).toContain('__rh.console');
+  });
+
+  it('bundles a workspace CommonJS dependency before sending browser code to Chromium', async () => {
+    const resolver = vi.fn<Resolver>(async () => BROWSER);
+    const runner = new FakeRunner();
+    const manager = new ExecutionManager({
+      resolveRuntime: resolver,
+      createRunner: () => new FakeRunner() as unknown as ProcessRunner,
+      createBrowserRunner: () => runner as unknown as BrowserRuntimeRunner,
+      emit: () => undefined
+    });
+    const workspaceId = `browser-package-${Date.now()}`;
+    const root = workspaceRoot(workspaceId);
+    const packageDir = join(root, 'node_modules', 'fixture-equal');
+    await fs.mkdir(packageDir, { recursive: true });
+    await fs.writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: 'fixture-equal', main: 'index.js' }), 'utf8');
+    await fs.writeFile(join(packageDir, 'index.js'), 'module.exports = (a, b) => JSON.stringify(a) === JSON.stringify(b);', 'utf8');
+    try {
+      const response = await manager.start({ ...REQ, workspaceId, relPath: 'app.js', content: "var equal = require('fixture-equal'); console.log(equal({ foo: 'bar' }, { foo: 'bar' }));", runtimeId: 'browser' });
+      expect(response.ok).toBe(true);
+      const entry = await readFile(join(root, '.rhbuild', 'app.js'), 'utf8');
+      expect(entry).not.toContain("require('fixture-equal')");
+      expect(entry).toContain('module.exports');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   it('prepends the capture prelude to the transpiled entry for deno', async () => {

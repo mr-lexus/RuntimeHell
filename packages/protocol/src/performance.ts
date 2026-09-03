@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RelPathSchema } from './workspace.js';
 
 export const PerformanceTargetRefSchema = z.object({
   source: z.enum(['runtime', 'engine']), id: z.string().min(1),
@@ -16,10 +17,17 @@ export type PerformanceTargetSelection = z.infer<typeof PerformanceTargetSelecti
 export const PerformanceCaseSchema = z.object({
   id: z.string().min(1), label: z.string().min(1).max(80),
   sourceLabel: z.string().min(1).max(260).optional(), body: z.string().min(1),
+  mode: z.enum(['sync', 'async']).default('sync'),
+  // Cases created from the editor keep a live source reference. `body` is
+  // retained as a validated fallback snapshot for old experiments and when a
+  // referenced tab is no longer open.
+  sourceMode: z.enum(['file', 'selection']).optional(),
   sourceRef: z.object({
-    relPath: z.string().min(1), startLine: z.number().int().positive(), startCol: z.number().int().positive(),
+    fileId: z.string().min(1).optional(), relPath: z.string().min(1), startLine: z.number().int().positive(), startCol: z.number().int().positive(),
     endLine: z.number().int().positive(), endCol: z.number().int().positive()
-  }).strict().optional(), sourceSnapshot: z.string().optional()
+  }).strict().optional(), sourceSnapshot: z.string().optional(),
+  target: PerformanceTargetRefSchema.optional(),
+  profileIds: z.array(z.string().min(1)).min(1).max(8).optional()
 }).strict();
 export type PerformanceCase = z.infer<typeof PerformanceCaseSchema>;
 
@@ -27,7 +35,8 @@ export const PerformanceMeasurementSchema = z.object({
   samples: z.number().int().min(3).max(200).default(20),
   warmupRounds: z.number().int().min(0).max(10_000).default(5),
   iterationsPerSample: z.number().int().min(1).max(10_000_000).default(1_000),
-  timeoutMs: z.number().int().min(1_000).max(600_000).default(120_000)
+  timeoutMs: z.number().int().min(1_000).max(600_000).default(120_000),
+  gcMode: z.enum(['runtime', 'before-group', 'before-sample']).default('runtime')
 }).strict();
 export type PerformanceMeasurement = z.infer<typeof PerformanceMeasurementSchema>;
 export const PerformanceIsolationSchema = z.object({ mode: z.literal('target-profile').default('target-profile') }).strict();
@@ -35,9 +44,11 @@ export type PerformanceIsolation = z.infer<typeof PerformanceIsolationSchema>;
 
 export const PerformanceStartRequestSchema = z.object({
   requestId: z.string().min(8), workspaceId: z.string().min(1),
-  name: z.string().min(1).max(120).default('Untitled experiment'), setup: z.string().max(200_000).default(''),
-  cases: z.array(PerformanceCaseSchema).min(1).max(12), targets: z.array(PerformanceTargetSelectionSchema).min(1).max(12),
-  measurement: PerformanceMeasurementSchema.default({ samples: 20, warmupRounds: 5, iterationsPerSample: 1_000, timeoutMs: 120_000 }),
+  name: z.string().min(1).max(120).default('Untitled experiment'), setup: z.string().max(200_000).default(''), setupSourceLabel: RelPathSchema.optional(),
+  // The editor can contribute any number of linked cases; execution remains
+  // bounded by the user's selected runtimes/profiles and measurement settings.
+  cases: z.array(PerformanceCaseSchema).min(1), targets: z.array(PerformanceTargetSelectionSchema).min(1).max(12),
+  measurement: PerformanceMeasurementSchema.default({ samples: 20, warmupRounds: 5, iterationsPerSample: 1_000, timeoutMs: 120_000, gcMode: 'runtime' }),
   isolation: PerformanceIsolationSchema.default({ mode: 'target-profile' })
 }).strict();
 export type PerformanceStartRequest = z.infer<typeof PerformanceStartRequestSchema>;
@@ -72,7 +83,7 @@ export type PerformanceComparison = z.infer<typeof PerformanceComparisonSchema>;
 export const PerformanceEnvironmentSchema = z.object({
   platform: z.string(), arch: z.string(), cpu: z.string(), logicalCores: z.number().int().positive(),
   runtimeId: z.string(), runtimeVersion: z.string(), engineId: z.string().optional(), engineVersion: z.string().optional(),
-  executable: z.string(), flags: z.array(z.string())
+  executable: z.string(), flags: z.array(z.string()), gcMode: z.enum(['runtime', 'before-group', 'before-sample']).default('runtime')
 }).strict();
 export const PerformanceWarningSchema = z.object({ code: z.string(), message: z.string() }).strict();
 export const PerformanceCaseResultSchema = z.object({
@@ -102,7 +113,7 @@ export const PerformanceCatalogResponseSchema = z.object({ targets: z.array(Perf
 export type PerformanceCatalogResponse = z.infer<typeof PerformanceCatalogResponseSchema>;
 
 export const PerformanceEventSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('progress'), requestId: z.string(), groupId: z.string().optional(), phase: z.enum(['resolving', 'warmup', 'measurement']), completed: z.number().int().nonnegative(), total: z.number().int().positive(), message: z.string() }).strict(),
+  z.object({ type: z.literal('progress'), requestId: z.string(), groupId: z.string().optional(), phase: z.enum(['resolving', 'preparing', 'warmup', 'measurement']), completed: z.number().int().nonnegative(), total: z.number().int().positive(), message: z.string() }).strict(),
   z.object({ type: z.literal('result'), requestId: z.string(), result: PerformanceRunResultSchema }).strict(),
   z.object({ type: z.literal('cell-error'), requestId: z.string(), groupId: z.string(), target: PerformanceTargetRefSchema, profile: PerformanceProfileRefSchema, message: z.string(), partialResults: z.array(PerformanceCaseResultSchema).default([]) }).strict(),
   z.object({ type: z.literal('done'), requestId: z.string(), status: z.enum(['completed', 'partial', 'cancelled', 'failed']), completedGroups: z.number().int().nonnegative(), totalGroups: z.number().int().nonnegative() }).strict()

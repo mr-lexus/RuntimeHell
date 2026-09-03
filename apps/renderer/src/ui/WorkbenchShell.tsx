@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { AppSettings, RuntimeId } from '@rh/protocol';
+import type { AppSettings, PerformanceCase, RuntimeId } from '@rh/protocol';
 import type { DrawerTab } from '../state/ui';
 import { CodeEditor } from '../editor/CodeEditor';
 import { LineOutputColumn } from '../panels/console/LineOutputColumn';
@@ -16,8 +16,30 @@ import type { AtaStatus } from '../editor/ata';
 import type { SelectionInfo } from '../editor/selection-service';
 import type { AnalyzeType } from '../editor/CodeEditor';
 import type { VimMode } from '../editor/vim-mode';
+import { usePerformance } from '../state/performance';
 
 interface FileLike { id: string; relPath: string; language: string; content: string; dirty: boolean; }
+
+function livePerformanceCases(cases: readonly PerformanceCase[], files: readonly FileLike[]): PerformanceCase[] {
+  return cases.map((item) => {
+    const ref = item.sourceRef;
+    if (ref === undefined) return item;
+    const file = files.find((candidate) => (ref.fileId !== undefined && candidate.id === ref.fileId) || candidate.relPath === ref.relPath);
+    if (file === undefined || item.sourceMode !== 'selection') return file === undefined ? item : { ...item, body: file.content.trim(), sourceSnapshot: undefined };
+    const lines = file.content.split(/\r?\n/);
+    const start = Math.max(0, ref.startLine - 1);
+    const end = Math.min(lines.length - 1, ref.endLine - 1);
+    if (start > end || lines[start] === undefined) return item;
+    const selected = lines.slice(start, end + 1);
+    if (selected.length === 1) selected[0] = (selected[0] ?? '').slice(Math.max(0, ref.startCol - 1), Math.max(0, ref.endCol - 1));
+    else {
+      selected[0] = (selected[0] ?? '').slice(Math.max(0, ref.startCol - 1));
+      const last = selected.length - 1;
+      selected[last] = (selected[last] ?? '').slice(0, Math.max(0, ref.endCol - 1));
+    }
+    return { ...item, body: selected.join('\n').trim() || item.body, sourceSnapshot: undefined };
+  });
+}
 
 export interface WorkbenchShellProps {
   settings: AppSettings;
@@ -84,6 +106,25 @@ const drawerItems: readonly { id: DrawerTab; label: string }[] = [
   { id: 'runtimes', label: 'runtimes' },
   { id: 'performance', label: 'performance' }
 ];
+
+function PerformanceHeaderControls({ files }: { files: readonly FileLike[] }): React.JSX.Element {
+  const state = usePerformance();
+  const setNumber = (key: 'samples' | 'iterationsPerSample', value: string): void => {
+    const limits = key === 'samples' ? { min: 3, max: 200 } : { min: 1, max: 10_000_000 };
+    state.setMeasurement({ [key]: Math.max(limits.min, Math.min(limits.max, Number(value) || limits.min)) });
+  };
+  return <div className="rh-perf-header-controls" aria-label="Performance measurement controls">
+    <div className="rh-perf-header-presets">{(['quick', 'reliable'] as const).map((preset) => <Button key={preset} title={preset === 'quick' ? '5 samples · 250 cycles' : '30 samples · 1,000 cycles'} onClick={() => state.applyPreset(preset)} disabled={state.running}>{preset}</Button>)}</div>
+    <label title="Number of measured samples">samples<input type="number" min={3} max={200} value={state.measurement.samples} disabled={state.running} onChange={(event) => setNumber('samples', event.target.value)} /></label>
+    <label title="Iterations per sample">cycles<input type="number" min={1} max={10_000_000} value={state.measurement.iterationsPerSample} disabled={state.running} onChange={(event) => setNumber('iterationsPerSample', event.target.value)} /></label>
+    <details className="rh-perf-header-advanced"><summary>advanced</summary><div>
+      <label>warmup<input type="number" min={0} max={10_000} value={state.measurement.warmupRounds} disabled={state.running} onChange={(event) => state.setMeasurement({ warmupRounds: Math.max(0, Math.min(10_000, Number(event.target.value) || 0)) })} /></label>
+      <label>timeout<input type="number" min={1_000} max={600_000} value={state.measurement.timeoutMs} disabled={state.running} onChange={(event) => state.setMeasurement({ timeoutMs: Math.max(1_000, Math.min(600_000, Number(event.target.value) || 1_000)) })} /></label>
+      <label>GC<select value={state.measurement.gcMode} disabled={state.running} onChange={(event) => state.setMeasurement({ gcMode: event.target.value as typeof state.measurement.gcMode })}><option value="runtime">runtime</option><option value="before-group">before group</option><option value="before-sample">before sample</option></select></label>
+    </div></details>
+    {state.running ? <Button variant="danger" onClick={() => void state.cancel()}>cancel</Button> : <Button variant="primary" onClick={() => void state.run(livePerformanceCases(state.cases, files))} disabled={state.cases.length === 0}>run</Button>}
+  </div>;
+}
 
 const VIM_HELP_ITEMS: readonly { keys: string; action: string }[] = [
   { keys: 'h j k l', action: 'move left / down / up / right' },
@@ -396,7 +437,10 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
           </>}
           {!props.settingsViewActive && <>
             <div className="rh-dock-resizer" role="separator" aria-orientation="horizontal" tabIndex={0} aria-label="Resize bottom dock" onMouseDown={(event) => { event.preventDefault(); const startY = event.clientY; const startRatio = props.drawerRatio; const move = (moveEvent: MouseEvent): void => props.onSetDrawerRatio(Math.min(.85, Math.max(.08, startRatio + (startY - moveEvent.clientY) / Math.max(1, window.innerHeight)))); const up = (): void => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); }; window.addEventListener('mousemove', move); window.addEventListener('mouseup', up); }} onKeyDown={(event) => { if (event.key === 'ArrowUp') props.onSetDrawerRatio(Math.min(.85, props.drawerRatio + .03)); if (event.key === 'ArrowDown') props.onSetDrawerRatio(Math.max(.08, props.drawerRatio - .03)); }} />
-            <InstrumentFrame index="TOOLS" title={props.drawerTab.toUpperCase()} state={props.drawerOpen ? 'active' : 'idle'} className={`rh-dock ${props.drawerOpen ? '' : 'is-collapsed'}`} style={{ height: `${Math.round(props.drawerRatio * 100)}%` }} actions={<><div className="rh-dock-tabs" role="tablist" aria-label="Tool windows">{drawerItems.map((item) => <button key={item.id} className={`rh-dock-tab ${props.drawerTab === item.id ? 'is-active' : ''}`} role="tab" aria-label={item.id} aria-selected={props.drawerTab === item.id} onClick={() => selectTab(item.id)}>{item.label}</button>)}</div><Button onClick={() => props.onSetDrawerOpen(!props.drawerOpen)} aria-label={props.drawerOpen ? 'Collapse bottom dock' : 'Expand bottom dock'}>{props.drawerOpen ? 'collapse' : 'expand'}</Button></>}>
+            <InstrumentFrame index="TOOLS" title={props.drawerTab.toUpperCase()} titleSuffix={props.drawerTab === 'performance' && <><details className="rh-perf-help">
+              <summary aria-label="How to use Performance" title="How to use Performance">i</summary>
+              <div><strong>Compare code samples</strong><span>1. Add the active file or selection.</span><span>2. Pick one runtime per case.</span><span>3. Choose profiles, then run.</span></div>
+            </details><PerformanceHeaderControls files={props.files}/> </>} state={props.drawerOpen ? 'active' : 'idle'} className={`rh-dock ${props.drawerOpen ? '' : 'is-collapsed'}`} style={{ height: `${Math.round(props.drawerRatio * 100)}%` }} actions={<><div className="rh-dock-tabs" role="tablist" aria-label="Tool windows">{drawerItems.map((item) => <button key={item.id} className={`rh-dock-tab ${props.drawerTab === item.id ? 'is-active' : ''}`} role="tab" aria-label={item.id} aria-selected={props.drawerTab === item.id} onClick={() => selectTab(item.id)}>{item.label}</button>)}</div><Button onClick={() => props.onSetDrawerOpen(!props.drawerOpen)} aria-label={props.drawerOpen ? 'Collapse bottom dock' : 'Expand bottom dock'}>{props.drawerOpen ? 'collapse' : 'expand'}</Button></>}>
             <div className="rh-dock-body"><div ref={dockContentRef} className={`rh-dock-content ${props.drawerTab === 'analysis' ? 'is-analysis' : ''} ${props.drawerTab === 'console' ? 'is-console' : ''}`}>{props.drawerTab === 'console' && <ConsolePanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}{props.drawerTab === 'inspector' && <InspectorPanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}{props.drawerTab === 'analysis' && <AnalysisPanel code={props.activeFile?.content ?? ''} selection={selection} lang={props.activeFile?.language === 'typescript' ? 'ts' : 'js'} onLoadDemo={props.onLoadAnalysisDemo} />}{props.drawerTab === 'packages' && <PackagesPanel />}{props.drawerTab === 'runtimes' && <RuntimesPanel />}{props.drawerTab === 'performance' && <PerformancePanel activeFile={props.activeFile} selection={selection} />}</div></div>
             </InstrumentFrame>
           </>}

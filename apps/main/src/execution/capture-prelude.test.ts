@@ -99,6 +99,14 @@ describe('capture prelude (executed under real node)', () => {
     ]);
   });
 
+  it('preserves every object argument in a console call', async () => {
+    const { stderr } = await runProgram('__rh.console(4, "log", [{ first: 1 }, { second: 2 }]);\n');
+    const args = consoleFrames(stderr)[0]?.args;
+    expect(args).toHaveLength(2);
+    expect(args?.[0]?.children?.find((child) => child.k === 'first')?.node).toEqual({ t: 'number', prim: '1' });
+    expect(args?.[1]?.children?.find((child) => child.k === 'second')?.node).toEqual({ t: 'number', prim: '2' });
+  });
+
   it('includes enumerable named array properties in console frames', async () => {
     const program = [
       'var arr = [1, 2, 3];',
@@ -180,5 +188,17 @@ describe('capture prelude (executed under real node)', () => {
     const consoles = consoleFrames(stderr);
     expect(consoles).toHaveLength(1);
     expect(consoles[0]).toMatchObject({ line: 2, level: 'log', text: 'hi' });
+  });
+
+  it('keeps multiple arguments when console calls are transformed', async () => {
+    const captured = injectCapture('console.log({ first: 1 }, { second: 2 });\n');
+    expect(captured.ok).toBe(true);
+    if (!captured.ok) return;
+
+    const { stderr } = await runProgram(captured.code);
+    const frame = consoleFrames(stderr)[0];
+    expect(frame?.args).toHaveLength(2);
+    expect(frame?.args?.[0]?.children?.find((child) => child.k === 'first')?.node).toEqual({ t: 'number', prim: '1' });
+    expect(frame?.args?.[1]?.children?.find((child) => child.k === 'second')?.node).toEqual({ t: 'number', prim: '2' });
   });
 });
