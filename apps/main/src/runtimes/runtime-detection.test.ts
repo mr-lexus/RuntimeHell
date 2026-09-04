@@ -9,6 +9,7 @@ import { nvmRoot, nvmSymlink, parseNvmVersions, parseRuntimeVersionOutput } from
 describe('parseRuntimeVersionOutput', () => {
   it('parses Firefox --version output for system browser detection', () => {
     expect(parseRuntimeVersionOutput('firefox', 'Mozilla Firefox 141.0.1\r\n')).toBe('141.0.1');
+    expect(parseRuntimeVersionOutput('chrome', 'Google Chrome 140.0.7339.81\r\n')).toBe('140.0.7339.81');
   });
 });
 

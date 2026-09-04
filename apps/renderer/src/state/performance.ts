@@ -9,11 +9,13 @@ import type {
   PerformanceTargetOption,
   PerformanceTargetSelection
 } from '@rh/protocol';
+import { MAX_PERFORMANCE_TARGETS, PerformanceTargetSelectionSchema } from '@rh/protocol';
 
 type PerformanceProgressPhase = 'resolving' | 'preparing' | 'warmup' | 'measurement';
 
 interface PerformanceConfig {
   cases: PerformanceCase[];
+  runTargets: PerformanceTargetSelection[];
   selectedProfiles: Record<string, string[]>;
   measurement: PerformanceMeasurement;
   results: PerformanceRunResult[];
@@ -42,6 +44,7 @@ interface PerformanceState extends PerformanceConfig {
   setCaseMode: (id: string, mode: PerformanceCase['mode']) => void;
   setCaseTarget: (id: string, target: PerformanceTargetOption | undefined) => void;
   toggleCaseProfile: (id: string, profileId: string) => void;
+  setRunTargets: (targets: PerformanceTargetSelection[]) => void;
   toggleTarget: (target: PerformanceTargetOption) => void;
   toggleProfile: (target: PerformanceTargetOption, profileId: string) => void;
   setMeasurement: (patch: Partial<PerformanceMeasurement>) => void;
@@ -54,6 +57,24 @@ interface PerformanceState extends PerformanceConfig {
 }
 
 const DEFAULT_MEASUREMENT: PerformanceMeasurement = { samples: 20, warmupRounds: 5, iterationsPerSample: 1_000, timeoutMs: 120_000, gcMode: 'runtime' };
+const RUN_TARGETS_KEY = 'rh.performance.run-targets.v1';
+
+function loadRunTargets(): PerformanceTargetSelection[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(RUN_TARGETS_KEY) ?? 'null');
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((item) => {
+      const parsed = PerformanceTargetSelectionSchema.safeParse(item);
+      return parsed.success ? [parsed.data] : [];
+    });
+  } catch { return []; }
+}
+
+function persistRunTargets(targets: readonly PerformanceTargetSelection[]): void {
+  if (typeof localStorage === 'undefined') return;
+  try { localStorage.setItem(RUN_TARGETS_KEY, JSON.stringify(targets)); } catch { /* optional storage */ }
+}
 
 export function performanceTargetKey(target: PerformanceTargetOption | PerformanceTargetOption['ref']): string {
   const ref = 'ref' in target ? target.ref : target;
@@ -75,18 +96,7 @@ function naturalProfile(target: PerformanceTargetOption): string | undefined {
     ?? target.profiles.find((profile) => profile.available)?.id;
 }
 
-function assignCaseTarget(item: PerformanceCase, catalog: PerformanceCatalogResponse | null): PerformanceCase {
-  if (catalog === null) return item;
-  const target = item.target
-    ? catalog.targets.find((candidate) => targetRefMatches(item.target, candidate.ref) && candidate.available)
-    : catalog.targets.find((candidate) => candidate.available);
-  if (target === undefined) return item;
-  const supported = new Set(target.profiles.filter((profile) => profile.available).map((profile) => profile.id));
-  const kept = item.profileIds?.filter((id) => supported.has(id)) ?? [];
-  return { ...item, target: target.ref, profileIds: kept.length ? kept : [naturalProfile(target) ?? 'natural'] };
-}
-
-const initialExperiment: PerformanceConfig = { cases: [], selectedProfiles: {}, measurement: DEFAULT_MEASUREMENT, results: [] };
+const initialExperiment: PerformanceConfig = { cases: [], runTargets: loadRunTargets(), selectedProfiles: {}, measurement: DEFAULT_MEASUREMENT, results: [] };
 export const usePerformance = create<PerformanceState>((set, get) => ({
   ...initialExperiment,
   catalog: null,
@@ -121,8 +131,27 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
         const natural = first?.profiles.find((profile) => profile.available);
         if (first && natural) selectedProfiles[performanceTargetKey(first)] = [natural.id];
       }
-      const cases = get().cases.map((item) => assignCaseTarget(item, catalog));
-      set({ catalog, loadingCatalog: false, selectedProfiles, cases });
+      const available = catalog.targets.filter((target) => target.available);
+      const resolveTarget = (ref: PerformanceTargetRef): PerformanceTargetOption | undefined => available.find((target) => targetRefMatches(ref, target.ref));
+      const configured = get().runTargets.flatMap((selection) => {
+        const target = resolveTarget(selection.target);
+        if (!target) return [];
+        const profiles = selection.profiles.filter((profile) => target.profiles.some((candidate) => candidate.available && candidate.id === profile.id)).map((profile) => ({ id: profile.id, label: target.profiles.find((candidate) => candidate.id === profile.id)?.label ?? profile.label ?? profile.id }));
+        return profiles.length ? [{ target: target.ref, profiles }] : [];
+      });
+      const fromLegacy = Object.entries(selectedProfiles).flatMap(([key, ids]) => {
+        const target = available.find((candidate) => performanceTargetKey(candidate) === key);
+        if (!target) return [];
+        const profiles = ids.filter((id) => target.profiles.some((profile) => profile.available && profile.id === id)).map((id) => ({ id, label: target.profiles.find((profile) => profile.id === id)?.label ?? id }));
+        return profiles.length ? [{ target: target.ref, profiles }] : [];
+      });
+      const fallback = configured.length ? configured : fromLegacy.length ? fromLegacy : (() => {
+        const target = catalog.targets.find((candidate) => candidate.available);
+        const profile = target?.profiles.find((candidate) => candidate.available);
+        return target && profile ? [{ target: target.ref, profiles: [{ id: profile.id, label: profile.label }] }] : [];
+      })();
+      persistRunTargets(fallback);
+      set({ catalog, loadingCatalog: false, selectedProfiles, runTargets: fallback });
     } catch (error) {
       set({ loadingCatalog: false, errors: { catalog: error instanceof Error ? error.message : String(error) } });
     }
@@ -132,7 +161,7 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
 
   addCase: (item) => {
     if (get().running) return;
-    set((state) => ({ cases: [...state.cases, assignCaseTarget(item, state.catalog)], results: [], errors: {} }));
+    set((state) => ({ cases: [...state.cases, { ...item, target: undefined, profileIds: undefined }], results: [], errors: {} }));
   },
   duplicateCase: (id) => {
     if (get().running) return;
@@ -168,27 +197,32 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
     const next = current.includes(profileId) ? current.filter((idValue) => idValue !== profileId) : [...current, profileId];
     set((state) => ({ cases: state.cases.map((candidate) => candidate.id === id ? { ...candidate, profileIds: next.length ? next : [profileId] } : candidate), results: [], errors: {} }));
   },
+  setRunTargets: (runTargets) => {
+    if (get().running) return;
+    const normalized = runTargets.filter((selection) => selection.profiles.length > 0).slice(0, MAX_PERFORMANCE_TARGETS).map((selection) => ({ target: selection.target, profiles: selection.profiles.slice(0, 8) }));
+    persistRunTargets(normalized);
+    set({ runTargets: normalized, results: [], errors: {} });
+  },
   toggleTarget: (target) => {
     if (get().running || !target.available) return;
     const key = performanceTargetKey(target);
-    const selectedProfiles = { ...get().selectedProfiles };
-    if (selectedProfiles[key]) delete selectedProfiles[key];
-    else {
-      const natural = target.profiles.find((profile) => profile.available);
-      if (natural) selectedProfiles[key] = [natural.id];
-    }
-    set({ selectedProfiles, results: [], errors: {} });
+    const current = get().runTargets;
+    const next = current.some((selection) => performanceTargetKey(selection.target) === key)
+      ? current.filter((selection) => performanceTargetKey(selection.target) !== key)
+      : (() => { const natural = target.profiles.find((profile) => profile.available); return natural ? [...current, { target: target.ref, profiles: [{ id: natural.id, label: natural.label }] }] : current; })();
+    get().setRunTargets(next);
   },
   toggleProfile: (target, profileId) => {
     if (get().running) return;
     const profile = target.profiles.find((item) => item.id === profileId);
     if (!profile?.available) return;
     const key = performanceTargetKey(target);
-    const selectedProfiles = { ...get().selectedProfiles };
-    const current = selectedProfiles[key] ?? [];
+    const currentSelection = get().runTargets.find((selection) => performanceTargetKey(selection.target) === key);
+    const current = currentSelection?.profiles.map((item) => item.id) ?? [];
     const next = current.includes(profileId) ? current.filter((id) => id !== profileId) : [...current, profileId];
-    if (next.length) selectedProfiles[key] = next; else delete selectedProfiles[key];
-    set({ selectedProfiles, results: [], errors: {} });
+    const runTargets = get().runTargets.filter((selection) => performanceTargetKey(selection.target) !== key);
+    if (next.length) runTargets.push({ target: target.ref, profiles: next.map((id) => ({ id, label: target.profiles.find((item) => item.id === id)?.label ?? id })) });
+    get().setRunTargets(runTargets);
   },
   setMeasurement: (patch) => { if (!get().running) set((state) => ({ measurement: { ...state.measurement, ...patch }, results: [] })); },
   applyPreset: (preset) => {
@@ -204,43 +238,20 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
   },
   clearExperiment: () => {
     if (get().running) return;
-    set({ cases: [], selectedProfiles: {}, measurement: DEFAULT_MEASUREMENT, results: [], errors: {}, progress: 'ready', progressCompleted: 0, progressTotal: 0, progressPhase: null, activeGroupId: null });
+    persistRunTargets([]);
+    set({ cases: [], runTargets: [], selectedProfiles: {}, measurement: DEFAULT_MEASUREMENT, results: [], errors: {}, progress: 'ready', progressCompleted: 0, progressTotal: 0, progressPhase: null, activeGroupId: null });
   },
   clearResults: () => { if (!get().running) set({ results: [], errors: {}, progress: 'ready', progressCompleted: 0, progressTotal: 0, progressPhase: null, activeGroupId: null }); },
 
   run: async (casesOverride) => {
     const state = get();
     if (state.running) return;
-    const cases = casesOverride ?? state.cases;
+    // Runtime/profile selection is now a run-level matrix. Strip legacy
+    // per-case assignments so every selected runtime executes every file case.
+    const cases = (casesOverride ?? state.cases).map((item) => ({ ...item, target: undefined, profileIds: undefined }));
     if (cases.length === 0) { set({ errors: { experiment: 'Add at least one benchmark case.' } }); return; }
     if (cases.some((item) => !item.body.trim())) { set({ errors: { experiment: 'Every case must contain executable code.' } }); return; }
-    const targets: PerformanceTargetSelection[] = [];
-    const hasCaseAssignments = cases.some((item) => item.target !== undefined || item.profileIds !== undefined);
-    if (hasCaseAssignments && cases.some((item) => item.target === undefined)) {
-      set({ errors: { experiment: 'Assign one runtime and at least one profile to every case.' } }); return;
-    }
-    if (hasCaseAssignments) {
-      const grouped = new Map<string, { target: PerformanceTargetRef; profileIds: Set<string> }>();
-      for (const item of cases) {
-        if (!item.target) continue;
-        const key = performanceTargetKey(item.target);
-        const current = grouped.get(key) ?? { target: item.target, profileIds: new Set<string>() };
-        for (const profileId of item.profileIds ?? ['natural']) current.profileIds.add(profileId);
-        grouped.set(key, current);
-      }
-      for (const group of grouped.values()) {
-        const option = state.catalog?.targets.find((candidate) => targetRefMatches(group.target, candidate.ref));
-        if (!option?.available) continue;
-        const profiles = [...group.profileIds].map((id) => ({ id, label: option.profiles.find((profile) => profile.id === id)?.label ?? id })).filter((profile) => option.profiles.some((candidate) => candidate.id === profile.id && candidate.available));
-        if (profiles.length) targets.push({ target: option.ref, profiles });
-      }
-    } else {
-      for (const target of state.catalog?.targets ?? []) {
-        const selected = state.selectedProfiles[performanceTargetKey(target)] ?? [];
-        if (!target.available || selected.length === 0) continue;
-        targets.push({ target: target.ref, profiles: selected.map((id) => ({ id, label: target.profiles.find((profile) => profile.id === id)?.label ?? id })) });
-      }
-    }
+    const targets: PerformanceTargetSelection[] = state.runTargets;
     if (targets.length === 0) { set({ errors: { experiment: 'Select one available runtime and profile for your cases.' } }); return; }
     const id = requestId();
     const totalGroups = targets.reduce((sum, target) => sum + target.profiles.length, 0);

@@ -81,11 +81,23 @@ export const RUNTIME_CATALOG: RuntimeCatalogEntry[] = [
     installable: false
   },
   {
+    id: 'chrome',
+    name: 'Chrome (Browser)',
+    category: 'runtime',
+    engine: 'Chromium + V8 + Web APIs',
+    description: 'System Google Chrome browser. RuntimeHell detects the desktop installation and can use it for isolated Performance Lab runs.',
+    website: 'https://www.google.com/chrome/',
+    version: 'system',
+    color: '#4285f4',
+    installable: false,
+    detectCommand: 'chrome --version'
+  },
+  {
     id: 'firefox',
     name: 'Firefox (Browser)',
     category: 'runtime',
     engine: 'Gecko + SpiderMonkey + Web APIs',
-    description: 'System Firefox browser. It is detected here for browser coverage; the current embedded execution lane remains Chromium.',
+    description: 'System Firefox browser. RuntimeHell detects the desktop installation and can use it for isolated Performance Lab runs.',
     website: 'https://www.mozilla.org/firefox/',
     version: 'system',
     color: '#ff7139',

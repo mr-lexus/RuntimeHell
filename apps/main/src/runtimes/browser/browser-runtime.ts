@@ -275,7 +275,11 @@ export function buildBrowserScript(source: string): string {
     else nativeSetTimeout(waitForIdle, 5);
   };
   (async () => {
-    try { await (new Function('return (async () => {\\n' + source + '\\n})();'))(); }
+    try {
+      await (new Function('return (async () => {\\n' + source + '\\n})();'))();
+      const benchmarkCompletion = globalThis.__rhPerformanceDone;
+      if (benchmarkCompletion && typeof benchmarkCompletion.then === 'function') await benchmarkCompletion;
+    }
     catch (error) { emit({ kind: 'error', message: String(error?.stack || error) }); }
     finally { waitForIdle(); }
   })();
@@ -336,7 +340,11 @@ export class EmbeddedBrowserRuntime implements BrowserRuntimeRunner {
       });
       session.window = win;
       win.webContents.on('will-navigate', (event) => event.preventDefault());
-      win.webContents.on('console-message', (_event, _level, message) => this.handleConsoleMessage(session, message));
+      win.webContents.on('console-message', (event, _level, legacyMessage) => {
+        const currentMessage = (event as unknown as { message?: unknown }).message;
+        const message = typeof currentMessage === 'string' ? currentMessage : legacyMessage;
+        if (typeof message === 'string') this.handleConsoleMessage(session, message);
+      });
       win.on('closed', () => {
         if (!session.settled) this.finish(session, session.cancelled === 'timeout' ? 'timeout' : 'completed', null);
       });

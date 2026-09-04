@@ -588,7 +588,8 @@ export function LineOutputColumn({
         background: 'var(--bg-app)',
         display: 'flex',
         flexDirection: 'column',
-        minHeight: 0
+        minHeight: 0,
+        height: '100%',
       }}
     >
       {/* ── left-edge resize handle ── */}

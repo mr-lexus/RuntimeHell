@@ -8,7 +8,7 @@ import { InspectorPanel } from '../panels/inspector/InspectorPanel';
 import { AnalysisPanel } from '../panels/analysis/AnalysisPanel';
 import { PackagesPanel } from '../panels/packages/PackagesPanel';
 import { RuntimesPanel } from '../panels/runtimes/RuntimesPanel';
-import { PerformancePanel } from '../panels/performance/PerformancePanel';
+import { PerformancePanel, PerformanceRunMatrixControl } from '../panels/performance/PerformancePanel';
 import { BlockLoader, Button, InstrumentFrame, KeyboardHint, StatusIndicator } from './primitives';
 import { CommandPalette, type PaletteCommand } from './CommandPalette';
 import { SettingsView } from './SettingsView';
@@ -17,6 +17,7 @@ import type { SelectionInfo } from '../editor/selection-service';
 import type { AnalyzeType } from '../editor/CodeEditor';
 import type { VimMode } from '../editor/vim-mode';
 import { usePerformance } from '../state/performance';
+import { APP_LOGO_URL } from '../branding';
 
 interface FileLike { id: string; relPath: string; language: string; content: string; dirty: boolean; }
 
@@ -114,6 +115,7 @@ function PerformanceHeaderControls({ files }: { files: readonly FileLike[] }): R
     state.setMeasurement({ [key]: Math.max(limits.min, Math.min(limits.max, Number(value) || limits.min)) });
   };
   return <div className="rh-perf-header-controls" aria-label="Performance measurement controls">
+    <PerformanceRunMatrixControl />
     <div className="rh-perf-header-presets">{(['quick', 'reliable'] as const).map((preset) => <Button key={preset} title={preset === 'quick' ? '5 samples · 250 cycles' : '30 samples · 1,000 cycles'} onClick={() => state.applyPreset(preset)} disabled={state.running}>{preset}</Button>)}</div>
     <label title="Number of measured samples">samples<input type="number" min={3} max={200} value={state.measurement.samples} disabled={state.running} onChange={(event) => setNumber('samples', event.target.value)} /></label>
     <label title="Iterations per sample">cycles<input type="number" min={1} max={10_000_000} value={state.measurement.iterationsPerSample} disabled={state.running} onChange={(event) => setNumber('iterationsPerSample', event.target.value)} /></label>
@@ -122,7 +124,7 @@ function PerformanceHeaderControls({ files }: { files: readonly FileLike[] }): R
       <label>timeout<input type="number" min={1_000} max={600_000} value={state.measurement.timeoutMs} disabled={state.running} onChange={(event) => state.setMeasurement({ timeoutMs: Math.max(1_000, Math.min(600_000, Number(event.target.value) || 1_000)) })} /></label>
       <label>GC<select value={state.measurement.gcMode} disabled={state.running} onChange={(event) => state.setMeasurement({ gcMode: event.target.value as typeof state.measurement.gcMode })}><option value="runtime">runtime</option><option value="before-group">before group</option><option value="before-sample">before sample</option></select></label>
     </div></details>
-    {state.running ? <Button variant="danger" onClick={() => void state.cancel()}>cancel</Button> : <Button variant="primary" onClick={() => void state.run(livePerformanceCases(state.cases, files))} disabled={state.cases.length === 0}>run</Button>}
+    {state.running ? <Button variant="danger" onClick={() => void state.cancel()}>cancel</Button> : <Button variant="primary" onClick={() => void state.run(livePerformanceCases(state.cases, files))} disabled={state.cases.length === 0 || state.runTargets.length === 0}>run</Button>}
   </div>;
 }
 
@@ -347,7 +349,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
   return (
     <div className="rh-app">
       <header className="rh-titlebar">
-        <div className="rh-brand"><span className="rh-brand-mark">◈</span><span>RuntimeHell</span></div>
+        <div className="rh-brand"><img className="rh-brand-logo" src={APP_LOGO_URL} alt="" /><span>RuntimeHell</span></div>
         <div className="rh-titlebar-actions">
           <div className="rh-titlebar-editor-controls" aria-label="Editor controls">
           <Button variant="primary" className="rh-titlebar-run" onClick={props.onRun} disabled={!props.activeFile || props.phase !== 'idle'} aria-label={props.phase === 'idle' ? 'Run source (Ctrl+Enter)' : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'} title={props.phase === 'idle' ? 'Run source (Ctrl+Enter)' : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'}><span className="rh-action-marker" aria-hidden="true">{props.phase === 'idle' ? '▶' : <BlockLoader />}</span></Button>
@@ -439,7 +441,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
             <div className="rh-dock-resizer" role="separator" aria-orientation="horizontal" tabIndex={0} aria-label="Resize bottom dock" onMouseDown={(event) => { event.preventDefault(); const startY = event.clientY; const startRatio = props.drawerRatio; const move = (moveEvent: MouseEvent): void => props.onSetDrawerRatio(Math.min(.85, Math.max(.08, startRatio + (startY - moveEvent.clientY) / Math.max(1, window.innerHeight)))); const up = (): void => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); }; window.addEventListener('mousemove', move); window.addEventListener('mouseup', up); }} onKeyDown={(event) => { if (event.key === 'ArrowUp') props.onSetDrawerRatio(Math.min(.85, props.drawerRatio + .03)); if (event.key === 'ArrowDown') props.onSetDrawerRatio(Math.max(.08, props.drawerRatio - .03)); }} />
             <InstrumentFrame index="TOOLS" title={props.drawerTab.toUpperCase()} titleSuffix={props.drawerTab === 'performance' && <><details className="rh-perf-help">
               <summary aria-label="How to use Performance" title="How to use Performance">i</summary>
-              <div><strong>Compare code samples</strong><span>1. Add the active file or selection.</span><span>2. Pick one runtime per case.</span><span>3. Choose profiles, then run.</span></div>
+              <div><strong>Compare code samples</strong><span>1. Add files or selections as cases.</span><span>2. Configure runtimes and profiles in the run matrix.</span><span>3. Run every case across the selected matrix.</span></div>
             </details><PerformanceHeaderControls files={props.files}/> </>} state={props.drawerOpen ? 'active' : 'idle'} className={`rh-dock ${props.drawerOpen ? '' : 'is-collapsed'}`} style={{ height: `${Math.round(props.drawerRatio * 100)}%` }} actions={<><div className="rh-dock-tabs" role="tablist" aria-label="Tool windows">{drawerItems.map((item) => <button key={item.id} className={`rh-dock-tab ${props.drawerTab === item.id ? 'is-active' : ''}`} role="tab" aria-label={item.id} aria-selected={props.drawerTab === item.id} onClick={() => selectTab(item.id)}>{item.label}</button>)}</div><Button onClick={() => props.onSetDrawerOpen(!props.drawerOpen)} aria-label={props.drawerOpen ? 'Collapse bottom dock' : 'Expand bottom dock'}>{props.drawerOpen ? 'collapse' : 'expand'}</Button></>}>
             <div className="rh-dock-body"><div ref={dockContentRef} className={`rh-dock-content ${props.drawerTab === 'analysis' ? 'is-analysis' : ''} ${props.drawerTab === 'console' ? 'is-console' : ''}`}>{props.drawerTab === 'console' && <ConsolePanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}{props.drawerTab === 'inspector' && <InspectorPanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}{props.drawerTab === 'analysis' && <AnalysisPanel code={props.activeFile?.content ?? ''} selection={selection} lang={props.activeFile?.language === 'typescript' ? 'ts' : 'js'} onLoadDemo={props.onLoadAnalysisDemo} />}{props.drawerTab === 'packages' && <PackagesPanel />}{props.drawerTab === 'runtimes' && <RuntimesPanel />}{props.drawerTab === 'performance' && <PerformancePanel activeFile={props.activeFile} selection={selection} />}</div></div>
             </InstrumentFrame>

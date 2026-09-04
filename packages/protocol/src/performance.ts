@@ -41,13 +41,14 @@ export const PerformanceMeasurementSchema = z.object({
 export type PerformanceMeasurement = z.infer<typeof PerformanceMeasurementSchema>;
 export const PerformanceIsolationSchema = z.object({ mode: z.literal('target-profile').default('target-profile') }).strict();
 export type PerformanceIsolation = z.infer<typeof PerformanceIsolationSchema>;
+export const MAX_PERFORMANCE_TARGETS = 64;
 
 export const PerformanceStartRequestSchema = z.object({
   requestId: z.string().min(8), workspaceId: z.string().min(1),
   name: z.string().min(1).max(120).default('Untitled experiment'), setup: z.string().max(200_000).default(''), setupSourceLabel: RelPathSchema.optional(),
   // The editor can contribute any number of linked cases; execution remains
   // bounded by the user's selected runtimes/profiles and measurement settings.
-  cases: z.array(PerformanceCaseSchema).min(1), targets: z.array(PerformanceTargetSelectionSchema).min(1).max(12),
+  cases: z.array(PerformanceCaseSchema).min(1), targets: z.array(PerformanceTargetSelectionSchema).min(1).max(MAX_PERFORMANCE_TARGETS),
   measurement: PerformanceMeasurementSchema.default({ samples: 20, warmupRounds: 5, iterationsPerSample: 1_000, timeoutMs: 120_000, gcMode: 'runtime' }),
   isolation: PerformanceIsolationSchema.default({ mode: 'target-profile' })
 }).strict();

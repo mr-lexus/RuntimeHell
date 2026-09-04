@@ -127,6 +127,17 @@ describe('performance contract', () => {
     expect(request.cases[0]?.mode).toBe('sync');
     expect(request.measurement.gcMode).toBe('runtime');
   });
+
+  it('accepts a matrix containing more than twelve installed targets', () => {
+    const request = PerformanceStartRequestSchema.parse({
+      requestId: 'perf-many-targets', workspaceId: 'ws1', name: 'all installed', setup: '',
+      cases: [{ id: 'case-a', label: 'A', body: 'return 1;' }],
+      targets: Array.from({ length: 15 }, (_, index) => ({ target: { source: 'engine' as const, id: `engine-${index}` }, profiles: [{ id: 'natural' }] })),
+      measurement: { samples: 3, warmupRounds: 0, iterationsPerSample: 1, timeoutMs: 1_000 },
+      isolation: { mode: 'target-profile' }
+    });
+    expect(request.targets).toHaveLength(15);
+  });
 });
 
 describe('manifest contract', () => {

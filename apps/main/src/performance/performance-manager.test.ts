@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
-import { join } from 'node:path';
-import { PerformanceManager, RegistryPerformanceTargetResolver, comparePairedSamples, type ResolvedPerformanceTarget } from './performance-manager.js';
-import type { PerformanceEvent, PerformanceRawSample } from '@rh/protocol';
+import { dirname, join } from 'node:path';
+import { PerformanceManager, RegistryPerformanceTargetResolver, comparePairedSamples, performanceLaunchArgs, type ResolvedPerformanceTarget } from './performance-manager.js';
+import type { ManifestEntry, PerformanceEvent, PerformanceRawSample } from '@rh/protocol';
 import { RuntimeRegistry } from '../runtimes/runtime-adapter.js';
-import { detectSystemRuntime } from '../runtimes/runtime-detection.js';
+import { detectSystemBrowser, detectSystemRuntime, type BrowserId } from '../runtimes/runtime-detection.js';
 import { workspaceRoot } from '../workspace/files.js';
 
 function samples(caseId: string, values: number[]): PerformanceRawSample[] {
@@ -34,13 +34,66 @@ describe('Performance optimizer catalog', () => {
       resolveExecutable: async () => ({ exePath: process.execPath, version: '1.3.14' }),
       installedVersions: async () => []
     }] });
-    const resolver = new RegistryPerformanceTargetResolver(runtimes);
+    const resolver = new RegistryPerformanceTargetResolver(runtimes, {
+      readManifest: async () => ({ schemaVersion: 1, entries: [] }),
+      detectNvm: async () => null,
+      detectBrowser: async () => null
+    });
     const catalog = await resolver.catalog();
     const bun = catalog.targets[0];
     expect(bun?.profiles.map((profile) => profile.id)).toEqual(['natural', 'jsc-interpreter', 'jsc-baseline', 'jsc-no-ftl']);
     const target = bun ? await resolver.resolve(bun.ref) : null;
     const profile = target ? await resolver.resolveProfile(target, { id: 'jsc-baseline' }) : null;
     expect(profile?.extraEnv).toEqual({ BUN_JSC_useDFGJIT: 'false', BUN_JSC_useFTLJIT: 'false' });
+  });
+
+  it('lists every executable installed source, including browsers, nvm, runtimes, and engines', async () => {
+    const id = randomUUID();
+    const root = workspaceRoot(`perf-catalog-${id.slice(0, 8)}`);
+    const executableNames: Record<string, string> = {
+      txiki: 'tjs.exe', v8: 'd8.exe', 'd8-debug': 'd8.exe', spidermonkey: 'js.exe', javascriptcore: 'jsc.exe',
+      quickjs: 'qjs.exe', graaljs: join('bin', 'js.exe'), hermes: 'hermes.exe', chakra: 'ch.exe', 'moddable-xs': 'xst.exe'
+    };
+    const entries: ManifestEntry[] = [];
+    try {
+      for (const [entryId, executableName] of Object.entries(executableNames)) {
+        const installedPath = join(root, entryId);
+        const executable = join(installedPath, executableName);
+        await fs.mkdir(dirname(executable), { recursive: true });
+        await fs.writeFile(executable, 'fixture', 'utf8');
+        entries.push({
+          kind: entryId === 'txiki' ? 'runtime' : 'engine', id: entryId, platform: 'win64', arch: 'x64', version: '1.2.3',
+          url: 'https://example.test/runtime.zip', sha256: 'a'.repeat(64), license: 'test', source: 'official-dist', installedPath,
+          addedAt: new Date(0).toISOString(), customBuildRequired: false
+        });
+      }
+      const runtimes = new RuntimeRegistry({ adapters: [{
+        id: 'node', resolveExecutable: async () => ({ exePath: process.execPath, version: process.versions.node }), installedVersions: async () => []
+      }] });
+      const resolver = new RegistryPerformanceTargetResolver(runtimes, {
+        readManifest: async () => ({ schemaVersion: 1, entries }),
+        detectNvm: async () => ({ root: join(root, 'nvm'), versions: [{ version: '20.11.0', exePath: process.execPath, active: false }] }),
+        detectBrowser: async (browserId) => ({ exePath: join(root, `${browserId}.exe`), version: browserId === 'chrome' ? '140.0.7339.81' : '141.0.1' })
+      });
+      const catalog = await resolver.catalog();
+      const available = catalog.targets.filter((target) => target.available);
+      expect(available.map((target) => `${target.ref.source}:${target.ref.id}:${target.ref.provenance}`)).toEqual(expect.arrayContaining([
+        'runtime:node:system', 'runtime:node:nvm', 'runtime:browser:builtin', 'runtime:chrome:system', 'runtime:firefox:system',
+        'runtime:txiki:managed', 'engine:v8:managed', 'engine:d8-debug:managed', 'engine:spidermonkey:managed',
+        'engine:javascriptcore:managed', 'engine:quickjs:managed', 'engine:graaljs:managed', 'engine:hermes:managed',
+        'engine:chakra:managed', 'engine:moddable-xs:managed'
+      ]));
+      expect(available.find((target) => target.ref.id === 'chrome')?.label).toContain('Google Chrome');
+      expect(available.find((target) => target.ref.id === 'firefox')?.engineId).toBe('spidermonkey');
+      const graal = await resolver.resolve({ source: 'engine', id: 'graaljs', version: '1.2.3', provenance: 'managed' });
+      expect(graal?.executable).toBe(join(root, 'graaljs', 'bin', 'js.exe'));
+      expect(performanceLaunchArgs({
+        ref: { source: 'runtime', id: 'txiki', version: '1.2.3' }, executable: join(root, 'txiki', 'tjs.exe'),
+        runtimeId: 'txiki', runtimeVersion: '1.2.3', engineId: 'quickjs', launchKind: 'shell'
+      }, 'group.js', [], 'runtime')).toEqual(['run', 'group.js']);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
   });
 });
 
@@ -280,4 +333,45 @@ describe('PerformanceManager real Node child', () => {
     expect(result?.type === 'result' ? result.result.environment.flags : []).toContain('BUN_JSC_useJIT=false');
     expect(events.find((event) => event.type === 'cell-error')).toBeUndefined();
   });
+});
+
+describe('PerformanceManager installed browser smoke', () => {
+  it('runs the same structured harness in each detected desktop browser', async () => {
+    const detected = (await Promise.all((['chrome', 'firefox'] as const).map(async (browserId) => ({ browserId, runtime: await detectSystemBrowser(browserId) })))).filter((item): item is { browserId: BrowserId; runtime: NonNullable<typeof item.runtime> } => item.runtime !== null);
+    for (const { browserId, runtime } of detected) {
+      const events: PerformanceEvent[] = [];
+      let finish!: () => void;
+      const done = new Promise<void>((resolve) => { finish = resolve; });
+      const target: ResolvedPerformanceTarget = {
+        ref: { source: 'runtime', id: browserId, version: 'system', provenance: 'system' },
+        executable: runtime.exePath, runtimeId: browserId, runtimeVersion: runtime.version,
+        engineId: browserId === 'firefox' ? 'spidermonkey' : 'v8', launchKind: 'external-browser'
+      };
+      const manager = new PerformanceManager({
+        targetResolver: {
+          resolve: async () => target,
+          catalog: async () => ({ targets: [] }),
+          resolveProfile: async (_target, profile) => ({ ref: profile, flags: [], extraEnv: {} })
+        },
+        emit: (event) => { events.push(event); if (event.type === 'done') finish(); }
+      });
+      const requestId = randomUUID();
+      const workspaceId = `perf-${browserId}-${requestId.slice(0, 8)}`;
+      try {
+        await manager.start({
+          requestId, workspaceId, name: `${browserId} smoke`, setup: '',
+          cases: [{ id: 'browser', label: 'Browser', body: 'return typeof document === "object" ? 42 : 0;', mode: 'sync' }],
+          targets: [{ target: target.ref, profiles: [{ id: 'natural', label: 'Natural tiering' }] }],
+          measurement: { samples: 3, warmupRounds: 0, iterationsPerSample: 2, timeoutMs: 30_000, gcMode: 'runtime' },
+          isolation: { mode: 'target-profile' }
+        });
+        await done;
+        const result = events.find((event) => event.type === 'result');
+        expect(result?.type, `${browserId}: ${JSON.stringify(events, null, 2)}`).toBe('result');
+        expect(result?.type === 'result' ? result.result.environment.runtimeId : null).toBe(browserId);
+      } finally {
+        await fs.rm(workspaceRoot(workspaceId), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      }
+    }
+  }, 60_000);
 });

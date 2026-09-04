@@ -64,6 +64,15 @@ describe('settings store', () => {
     expect(settings.prefs.autorun).toBe(true);
   });
 
+  it('keeps Vim mode enabled when another editor setting changes', async () => {
+    await updateSettings({ editor: { vimMode: true } });
+    await updateSettings({ editor: { fontSize: 16 } });
+
+    const { settings } = await loadSettings();
+    expect(settings.editor.vimMode).toBe(true);
+    expect(settings.editor.fontSize).toBe(16);
+  });
+
   it('persists a custom six-digit accent without changing schema version', async () => {
     await updateSettings({ appearance: { accent: '#ef6c3a' } });
     const { settings } = await loadSettings();

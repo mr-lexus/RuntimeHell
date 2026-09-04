@@ -48,7 +48,7 @@ export interface BinariesControllerDeps {
 }
 
 const RUNTIME_IDS: RuntimeId[] = ['node', 'deno', 'bun'];
-const BROWSER_IDS: BrowserId[] = ['firefox'];
+const BROWSER_IDS: BrowserId[] = ['chrome', 'firefox'];
 const MANAGED_RUNTIME_IDS = ['node', 'deno', 'bun', 'txiki'] as const;
 type ManagedRuntimeId = (typeof MANAGED_RUNTIME_IDS)[number];
 

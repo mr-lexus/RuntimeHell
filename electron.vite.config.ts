@@ -2,11 +2,14 @@
 import { resolve } from 'node:path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 
-function copyTemplatesPlugin() {
+function copyMainAssetsPlugin() {
   return {
     name: 'copy-templates',
     closeBundle() {
       cpSync(resolve(process.cwd(), 'apps/main/src/execution/templates'), resolve(process.cwd(), 'out/main/templates'), {
+        recursive: true,
+      });
+      cpSync(resolve(process.cwd(), 'build'), resolve(process.cwd(), 'out/main/assets'), {
         recursive: true,
       });
       // Performance harnesses execute outside Electron, so keep Mitata's
@@ -27,7 +30,7 @@ export default defineConfig({
     // (todo 22 discovery), so both runtime externals are declared together:
     //  - 'electron' must stay the runtime API, never the npm path shim
     //  - 'esbuild' resolves its platform binary relative to its own package
-    plugins: [copyTemplatesPlugin()],
+    plugins: [copyMainAssetsPlugin()],
     resolve: { alias: { '@rh/protocol': protocolAlias } },
     build: {
       outDir: 'out/main',

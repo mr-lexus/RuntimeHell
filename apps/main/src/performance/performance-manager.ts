@@ -21,12 +21,18 @@ import {
   type PerformanceStartRequest,
   type PerformanceStartResponse,
   type PerformanceTargetOption,
-  type PerformanceTargetRef
+  type PerformanceTargetRef,
+  type BinaryManifest,
+  type ManifestEntry,
+  type NvmInfo
 } from '@rh/protocol';
-import type { RuntimeId } from '@rh/protocol';
 import { RuntimeRegistry } from '../runtimes/runtime-adapter.js';
 import { ProcessRunner, type RunHandle } from '../execution/process-runner.js';
 import { workspaceRoot } from '../workspace/files.js';
+import { readManifest } from '../binaries/binary-manager.js';
+import { detectNvmNode, detectSystemBrowser, type BrowserId, type DetectedRuntime } from '../runtimes/runtime-detection.js';
+import { EmbeddedBrowserRuntime, type BrowserRuntimeRunner } from '../runtimes/browser/browser-runtime.js';
+import { ExternalBrowserRuntime } from './external-browser-runner.js';
 
 const require = createRequire(__filename);
 const MAX_BODY_LENGTH = 200_000;
@@ -41,10 +47,11 @@ interface ResolvedProfile {
 export interface ResolvedPerformanceTarget {
   readonly ref: PerformanceTargetRef;
   readonly executable: string;
-  readonly runtimeId: RuntimeId;
+  readonly runtimeId: string;
   readonly runtimeVersion: string;
-  readonly engineId: 'v8' | 'javascriptcore';
+  readonly engineId: string;
   readonly engineVersion?: string;
+  readonly launchKind?: 'node' | 'deno' | 'bun' | 'embedded-browser' | 'external-browser' | 'shell';
 }
 
 export interface PerformanceTargetResolver {
@@ -58,76 +65,123 @@ const NATURAL_PROFILE: PerformanceProfileOption = {
   available: true, classification: 'stable'
 };
 
+const BROWSER_IDS: readonly BrowserId[] = ['chrome', 'firefox'];
+const MANAGED_EXECUTABLES: Readonly<Record<string, string>> = {
+  node: 'node.exe', deno: 'deno.exe', bun: 'bun.exe', txiki: 'tjs.exe',
+  v8: 'd8.exe', 'd8-debug': 'd8.exe', spidermonkey: 'js.exe', javascriptcore: 'jsc.exe',
+  quickjs: 'qjs.exe', graaljs: join('bin', 'js.exe'), hermes: 'hermes.exe', chakra: 'ch.exe', 'moddable-xs': 'xst.exe'
+};
+
+export interface PerformanceInventoryDeps {
+  readonly readManifest?: () => Promise<BinaryManifest>;
+  readonly detectNvm?: () => Promise<NvmInfo | null>;
+  readonly detectBrowser?: (id: BrowserId) => Promise<DetectedRuntime | null>;
+}
+
+interface PerformanceInventory {
+  readonly manifest: BinaryManifest;
+  readonly nvm: NvmInfo | null;
+  readonly browsers: ReadonlyMap<BrowserId, DetectedRuntime | null>;
+}
+
 export class RegistryPerformanceTargetResolver implements PerformanceTargetResolver {
   private readonly v8Options = new Map<string, Promise<string>>();
 
-  constructor(private readonly runtimes: RuntimeRegistry) {}
+  constructor(private readonly runtimes: RuntimeRegistry, private readonly inventoryDeps: PerformanceInventoryDeps = {}) {}
 
   async resolve(ref: PerformanceTargetRef): Promise<ResolvedPerformanceTarget | null> {
-    if (ref.source !== 'runtime') throw new Error(`engine target '${ref.id}' is not executable through the runtime registry`);
-    // The embedded browser lane is a general-purpose Web API environment,
-    // not a child-process target for the benchmark harness.
-    if (ref.id === 'browser') throw new Error("runtime 'browser' is not available in Performance Lab");
-    if (!this.runtimes.ids().includes(ref.id)) throw new Error(`runtime '${ref.id}' is not registered`);
-    const runtimeId = ref.id as Exclude<RuntimeId, 'browser'>;
-    const runtime = this.runtimes.get(runtimeId);
-    if (runtime === null) return null;
-    const resolved = await runtime.resolveExecutable(ref.version);
-    if (resolved === null) return null;
-    return {
-      ref: { ...ref, version: resolved.version }, executable: resolved.exePath, runtimeId,
-      runtimeVersion: resolved.version, engineId: runtimeId === 'bun' ? 'javascriptcore' : 'v8'
-    };
+    if (ref.source === 'runtime' && ref.id === 'browser') return embeddedBrowserTarget(ref);
+    if (ref.source === 'runtime' && BROWSER_IDS.includes(ref.id as BrowserId)) {
+      const detected = await (this.inventoryDeps.detectBrowser?.(ref.id as BrowserId) ?? detectSystemBrowser(ref.id as BrowserId));
+      return detected === null ? null : externalBrowserTarget(ref, detected);
+    }
+    if (ref.source === 'runtime' && ref.id === 'node' && ref.provenance === 'nvm') {
+      const nvm = await (this.inventoryDeps.detectNvm?.() ?? detectNvmNode());
+      const selected = nvm?.versions.find((item) => item.version === ref.version);
+      return selected === undefined ? null : runtimeTarget(ref, selected.exePath, selected.version, 'node');
+    }
+    if (ref.source === 'runtime' && this.runtimes.ids().includes(ref.id)) {
+      const runtime = this.runtimes.get(ref.id as 'node' | 'deno' | 'bun');
+      if (runtime === null) return null;
+      const resolved = await runtime.resolveExecutable(ref.version);
+      return resolved === null ? null : runtimeTarget(ref, resolved.exePath, resolved.version, runtime.id);
+    }
+    const manifest = await (this.inventoryDeps.readManifest?.() ?? readManifest());
+    return managedTarget(ref, manifest.entries);
   }
 
   async catalog(): Promise<PerformanceCatalogResponse> {
-    const targets: PerformanceTargetOption[] = [];
-    for (const id of this.runtimes.ids() as Exclude<RuntimeId, 'browser'>[]) {
-      const runtime = this.runtimes.get(id);
-      if (runtime === null) continue;
-      const refs: PerformanceTargetRef[] = [];
-      const system = await runtime.resolveExecutable('system').catch(() => null);
-      if (system !== null) refs.push({ source: 'runtime', id, version: 'system', provenance: 'system' });
-      for (const version of await runtime.installedVersions().catch(() => [])) {
-        refs.push({ source: 'runtime', id, version, provenance: 'managed' });
-      }
-      if (refs.length === 0) refs.push({ source: 'runtime', id, provenance: 'auto' });
-      const seen = new Set<string>();
-      for (const ref of refs) {
-        const resolved = await this.resolve(ref).catch(() => null);
-        const key = resolved === null ? `${id}:${ref.version ?? 'auto'}` : `${id}:${resolved.executable}:${resolved.runtimeVersion}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
+    const optionPromises: Promise<PerformanceTargetOption>[] = [];
+    const inventory = await this.inventory();
+    const seen = new Set<string>();
+    const add = (ref: PerformanceTargetRef): void => {
+      const key = `${ref.source}:${ref.id}:${ref.version ?? 'auto'}:${ref.provenance ?? 'auto'}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      optionPromises.push((async () => {
+        const resolved = await this.resolveFromInventory(ref, inventory).catch(() => null);
         const profiles = resolved === null ? [NATURAL_PROFILE] : await this.profilesFor(resolved);
-        targets.push({
-          ref, label: `${runtimeLabel(id)} ${resolved?.runtimeVersion ?? ref.version ?? ''}`.trim(),
-          available: resolved !== null, reason: resolved === null ? `${runtimeLabel(id)} is not installed` : null,
-          runtimeId: id, runtimeVersion: resolved?.runtimeVersion ?? null,
-          engineId: id === 'bun' ? 'javascriptcore' : 'v8', profiles
-        });
+        return {
+          ref,
+          label: targetLabel(ref, resolved?.runtimeVersion),
+          available: resolved !== null,
+          reason: resolved === null ? `${targetName(ref.id)} is not installed or its executable is missing` : null,
+          runtimeId: ref.id,
+          runtimeVersion: resolved?.runtimeVersion ?? null,
+          engineId: resolved?.engineId ?? engineFor(ref.id),
+          profiles
+        };
+      })());
+    };
+
+    for (const id of this.runtimes.ids()) {
+      const runtime = this.runtimes.get(id as 'node' | 'deno' | 'bun');
+      if (runtime === null) continue;
+      const system = await runtime.resolveExecutable('system').catch(() => null);
+      const installedVersions = await runtime.installedVersions().catch(() => []);
+      if (system !== null) add({ source: 'runtime', id, version: 'system', provenance: 'system' });
+      for (const version of installedVersions) {
+        add({ source: 'runtime', id, version, provenance: 'managed' });
       }
+      if (system === null && installedVersions.length === 0) add({ source: 'runtime', id, provenance: 'auto' });
     }
+
+    for (const version of inventory.nvm?.versions ?? []) {
+      add({ source: 'runtime', id: 'node', version: version.version, provenance: 'nvm' });
+    }
+    add({ source: 'runtime', id: 'browser', version: 'embedded', provenance: 'builtin' });
+    for (const id of BROWSER_IDS) {
+      if (inventory.browsers.get(id) !== null) add({ source: 'runtime', id, version: 'system', provenance: 'system' });
+    }
+    for (const entry of inventory.manifest.entries) {
+      if (entry.installedPath === undefined || entry.kind === 'runtime-support') continue;
+      add({ source: entry.kind, id: entry.id, version: entry.version, provenance: entry.source === 'local-import' ? 'local-import' : 'managed' });
+    }
+    const targets = await Promise.all(optionPromises);
     return PerformanceCatalogResponseSchema.parse({ targets });
   }
 
   async resolveProfile(target: ResolvedPerformanceTarget, profile: PerformanceProfileRef): Promise<ResolvedProfile | null> {
     const option = (await this.profilesFor(target)).find((item) => item.id === profile.id && item.available);
     if (option === undefined) return null;
-    const config = profileConfig(target.runtimeId, option.id);
+    const config = profileConfig(target, option.id);
     return { ref: { id: option.id, label: option.label }, ...config };
   }
 
   private async profilesFor(target: ResolvedPerformanceTarget): Promise<PerformanceProfileOption[]> {
-    if (target.runtimeId === 'bun') return [
+    if (launchKind(target) === 'bun') return [
       { ...NATURAL_PROFILE, label: 'Natural JSC' },
       { id: 'jsc-interpreter', label: 'Interpreter only', description: 'Disables every JavaScriptCore JIT tier through BUN_JSC_useJIT=false.', available: true, classification: 'internal' },
       { id: 'jsc-baseline', label: 'Baseline ceiling', description: 'Keeps the Baseline JIT but disables the DFG and FTL optimizing tiers.', available: true, classification: 'internal' },
       { id: 'jsc-no-ftl', label: 'DFG ceiling', description: 'Keeps LLInt, Baseline and DFG while disabling the top FTL tier.', available: true, classification: 'internal' }
     ];
+    if (target.engineId !== 'v8' || launchKind(target) === 'embedded-browser' || launchKind(target) === 'external-browser') {
+      return [{ ...NATURAL_PROFILE, label: `Natural ${engineLabel(target.engineId)}` }];
+    }
     const options = await this.readV8Options(target);
     const supports = (name: string): boolean => new RegExp(`--(?:\\[no-\\])?${name}(?:\\s|$)`, 'm').test(options);
     return [
-      { ...NATURAL_PROFILE, label: target.runtimeId === 'deno' ? 'Natural Deno / V8' : 'Natural Node.js / V8' },
+      { ...NATURAL_PROFILE, label: `Natural ${targetName(target.runtimeId)} / V8` },
       { id: 'jitless', label: 'JITless', description: 'V8 executable-memory generation disabled; useful as an interpreter-oriented baseline.', available: supports('jitless'), classification: 'stable' },
       { id: 'baseline-ceiling', label: 'Baseline ceiling', description: 'Optimizing compiler disabled while baseline compilation remains available.', available: supports('opt'), classification: 'internal' },
       { id: 'maglev-disabled', label: 'Maglev disabled', description: 'Natural V8 tiering with the Maglev mid-tier disabled.', available: supports('maglev'), classification: 'experimental' }
@@ -138,15 +192,120 @@ export class RegistryPerformanceTargetResolver implements PerformanceTargetResol
     const cached = this.v8Options.get(target.executable);
     if (cached !== undefined) return cached;
     const pending = new Promise<string>((resolve) => {
-      const args = target.runtimeId === 'deno' ? ['eval', '--v8-flags=--help', ''] : ['--v8-options'];
-      execFile(target.executable, args, {
-        windowsHide: true, timeout: 8_000, maxBuffer: 8 * 1024 * 1024,
-        env: { SystemRoot: process.env['SystemRoot'], windir: process.env['windir'], PATH: `${dirname(target.executable)};${join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32')}` }
-      }, (error, stdout, stderr) => resolve(error && !stdout ? stderr : `${stdout}\n${stderr}`));
+      const args = launchKind(target) === 'deno' ? ['eval', '--v8-flags=--help', ''] : ['--v8-options'];
+      try {
+        execFile(target.executable, args, {
+          windowsHide: true, timeout: 8_000, maxBuffer: 8 * 1024 * 1024,
+          env: { SystemRoot: process.env['SystemRoot'], windir: process.env['windir'], PATH: `${dirname(target.executable)};${join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32')}` }
+        }, (error, stdout, stderr) => resolve(error && !stdout ? stderr : `${stdout}\n${stderr}`));
+      } catch {
+        resolve('');
+      }
     });
     this.v8Options.set(target.executable, pending);
     return pending;
   }
+
+  private async inventory(): Promise<PerformanceInventory> {
+    const [manifest, nvm, browserRows] = await Promise.all([
+      this.inventoryDeps.readManifest?.() ?? readManifest(),
+      this.inventoryDeps.detectNvm?.() ?? detectNvmNode(),
+      Promise.all(BROWSER_IDS.map(async (id) => [id, await (this.inventoryDeps.detectBrowser?.(id) ?? detectSystemBrowser(id))] as const))
+    ]);
+    return { manifest, nvm, browsers: new Map(browserRows) };
+  }
+
+  private async resolveFromInventory(ref: PerformanceTargetRef, inventory: PerformanceInventory): Promise<ResolvedPerformanceTarget | null> {
+    if (ref.source === 'runtime' && ref.id === 'browser') return embeddedBrowserTarget(ref);
+    if (ref.source === 'runtime' && BROWSER_IDS.includes(ref.id as BrowserId)) {
+      const detected = inventory.browsers.get(ref.id as BrowserId) ?? null;
+      return detected === null ? null : externalBrowserTarget(ref, detected);
+    }
+    if (ref.source === 'runtime' && ref.id === 'node' && ref.provenance === 'nvm') {
+      const selected = inventory.nvm?.versions.find((item) => item.version === ref.version);
+      return selected === undefined ? null : runtimeTarget(ref, selected.exePath, selected.version, 'node');
+    }
+    if (ref.source === 'runtime' && this.runtimes.ids().includes(ref.id)) {
+      const runtime = this.runtimes.get(ref.id as 'node' | 'deno' | 'bun');
+      const resolved = await runtime?.resolveExecutable(ref.version);
+      return resolved == null || runtime === null ? null : runtimeTarget(ref, resolved.exePath, resolved.version, runtime.id);
+    }
+    return managedTarget(ref, inventory.manifest.entries);
+  }
+}
+
+function launchKind(target: ResolvedPerformanceTarget): NonNullable<ResolvedPerformanceTarget['launchKind']> {
+  if (target.launchKind !== undefined) return target.launchKind;
+  if (target.runtimeId === 'node' || target.runtimeId === 'deno' || target.runtimeId === 'bun') return target.runtimeId;
+  if (target.runtimeId === 'browser') return 'embedded-browser';
+  if (BROWSER_IDS.includes(target.runtimeId as BrowserId)) return 'external-browser';
+  return 'shell';
+}
+
+function engineFor(id: string): string {
+  if (id === 'bun' || id === 'javascriptcore') return 'javascriptcore';
+  if (id === 'firefox' || id === 'spidermonkey') return 'spidermonkey';
+  if (id === 'txiki' || id === 'quickjs') return 'quickjs';
+  if (id === 'chrome' || id === 'browser' || id === 'node' || id === 'deno' || id === 'v8' || id === 'd8-debug') return 'v8';
+  return id;
+}
+
+function runtimeTarget(ref: PerformanceTargetRef, executable: string, version: string, runtimeId: 'node' | 'deno' | 'bun'): ResolvedPerformanceTarget {
+  return {
+    ref: { ...ref, version }, executable, runtimeId, runtimeVersion: version,
+    engineId: engineFor(runtimeId), launchKind: runtimeId
+  };
+}
+
+function embeddedBrowserTarget(ref: PerformanceTargetRef): ResolvedPerformanceTarget {
+  const version = process.versions.chrome ?? process.versions.v8 ?? 'embedded';
+  return {
+    ref: { ...ref, version }, executable: process.execPath, runtimeId: 'browser', runtimeVersion: version,
+    engineId: 'v8', engineVersion: process.versions.v8, launchKind: 'embedded-browser'
+  };
+}
+
+function externalBrowserTarget(ref: PerformanceTargetRef, detected: DetectedRuntime): ResolvedPerformanceTarget {
+  return {
+    ref: { ...ref, version: detected.version }, executable: detected.exePath, runtimeId: ref.id,
+    runtimeVersion: detected.version, engineId: engineFor(ref.id), launchKind: 'external-browser'
+  };
+}
+
+function managedTarget(ref: PerformanceTargetRef, entries: readonly ManifestEntry[]): ResolvedPerformanceTarget | null {
+  const kind = ref.source === 'engine' ? 'engine' : 'runtime';
+  const matches = entries.filter((entry) => entry.kind === kind && entry.id === ref.id && entry.installedPath !== undefined && (ref.version === undefined || ref.version === 'auto' || entry.version === ref.version));
+  const entry = [...matches].sort((left, right) => right.version.localeCompare(left.version, undefined, { numeric: true }))[0];
+  if (entry?.installedPath === undefined) return null;
+  const executableName = MANAGED_EXECUTABLES[entry.id];
+  if (executableName === undefined) return null;
+  const executable = join(entry.installedPath, executableName);
+  if (!existsSync(executable)) return null;
+  const isRuntime = entry.kind === 'runtime';
+  const kindOfLaunch = isRuntime && (entry.id === 'node' || entry.id === 'deno' || entry.id === 'bun') ? entry.id : 'shell';
+  return {
+    ref: { ...ref, version: entry.version }, executable, runtimeId: entry.id, runtimeVersion: entry.version,
+    engineId: engineFor(entry.id), ...(isRuntime ? {} : { engineVersion: entry.version }), launchKind: kindOfLaunch
+  };
+}
+
+function targetName(id: string): string {
+  const names: Readonly<Record<string, string>> = {
+    node: 'Node.js', deno: 'Deno', bun: 'Bun', browser: 'Chromium (embedded)', chrome: 'Google Chrome', firefox: 'Firefox',
+    txiki: 'txiki.js', v8: 'V8', 'd8-debug': 'V8 (debug)', spidermonkey: 'SpiderMonkey', javascriptcore: 'JavaScriptCore',
+    quickjs: 'QuickJS-ng', graaljs: 'GraalJS', hermes: 'Hermes', chakra: 'ChakraCore', 'moddable-xs': 'Moddable XS'
+  };
+  return names[id] ?? id;
+}
+
+function engineLabel(id: string): string {
+  return id === 'v8' ? 'V8' : id === 'javascriptcore' ? 'JavaScriptCore' : id === 'spidermonkey' ? 'SpiderMonkey' : id === 'quickjs' ? 'QuickJS' : targetName(id);
+}
+
+function targetLabel(ref: PerformanceTargetRef, resolvedVersion?: string): string {
+  const version = resolvedVersion ?? ref.version ?? '';
+  const source = ref.provenance === 'builtin' ? 'built-in' : ref.provenance === 'nvm' ? 'nvm' : ref.provenance === 'system' ? 'system' : ref.provenance === 'local-import' ? 'local' : ref.provenance === 'managed' ? 'managed' : '';
+  return `${targetName(ref.id)} ${version}${source ? ` · ${source}` : ''}`.trim();
 }
 
 interface ActivePerformanceRun { readonly requestId: string; handle: RunHandle | null; cancelled: boolean }
@@ -154,6 +313,8 @@ export interface PerformanceManagerDeps {
   readonly targetResolver: PerformanceTargetResolver;
   readonly emit: (event: PerformanceEvent) => void;
   readonly createRunner?: () => ProcessRunner;
+  readonly createBrowserRunner?: () => BrowserRuntimeRunner;
+  readonly createExternalBrowserRunner?: () => BrowserRuntimeRunner;
   readonly randomSeed?: () => number;
 }
 
@@ -168,8 +329,14 @@ class PerformanceExecutionError extends Error {
 
 export class PerformanceManager {
   private readonly runner: ProcessRunner;
+  private readonly browserRunner: BrowserRuntimeRunner;
+  private readonly externalBrowserRunner: BrowserRuntimeRunner;
   private readonly active = new Map<string, ActivePerformanceRun>();
-  constructor(private readonly deps: PerformanceManagerDeps) { this.runner = deps.createRunner?.() ?? new ProcessRunner(); }
+  constructor(private readonly deps: PerformanceManagerDeps) {
+    this.runner = deps.createRunner?.() ?? new ProcessRunner();
+    this.browserRunner = deps.createBrowserRunner?.() ?? new EmbeddedBrowserRuntime();
+    this.externalBrowserRunner = deps.createExternalBrowserRunner?.() ?? new ExternalBrowserRuntime();
+  }
 
   catalog(): Promise<PerformanceCatalogResponse> { return this.deps.targetResolver.catalog(); }
 
@@ -273,7 +440,7 @@ export class PerformanceManager {
     const root = workspaceRoot(req.workspaceId);
     await fs.mkdir(join(root, '.rhbuild'), { recursive: true });
     const dir = await fs.mkdtemp(join(root, '.rhbuild', 'performance-run-'));
-    const harnessPath = join(dir, 'group.mjs');
+    const harnessPath = join(dir, 'group.js');
     const seed = (this.deps.randomSeed?.() ?? Math.floor(Math.random() * 0x7fffffff)) >>> 0;
     const mitataModule = await materializeMitataModule(dir);
     await fs.writeFile(harnessPath, await buildHarness(req, groupCases, seed, target, profile, groupId, mitataModule, root), 'utf8');
@@ -310,15 +477,17 @@ export class PerformanceManager {
       let newline = pending.indexOf('\n');
       while (newline !== -1) { acceptLine(pending.slice(0, newline)); pending = pending.slice(newline + 1); newline = pending.indexOf('\n'); }
     };
-    const off = this.runner.onEvent((event) => {
+    const runner = launchKind(target) === 'embedded-browser' ? this.browserRunner : launchKind(target) === 'external-browser' ? this.externalBrowserRunner : this.runner;
+    const off = runner.onEvent((event) => {
       if (active.handle?.runId !== event.runId) return;
       if (event.type === 'stdout') parseOutput(event.data);
+      else if (event.type === 'console') parseOutput(`${event.text}\n`);
       else if (event.type === 'stderr' && stderr.join('').length < 100_000) stderr.push(event.data);
     });
     try {
-      const handle = this.runner.run({
+      const handle = runner.run({
         exePath: target.executable,
-        args: launchArgs(target.runtimeId, harnessPath, profile.flags, req.measurement.gcMode),
+        args: performanceLaunchArgs(target, harnessPath, profile.flags, req.measurement.gcMode),
         cwd: dir,
         timeoutMs: req.measurement.timeoutMs,
         extraEnv: profile.extraEnv
@@ -341,7 +510,7 @@ export class PerformanceManager {
       };
     } finally {
       off(); active.handle = null;
-      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => undefined);
     }
   }
 
@@ -371,8 +540,9 @@ async function materializeMitataModule(runDir: string): Promise<string> {
 
 async function buildHarness(req: PerformanceStartRequest, groupCases: readonly PerformanceCase[], seed: number, target: ResolvedPerformanceTarget, profile: ResolvedProfile, groupId: string, mitataModule: string, workspaceDir: string): Promise<string> {
   const payload = JSON.stringify(groupCases.map((item) => ({ id: item.id, label: item.label, body: item.body, mode: item.mode })));
+  const setupPrelude = splitCasePrelude(req.setup);
   const preludes = groupCases.map((item) => splitCasePrelude(item.body));
-  const caseImports = [...new Set(preludes.flatMap((item) => item.imports))].join('\n');
+  const caseImports = [...new Set([...setupPrelude.imports, ...preludes.flatMap((item) => item.imports)])].join('\n');
   const visibleFlags = [...profile.flags, ...Object.entries(profile.extraEnv).map(([key, value]) => `${key}=${value}`)];
   const environment = JSON.stringify({
     platform: platform(), arch: arch(), cpu: cpus()[0]?.model ?? 'unknown', logicalCores: Math.max(1, cpus().length),
@@ -386,10 +556,12 @@ async function buildHarness(req: PerformanceStartRequest, groupCases: readonly P
   ).join(',\n');
   const source = `import { now, do_not_optimize } from '__rh_performance_kernel__';
 
-// Shared setup is evaluated once per isolated target/profile process.
-${req.setup}
-
 ${caseImports}
+
+globalThis.__rhPerformanceDone = (async () => {
+
+// Shared setup is evaluated once per isolated target/profile process.
+${setupPrelude.body}
 
 const __rhPerfCases = ${payload};
 const __rhPerfSeed = ${seed};
@@ -398,8 +570,16 @@ const __rhPerfWarmupRounds = ${req.measurement.warmupRounds};
 const __rhPerfIterationsPerSample = ${req.measurement.iterationsPerSample};
 const __rhPerfGcMode = ${JSON.stringify(req.measurement.gcMode)};
 const __rhPerfEnvironment = ${environment};
+if (typeof navigator !== 'undefined' && typeof navigator.userAgent === 'string') {
+  const browserVersion = /(?:Chrome|Firefox)\\/([\\d.]+)/.exec(navigator.userAgent)?.[1];
+  if (browserVersion) __rhPerfEnvironment.runtimeVersion = browserVersion;
+}
 const __rhPerfPrefix = ${JSON.stringify(PERF_PREFIX)};
-const __rhPerfEmit = (value) => console.log(__rhPerfPrefix + JSON.stringify(value));
+const __rhPerfEmit = (value) => {
+  if (typeof globalThis.__rhPerformanceEmit === 'function') globalThis.__rhPerformanceEmit(value);
+  else if (globalThis.console && typeof globalThis.console.log === 'function') globalThis.console.log(__rhPerfPrefix + JSON.stringify(value));
+  else if (typeof globalThis.print === 'function') globalThis.print(__rhPerfPrefix + JSON.stringify(value));
+};
 const __rhPerfRunners = [${runners}];
 const __rhPerfBatches = [${batches}];
 const __rhPerfRawSamples = [];
@@ -451,7 +631,12 @@ try {
     ? (globalThis.Bun?.revision ?? globalThis.Bun?.version ?? undefined)
     : (globalThis.Deno?.version?.v8 ?? globalThis.process?.versions?.v8 ?? undefined);
   __rhPerfEmit({ type: 'result', result: { requestId: ${JSON.stringify(req.requestId)}, groupId: ${JSON.stringify(groupId)}, target: ${JSON.stringify(target.ref)}, profile: ${JSON.stringify(profile.ref)}, environment: { ...__rhPerfEnvironment, ...(engineVersion ? { engineVersion } : {}) }, results, comparisons: [], scheduleSeed: __rhPerfSeed, rounds: __rhPerfSampleCount } });
-} catch (error) { console.error(error instanceof Error ? error.stack ?? error.message : String(error)); globalThis.process ? (process.exitCode = 1) : Deno.exit(1); }
+} catch (error) {
+  if (globalThis.console && typeof globalThis.console.error === 'function') globalThis.console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+  if (globalThis.process) { process.exitCode = 1; return; }
+  if (globalThis.Deno && typeof globalThis.Deno.exit === 'function') { globalThis.Deno.exit(1); return; }
+  throw error;
+}
 
 function __rhPerfMetrics(items) {
   const values = items.map((item) => item.durationNs / item.iterations).filter(Number.isFinite).sort((a, b) => a - b);
@@ -467,7 +652,8 @@ function __rhPerfWarnings(item, value) {
   if (value.meanNsPerOp > 0 && value.stddevNsPerOp / value.meanNsPerOp > .2) out.push({ code: 'high-variance', message: 'High variance (>20%); increase samples or reduce system load.' });
   if (value.medianNsPerOp < 1) out.push({ code: 'timer-saturation', message: 'Sub-nanosecond result is suspicious; increase cycles per sample.' });
   return out;
-}`;
+}
+})();`;
   try {
     const resolveDir = req.setupSourceLabel ? dirname(join(workspaceDir, req.setupSourceLabel)) : workspaceDir;
     const compiled = await build({
@@ -479,14 +665,14 @@ function __rhPerfWarnings(item, value) {
       },
       bundle: true,
       write: false,
-      format: 'esm',
+      format: 'iife',
       platform: 'neutral',
       // Workspace packages are bundled into the isolated harness. The child
-      // file is ESM (`.mjs`) and runs under Node, Deno, or Bun; leaving a
-      // CommonJS `require('package')` external would therefore fail before a
-      // case starts because those ESM files do not provide `require`.
+      // output is a self-contained script that also runs in browser pages and
+      // standalone engine shells; leaving CommonJS packages external would
+      // fail before a case starts in those targets.
       packages: 'bundle',
-      target: 'esnext',
+      target: 'es2018',
       treeShaking: false,
       sourcemap: 'inline',
       plugins: [{
@@ -509,17 +695,21 @@ function __rhPerfWarnings(item, value) {
   }
 }
 
-function launchArgs(runtimeId: RuntimeId, harnessPath: string, flags: readonly string[], gcMode: PerformanceStartRequest['measurement']['gcMode']): string[] {
+export function performanceLaunchArgs(target: ResolvedPerformanceTarget, harnessPath: string, flags: readonly string[], gcMode: PerformanceStartRequest['measurement']['gcMode']): string[] {
+  const kind = launchKind(target);
   const exposeGc = gcMode === 'runtime' ? [] : ['--expose-gc'];
-  if (runtimeId === 'deno') {
+  if (kind === 'embedded-browser' || kind === 'external-browser') return [harnessPath];
+  if (kind === 'deno') {
     const v8Flags = [...flags, ...exposeGc];
     return ['run', '--quiet', ...(v8Flags.length ? [`--v8-flags=${v8Flags.join(',')}`] : []), harnessPath];
   }
-  if (runtimeId === 'node') return [...flags, ...exposeGc, harnessPath];
-  return [...flags, ...(gcMode === 'runtime' ? [] : ['--expose-gc']), harnessPath];
+  if (kind === 'node') return [...flags, ...exposeGc, harnessPath];
+  if (kind === 'bun') return [...flags, ...(gcMode === 'runtime' ? [] : ['--expose-gc']), harnessPath];
+  if (target.runtimeId === 'txiki') return ['run', ...flags, harnessPath];
+  return [...flags, harnessPath];
 }
-function profileConfig(runtimeId: RuntimeId, profileId: string): Pick<ResolvedProfile, 'flags' | 'extraEnv'> {
-  if (runtimeId === 'bun') {
+function profileConfig(target: ResolvedPerformanceTarget, profileId: string): Pick<ResolvedProfile, 'flags' | 'extraEnv'> {
+  if (launchKind(target) === 'bun') {
     if (profileId === 'jsc-interpreter') return { flags: [], extraEnv: { BUN_JSC_useJIT: 'false' } };
     if (profileId === 'jsc-baseline') return { flags: [], extraEnv: { BUN_JSC_useDFGJIT: 'false', BUN_JSC_useFTLJIT: 'false' } };
     if (profileId === 'jsc-no-ftl') return { flags: [], extraEnv: { BUN_JSC_useFTLJIT: 'false' } };
@@ -530,7 +720,6 @@ function profileConfig(runtimeId: RuntimeId, profileId: string): Pick<ResolvedPr
   if (profileId === 'maglev-disabled') return { flags: ['--no-maglev'], extraEnv: {} };
   return { flags: [], extraEnv: {} };
 }
-function runtimeLabel(id: RuntimeId): string { return id === 'node' ? 'Node.js' : id === 'deno' ? 'Deno' : 'Bun'; }
 function groupKey(target: PerformanceTargetRef, profile: PerformanceProfileRef): string { return `${target.source}:${target.id}:${target.version ?? 'auto'}:${profile.id}`; }
 function targetRefMatches(left: PerformanceTargetRef | undefined, right: PerformanceTargetRef): boolean {
   if (left === undefined) return false;

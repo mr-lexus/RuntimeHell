@@ -38,6 +38,51 @@ export type EditorRenderWhitespace = z.infer<typeof EditorRenderWhitespaceSchema
 export const EditorCursorStyleSchema = z.enum(['line', 'block', 'underline', 'line-thin', 'block-outline', 'underline-thin']);
 export type EditorCursorStyle = z.infer<typeof EditorCursorStyleSchema>;
 
+// Keep the validators used by PATCH payloads free of defaults. In Zod 4,
+// object.partial() intentionally preserves nested .default() wrappers, so
+// deriving a patch schema from the complete settings schema would turn a
+// one-field editor update into an update containing every editor default.
+const EditorSettingsValueSchema = z
+  .object({
+    fontSize: z.number().int().min(10).max(32),
+    fontLigatures: z.boolean(),
+    tabSize: z.number().int().min(1).max(8),
+    insertSpaces: z.boolean(),
+    wordWrap: EditorWordWrapSchema,
+    lineNumbers: EditorLineNumbersSchema,
+    minimap: z.boolean(),
+    folding: z.boolean(),
+    renderWhitespace: EditorRenderWhitespaceSchema,
+    bracketPairColorization: z.boolean(),
+    smoothScrolling: z.boolean(),
+    stickyScroll: z.boolean(),
+    cursorStyle: EditorCursorStyleSchema,
+    inlineInspector: z.boolean(),
+    /** Opt-in modal Vim/Neovim-style editing layer for Monaco. */
+    vimMode: z.boolean()
+  })
+  .strict();
+
+const EditorSettingsSchema = z
+  .object({
+    fontSize: EditorSettingsValueSchema.shape.fontSize.default(13),
+    fontLigatures: EditorSettingsValueSchema.shape.fontLigatures.default(true),
+    tabSize: EditorSettingsValueSchema.shape.tabSize.default(2),
+    insertSpaces: EditorSettingsValueSchema.shape.insertSpaces.default(true),
+    wordWrap: EditorSettingsValueSchema.shape.wordWrap.default('off'),
+    lineNumbers: EditorSettingsValueSchema.shape.lineNumbers.default('on'),
+    minimap: EditorSettingsValueSchema.shape.minimap.default(false),
+    folding: EditorSettingsValueSchema.shape.folding.default(true),
+    renderWhitespace: EditorSettingsValueSchema.shape.renderWhitespace.default('selection'),
+    bracketPairColorization: EditorSettingsValueSchema.shape.bracketPairColorization.default(true),
+    smoothScrolling: EditorSettingsValueSchema.shape.smoothScrolling.default(true),
+    stickyScroll: EditorSettingsValueSchema.shape.stickyScroll.default(false),
+    cursorStyle: EditorSettingsValueSchema.shape.cursorStyle.default('line'),
+    inlineInspector: EditorSettingsValueSchema.shape.inlineInspector.default(true),
+    vimMode: EditorSettingsValueSchema.shape.vimMode.default(false)
+  })
+  .strict();
+
 export const DrawerTabSchema = z.enum(['console', 'inspector', 'analysis', 'packages', 'runtimes']);
 
 const SessionTabSchema = z.object({ workspaceId: z.string().min(1), relPath: z.string().min(1) }).strict();
@@ -64,26 +109,7 @@ export const AppSettingsSchema = z
         uiScale: UiScaleSchema
       })
       .strict(),
-    editor: z
-      .object({
-        fontSize: z.number().int().min(10).max(32).default(13),
-        fontLigatures: z.boolean().default(true),
-        tabSize: z.number().int().min(1).max(8).default(2),
-        insertSpaces: z.boolean().default(true),
-        wordWrap: EditorWordWrapSchema.default('off'),
-        lineNumbers: EditorLineNumbersSchema.default('on'),
-        minimap: z.boolean().default(false),
-        folding: z.boolean().default(true),
-        renderWhitespace: EditorRenderWhitespaceSchema.default('selection'),
-        bracketPairColorization: z.boolean().default(true),
-        smoothScrolling: z.boolean().default(true),
-        stickyScroll: z.boolean().default(false),
-        cursorStyle: EditorCursorStyleSchema.default('line'),
-        inlineInspector: z.boolean().default(true),
-        /** Opt-in modal Vim/Neovim-style editing layer for Monaco. */
-        vimMode: z.boolean().default(false)
-      })
-      .strict(),
+    editor: EditorSettingsSchema,
     layout: z
       .object({
         drawerOpen: z.boolean(),
@@ -106,7 +132,7 @@ export const SettingsPatchSchema = z
   .object({
     prefs: AppSettingsSchema.shape.prefs.partial().optional(),
     appearance: AppSettingsSchema.shape.appearance.partial().optional(),
-    editor: AppSettingsSchema.shape.editor.partial().optional(),
+    editor: EditorSettingsValueSchema.partial().optional(),
     layout: AppSettingsSchema.shape.layout.partial().optional(),
     session: AppSettingsSchema.shape.session.partial().optional()
   })

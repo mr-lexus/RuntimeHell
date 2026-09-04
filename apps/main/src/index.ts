@@ -25,6 +25,7 @@ function createWindow(): BrowserWindow {
     minWidth: 760,
     minHeight: 520,
     title: 'RuntimeHell',
+    icon: join(__dirname, 'assets/icon.png'),
     backgroundColor: '#0a0f14',
     autoHideMenuBar: true,
     titleBarStyle: 'hidden',

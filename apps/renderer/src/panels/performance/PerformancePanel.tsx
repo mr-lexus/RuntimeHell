@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { PerformanceCase, PerformanceCaseResult, PerformanceRunResult, PerformanceTargetOption } from '@rh/protocol';
+import type { PerformanceCase, PerformanceCaseResult, PerformanceRunResult, PerformanceTargetOption, PerformanceTargetSelection } from '@rh/protocol';
 import type { SelectionInfo } from '../../editor/selection-service';
 import { BarLoader, BlockLoader, Button, EmptyState, InstrumentFrame } from '../../ui/primitives';
 import { performanceTargetKey, usePerformance } from '../../state/performance';
@@ -61,73 +61,57 @@ function percentDelta(value: number | null): string {
   return `${value > 0 ? '+' : ''}${value.toFixed(1)}%`;
 }
 
-interface ProfileMultiSelectProps {
-  caseLabel: string;
-  profiles: PerformanceTargetOption['profiles'];
-  selectedIds: readonly string[];
-  selectedLabels: readonly string[];
-  disabled: boolean;
-  onToggle: (profileId: string) => void;
-}
-
-function ProfileMultiSelect({ caseLabel, profiles, selectedIds, selectedLabels, disabled, onToggle }: ProfileMultiSelectProps): React.JSX.Element {
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState({ top: 0, left: 0, width: 250 });
-  const updatePosition = (): void => {
-    const trigger = triggerRef.current;
-    if (!trigger) return;
-    const rect = trigger.getBoundingClientRect();
-    const width = Math.max(rect.width, 250);
-    const margin = 8;
-    const left = Math.min(Math.max(margin, rect.left), Math.max(margin, window.innerWidth - width - margin));
-    const menuHeight = menuRef.current?.getBoundingClientRect().height ?? 280;
-    const below = rect.bottom + 4;
-    const top = below + menuHeight <= window.innerHeight - margin || rect.top < menuHeight + margin + 4
-      ? below
-      : Math.max(margin, rect.top - menuHeight - 4);
-    setPosition({ top, left, width });
-  };
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    updatePosition();
-    const onViewportChange = (): void => updatePosition();
-    window.addEventListener('resize', onViewportChange);
-    window.addEventListener('scroll', onViewportChange, true);
-    return () => {
-      window.removeEventListener('resize', onViewportChange);
-      window.removeEventListener('scroll', onViewportChange, true);
-    };
-  }, [open]);
+function RunMatrixDialog({ open, onClose }: { open: boolean; onClose: () => void }): React.JSX.Element | null {
+  const state = usePerformance();
+  const [draft, setDraft] = useState<PerformanceTargetSelection[]>(state.runTargets);
+  useEffect(() => { if (open) setDraft(state.runTargets); }, [open, state.runTargets]);
   useEffect(() => {
     if (!open) return;
-    const onPointerDown = (event: PointerEvent): void => {
-      const target = event.target;
-      if (target instanceof Node && (triggerRef.current?.contains(target) || menuRef.current?.contains(target))) return;
-      setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent): void => { if (event.key === 'Escape') setOpen(false); };
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [open]);
-  const summary = selectedLabels.length ? `profiles · ${selectedLabels.length} selected` : 'select optimizer profiles';
-  return <>
-    <div className="rh-perf-case-profiles">
-      <button ref={triggerRef} type="button" className="rh-perf-profile-trigger" aria-label={`${caseLabel} optimizer profiles`} aria-expanded={open} disabled={disabled} title={selectedLabels.join(', ')} onClick={() => setOpen((value) => !value)}>{summary}</button>
-    </div>
-    {open && createPortal(<div ref={menuRef} className="rh-perf-profile-menu" role="listbox" aria-label={`${caseLabel} optimizer profiles`} aria-multiselectable="true" style={{ top: position.top, left: position.left, width: position.width }} onPointerDown={(event) => event.stopPropagation()}>
-      {profiles.filter((profile) => profile.available).map((profile) => <label key={profile.id} title={profile.description}>
-        <input type="checkbox" checked={selectedIds.includes(profile.id)} disabled={disabled} onChange={() => onToggle(profile.id)} />
-        <span>{profile.label}</span><small>{profile.classification}</small>
-      </label>)}
-    </div>, document.body)}
-  </>;
+    const closeOnEscape = (event: KeyboardEvent): void => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [open, onClose]);
+  if (!open) return null;
+  const targets = state.catalog?.targets.filter((target) => target.available) ?? [];
+  const isSelected = (target: PerformanceTargetOption): boolean => draft.some((item) => performanceTargetKey(item.target) === performanceTargetKey(target));
+  const selectedProfiles = (target: PerformanceTargetOption): string[] => draft.find((item) => performanceTargetKey(item.target) === performanceTargetKey(target))?.profiles.map((profile) => profile.id) ?? [];
+  const toggleTarget = (target: PerformanceTargetOption): void => {
+    const key = performanceTargetKey(target);
+    if (isSelected(target)) setDraft((items) => items.filter((item) => performanceTargetKey(item.target) !== key));
+    else {
+      const profile = target.profiles.find((item) => item.available);
+      if (profile) setDraft((items) => [...items, { target: target.ref, profiles: [{ id: profile.id, label: profile.label }] }]);
+    }
+  };
+  const toggleProfile = (target: PerformanceTargetOption, profileId: string): void => {
+    const key = performanceTargetKey(target);
+    setDraft((items) => items.map((item) => {
+      if (performanceTargetKey(item.target) !== key) return item;
+      const ids = item.profiles.map((profile) => profile.id);
+      const next = ids.includes(profileId) ? ids.filter((id) => id !== profileId) : [...ids, profileId];
+      return { ...item, profiles: next.length ? next.map((id) => ({ id, label: target.profiles.find((profile) => profile.id === id)?.label ?? id })) : item.profiles };
+    }));
+  };
+  return createPortal(<div className="rh-perf-run-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="rh-perf-run-dialog" role="dialog" aria-modal="true" aria-labelledby="rh-perf-run-dialog-title">
+      <header><div><strong id="rh-perf-run-dialog-title">RUN MATRIX</strong><span>Every selected runtime/profile runs every code case.</span></div><button type="button" className="rh-perf-dialog-close" onClick={onClose} aria-label="Close run matrix">×</button></header>
+      <div className="rh-perf-run-dialog-list">
+        {targets.map((target) => <div className={`rh-perf-run-target ${isSelected(target) ? 'is-selected' : ''}`} key={performanceTargetKey(target)}>
+          <label className="rh-perf-run-target-head"><input type="checkbox" checked={isSelected(target)} disabled={state.running} onChange={() => toggleTarget(target)} /><strong>{target.label}</strong><small>{target.engineId ?? 'runtime'}</small></label>
+          {isSelected(target) && <div className="rh-perf-run-profiles">{target.profiles.filter((profile) => profile.available).map((profile) => <label key={profile.id} title={profile.description}><input type="checkbox" checked={selectedProfiles(target).includes(profile.id)} disabled={state.running} onChange={() => toggleProfile(target, profile.id)} /><span>{profile.label}</span><small>{profile.classification}</small></label>)}</div>}
+        </div>)}
+        {targets.length === 0 && <span className="rh-perf-muted">No available runtimes found.</span>}
+      </div>
+      <footer><span>{draft.length} runtime{draft.length === 1 ? '' : 's'} · {draft.reduce((count, item) => count + item.profiles.length, 0)} profile runs</span><div><Button onClick={onClose}>cancel</Button><Button variant="primary" disabled={state.running || draft.length === 0} onClick={() => { state.setRunTargets(draft); onClose(); }}>save matrix</Button></div></footer>
+    </section>
+  </div>, document.body);
+}
+
+export function PerformanceRunMatrixControl(): React.JSX.Element {
+  const state = usePerformance();
+  const [open, setOpen] = useState(false);
+  const runCount = state.runTargets.reduce((count, item) => count + item.profiles.length, 0);
+  return <><Button className="rh-perf-run-matrix-button" onClick={() => setOpen(true)} disabled={state.running} title="Choose runtimes and optimizer profiles">{runCount ? `matrix · ${runCount} runs` : 'set run matrix'}</Button><RunMatrixDialog open={open} onClose={() => setOpen(false)} /></>;
 }
 
 function PerformanceChart({ results, cases }: { results: readonly PerformanceRunResult[]; cases: readonly PerformanceCase[] }): React.JSX.Element | null {
@@ -192,16 +176,11 @@ export function PerformancePanel({ activeFile, selection }: PerformancePanelProp
     <InstrumentFrame className="rh-perf-cases-frame" index="PERF" title="CASES" showHeader={false} state={state.running ? 'focused' : 'active'}>
       <div className="rh-perf-builder">
         <section className="rh-perf-section">
-         <div className="rh-perf-section-title"><span>CASES</span><span className="rh-perf-section-actions"><span>{state.cases.length}</span><Button onClick={addCase} disabled={!canAdd}>{selection ? '+ selection' : '+ file'}</Button></span></div>
+         <div className="rh-perf-section-title"><span>CASES</span><span className="rh-perf-section-actions"><span>{state.cases.length} cases · {state.runTargets.reduce((count, item) => count + item.profiles.length, 0)} runs</span><Button onClick={addCase} disabled={!canAdd}>{selection ? '+ selection' : '+ file'}</Button></span></div>
           {state.cases.length === 0 && <EmptyState title="Add a code sample" detail="Add the active file or a selection. Add more cases to compare them." />}
           <div className="rh-perf-cases">
             {state.cases.map((item, index) => {
-              const selectedTarget = item.target
-                ? state.catalog?.targets.find((candidate) => performanceTargetKey(candidate) === performanceTargetKey(item.target!))
-                : undefined;
               const linkedFile = item.sourceRef === undefined ? undefined : files.find((file) => (item.sourceRef?.fileId !== undefined && file.id === item.sourceRef.fileId) || file.relPath === item.sourceRef?.relPath);
-              const selectedProfileIds = item.profileIds ?? ['natural'];
-              const selectedProfileLabels = selectedTarget?.profiles.filter((profile) => selectedProfileIds.includes(profile.id)).map((profile) => profile.label) ?? [];
               return <article className={`rh-perf-case ${item.body.trim() ? '' : 'is-invalid'}`} key={item.id}>
               <div className="rh-perf-case-head">
                 <span className="rh-perf-case-index">{caseLetter(index)}</span>
@@ -211,17 +190,6 @@ export function PerformancePanel({ activeFile, selection }: PerformancePanelProp
                 </select>
                 <Button className="rh-perf-icon-button" aria-label={`Clone ${item.label}`} title="Clone case" onClick={() => state.duplicateCase(item.id)} disabled={state.running}>⧉</Button>
                 <Button className="rh-perf-icon-button" aria-label={`Remove ${item.label}`} title="Remove case" onClick={() => state.removeCase(item.id)} disabled={state.running}>×</Button>
-              </div>
-              <div className="rh-perf-case-runtime">
-                <label>runtime<select aria-label={`${item.label} runtime`} value={selectedTarget ? performanceTargetKey(selectedTarget) : ''} disabled={state.running || state.loadingCatalog} onChange={(event) => {
-                  const target = state.catalog?.targets.find((candidate) => performanceTargetKey(candidate) === event.target.value);
-                  state.setCaseTarget(item.id, target);
-                }}>
-                  <option value="">select runtime…</option>
-                  {(state.catalog?.targets ?? []).filter((target) => target.available).map((target) => <option key={performanceTargetKey(target)} value={performanceTargetKey(target)}>{target.label} · {target.engineId ?? 'engine'}</option>)}
-                </select></label>
-                {selectedTarget && <ProfileMultiSelect caseLabel={item.label} profiles={selectedTarget.profiles} selectedIds={selectedProfileIds} selectedLabels={selectedProfileLabels} disabled={state.running} onToggle={(profileId) => state.toggleCaseProfile(item.id, profileId)} />}
-                {!selectedTarget && !state.loadingCatalog && <small className="rh-perf-case-warning">Choose a runtime for this case.</small>}
               </div>
               {item.sourceRef ? <div className="rh-perf-case-reference" title={item.sourceRef.relPath}>
                 <span>{item.sourceMode === 'selection' ? `selection · ${linkedFile ? 'live' : 'snapshot'}` : `file · ${linkedFile ? 'live' : 'snapshot'}`}</span>
@@ -249,7 +217,7 @@ export function PerformancePanel({ activeFile, selection }: PerformancePanelProp
         <div className="rh-perf-progress-track" role="progressbar" aria-label="Performance experiment progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div>
         <div className="rh-perf-progress-meta"><span>{state.progressCompleted.toLocaleString()} / {state.progressTotal.toLocaleString()} work units</span><strong>{progressPercent}%</strong></div>
       </div>}
-      {state.results.length === 0 && Object.keys(state.errors).length === 0 && <div className="rh-perf-muted">No measurements yet. Each row will represent one isolated runtime/profile process.</div>}
+      {state.results.length === 0 && Object.keys(state.errors).length === 0 && <div className="rh-perf-muted">No measurements yet. {state.cases.length} code {state.cases.length === 1 ? 'case' : 'cases'} × {state.runTargets.reduce((count, item) => count + item.profiles.length, 0)} runtime/profile runs.</div>}
       {state.results.length > 0 && <div className="rh-perf-results-scroll">
         <div className="rh-perf-insights" aria-label="Performance summary">
           <div><small>FASTEST CELL</small><strong>{fastest ? formatNs(fastest.result.metrics.medianNsPerOp) : '—'}</strong><span>{fastest ? `${groupLabel(fastest.group)} · ${fastest.result.label}` : 'Run an experiment first'}</span></div>

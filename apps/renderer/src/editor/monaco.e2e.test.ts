@@ -73,4 +73,47 @@ describe.skipIf(!existsSync(mainEntry))('monaco e2e (built app)', () => {
       await app.close();
     }
   }, 60000);
+
+  it('keeps the Monaco context menu above the bottom dock', async () => {
+    const { app, page } = await launchApp();
+    try {
+      const consoleTab = page.locator('.rh-dock-tab[aria-label="console"]');
+      const dock = page.locator('.rh-dock');
+      const dockCollapsed = await dock.evaluate((element) => element.classList.contains('is-collapsed'));
+      const consoleSelected = await consoleTab.getAttribute('aria-selected') === 'true';
+      if (dockCollapsed || !consoleSelected) await consoleTab.click();
+
+      await page.evaluate(async () => {
+        const monaco = (window as unknown as Record<string, unknown>)['__rh_monaco'] as {
+          editor: { getEditors: () => Array<{ getAction: (id: string) => { run: () => Promise<void> } | null }> };
+        };
+        const action = monaco.editor.getEditors()[0]?.getAction('editor.action.showContextMenu');
+        if (!action) throw new Error('Monaco context-menu action is unavailable');
+        await action.run();
+      });
+      const menu = page.locator('.context-view.monaco-menu-container:not([aria-hidden="true"])');
+      await menu.waitFor({ state: 'visible', timeout: 5000 });
+      const layering = await menu.evaluate((contextMenu) => {
+        const source = document.querySelector<HTMLElement>('.rh-source-frame');
+        const dockElement = document.querySelector<HTMLElement>('.rh-dock');
+        if (!source || !dockElement) return null;
+        const sourceStyle = getComputedStyle(source);
+        const dockRect = dockElement.getBoundingClientRect();
+        const menuRect = contextMenu.getBoundingClientRect();
+        const overlapTop = Math.max(dockRect.top, menuRect.top);
+        const overlapBottom = Math.min(dockRect.bottom, menuRect.bottom);
+        const overlapLeft = Math.max(dockRect.left, menuRect.left);
+        const overlapRight = Math.min(dockRect.right, menuRect.right);
+        const hasOverlap = overlapTop < overlapBottom && overlapLeft < overlapRight;
+        const menuRoot = contextMenu.getRootNode();
+        const topmost = hasOverlap && menuRoot instanceof ShadowRoot
+          ? menuRoot.elementFromPoint((overlapLeft + overlapRight) / 2, (overlapTop + overlapBottom) / 2)?.closest('.context-view.monaco-menu-container') === contextMenu
+          : hasOverlap && document.elementFromPoint((overlapLeft + overlapRight) / 2, (overlapTop + overlapBottom) / 2)?.closest('.context-view.monaco-menu-container') === contextMenu;
+        return { zIndex: sourceStyle.zIndex, overflow: sourceStyle.overflow, hasOverlap, topmost };
+      });
+      expect(layering).toEqual({ zIndex: '10', overflow: 'visible', hasOverlap: true, topmost: true });
+    } finally {
+      await app.close();
+    }
+  }, 60000);
 });

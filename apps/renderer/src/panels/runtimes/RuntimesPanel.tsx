@@ -95,6 +95,7 @@ const RUNTIME_MARKS: Readonly<Record<string, string>> = {
   deno: '\ue7c0',
   bun: '\ue76f',
   browser: 'WEB',
+  chrome: '\uf268',
   firefox: '\uf269',
   txiki: 'TX',
   v8: 'V8',
@@ -119,6 +120,7 @@ const RUNTIME_LOGO_ASSETS = import.meta.glob('../../assets/runtime-logos/*.{svg,
 const RUNTIME_LOGO_ALIASES: Readonly<Record<string, readonly string[]>> = {
   node: ['node', 'nodejs'],
   browser: ['browser', 'chromium'],
+  chrome: ['chrome', 'google-chrome', 'chromium'],
   firefox: ['firefox', 'mozilla', 'gecko'],
   'd8-debug': ['d8-debug', 'd8', 'v8-debug', 'v8'],
   spidermonkey: ['spidermonkey', 'spider-monkey'],
@@ -491,7 +493,7 @@ function CatalogCard({
                 {state.activeRuntime === 'browser' ? <><RuntimeIcon glyph={ICONS.check} /> active runtime</> : <><RuntimeIcon glyph={ICONS.play} /> use for runs</>}
               </button>
             </div>
-          ) : entry.id === 'firefox' ? (
+          ) : entry.id === 'chrome' || entry.id === 'firefox' ? (
             <div className="rh-runtime-inline-row">
               <span style={SOURCE_BADGE}>system browser</span>
               {systemBrowser !== null ? (
@@ -503,7 +505,7 @@ function CatalogCard({
                 <span style={{ color: 'var(--text-faint)' }}>not detected on this system</span>
               )}
               <span className="rh-runtime-note" style={{ margin: 0 }}>
-                Firefox uses Gecko and SpiderMonkey; it is not yet a selectable embedded runner in RuntimeHell.
+                {entry.id === 'firefox' ? 'Firefox uses Gecko and SpiderMonkey.' : 'Chrome uses Chromium and V8.'} Detected installations are available in Performance Run Matrix.
               </span>
             </div>
           ) : (

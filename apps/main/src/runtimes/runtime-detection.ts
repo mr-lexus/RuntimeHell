@@ -21,7 +21,7 @@ export interface DetectedRuntime {
 }
 
 export type RuntimeId = 'node' | 'deno' | 'bun';
-export type BrowserId = 'firefox';
+export type BrowserId = 'chrome' | 'firefox';
 
 /**
  * Normalize `<exe> --version` output into a bare `X.Y.Z` version string.
@@ -35,7 +35,7 @@ export function parseRuntimeVersionOutput(id: RuntimeId | BrowserId, raw: string
   // The first X.Y.Z token in the first line is the version for all three
   // runtimes: `v24.18.0` (node), `deno 2.3.4 (stable, release, ...)` (deno),
   // `1.3.14` (bun), and `Mozilla Firefox 141.0.1` (Firefox).
-  return /(?:v)?(\d+\.\d+\.\d+)/.exec(firstLine)?.[1] ?? null;
+  return /(?:v)?(\d+(?:\.\d+){2,3})/.exec(firstLine)?.[1] ?? null;
 }
 
 /** Locate a system runtime via where.exe; returns null when absent. */
@@ -45,12 +45,19 @@ export function detectSystemRuntime(id: RuntimeId): Promise<DetectedRuntime | nu
 
 /** Locate a desktop browser on PATH or in its standard Windows install dirs. */
 export function detectSystemBrowser(id: BrowserId): Promise<DetectedRuntime | null> {
-  const candidates = [
-    id,
-    join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'Mozilla Firefox', 'firefox.exe'),
-    join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Mozilla Firefox', 'firefox.exe'),
-    join(process.env['LOCALAPPDATA'] ?? '', 'Mozilla Firefox', 'firefox.exe')
-  ];
+  const candidates = id === 'chrome'
+    ? [
+        'chrome',
+        join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+        join(process.env['LOCALAPPDATA'] ?? '', 'Google', 'Chrome', 'Application', 'chrome.exe')
+      ]
+    : [
+        'firefox',
+        join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'Mozilla Firefox', 'firefox.exe'),
+        join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Mozilla Firefox', 'firefox.exe'),
+        join(process.env['LOCALAPPDATA'] ?? '', 'Mozilla Firefox', 'firefox.exe')
+      ];
   return detectExecutable(id, candidates);
 }
 
@@ -77,17 +84,40 @@ function readExecutableVersion(
   resolve: (value: DetectedRuntime | null) => void,
   fallback: () => void
 ): void {
-  const ver = spawn(exePath, ['--version'], { windowsHide: true });
+  // Windows GUI browser executables may open a window (and never produce
+  // stdout) for `--version`. Read their PE ProductVersion without launching
+  // the browser itself. Runtime CLIs keep using their native version flag.
+  const isBrowser = id === 'chrome' || id === 'firefox';
+  const powershell = join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const ver = isBrowser && process.platform === 'win32'
+    ? spawn(powershell, ['-NoProfile', '-NonInteractive', '-Command', '[Diagnostics.FileVersionInfo]::GetVersionInfo($env:RH_BROWSER_EXE).ProductVersion'], {
+        windowsHide: true,
+        env: {
+          SystemRoot: process.env['SystemRoot'], windir: process.env['windir'], TEMP: process.env['TEMP'], TMP: process.env['TMP'],
+          PATH: join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32'), RH_BROWSER_EXE: exePath
+        }
+      })
+    : spawn(exePath, ['--version'], { windowsHide: true });
   let vout = '';
+  let settled = false;
+  const finish = (value: DetectedRuntime | null): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeout);
+    if (value === null) fallback(); else resolve(value);
+  };
+  const timeout = setTimeout(() => {
+    ver.kill();
+    finish(null);
+  }, 5_000);
   ver.stdout?.on('data', (d) => {
     vout += String(d);
   });
-  ver.on('error', fallback);
+  ver.on('error', () => finish(null));
   ver.on('close', (vc) => {
-    if (vc !== 0) return fallback();
+    if (vc !== 0) return finish(null);
     const version = parseRuntimeVersionOutput(id, vout);
-    if (version === null) return fallback();
-    resolve({ exePath, version });
+    finish(version === null ? null : { exePath, version });
   });
 }
 

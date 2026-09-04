@@ -62,6 +62,7 @@ describe('BinariesController.list', () => {
     const list = await controller.list();
     expect(list.systemRuntimes.node).toEqual({ exePath: 'C:/n.exe', version: '24.18.0' });
     expect(list.systemRuntimes.deno).toBeNull();
+    expect(list.systemBrowsers.chrome).toBeNull();
     expect(list.systemBrowsers.firefox).toBeNull();
     expect(list.nvm).toEqual(NVM);
     // LTS rows first (≤8), then current (≤3).

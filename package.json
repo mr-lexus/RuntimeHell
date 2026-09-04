@@ -6,6 +6,7 @@
   "packageManager": "pnpm@11.22.0",
   "main": "out/main/index.js",
   "scripts": {
+    "brand:icons": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-brand-assets.ps1",
     "dev": "electron-vite dev",
     "build": "electron-vite build && node scripts/copy-main-assets.mjs",
     "preview": "electron-vite preview",
