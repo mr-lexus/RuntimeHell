@@ -25,7 +25,7 @@ Tagged alpha releases are built by GitHub Actions for Windows x64 (NSIS installe
 
 ### Release pipeline
 
-Pushing a version tag such as `v0.1.0-alpha.0` starts the release workflow. It validates the alpha version, runs lint/typecheck/tests, builds on native Windows, Linux, and macOS runners, and publishes a draft GitHub prerelease after every platform job succeeds. The regular [CI workflow](.github/workflows/ci.yml) runs the same checks plus compatibility smoke probes on pull requests and pushes to `main`/`master`.
+Pushing a version tag such as `v0.1.0-alpha.0` starts the release workflow. It validates the alpha version, runs lint/typecheck/tests, builds on native Windows, Linux, and macOS runners, and publishes a GitHub prerelease after every platform job succeeds. The regular [CI workflow](.github/workflows/ci.yml) runs the same checks plus compatibility smoke probes on pull requests and pushes to `main`/`master`.
 
 | Platform | Runner | Artifacts |
 | --- | --- | --- |

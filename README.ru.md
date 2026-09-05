@@ -25,7 +25,7 @@ RuntimeHell — Windows-first приложение для разработчик
 
 ### Процесс релиза
 
-Отправка тега версии, например `v0.1.0-alpha.0`, запускает release-workflow. Он проверяет alpha-версию, выполняет lint/typecheck/тесты, собирает приложение на нативных runner'ах Windows, Linux и macOS и публикует черновик GitHub prerelease после успешной сборки всех платформ. Обычный [CI-workflow](.github/workflows/ci.yml) выполняет те же проверки и дополнительные smoke-тесты совместимости для pull request'ов и push в `main`/`master`.
+Отправка тега версии, например `v0.1.0-alpha.0`, запускает release-workflow. Он проверяет alpha-версию, выполняет lint/typecheck/тесты, собирает приложение на нативных runner'ах Windows, Linux и macOS и публикует GitHub prerelease после успешной сборки всех платформ. Обычный [CI-workflow](.github/workflows/ci.yml) выполняет те же проверки и дополнительные smoke-тесты совместимости для pull request'ов и push в `main`/`master`.
 
 | Платформа | Runner | Артефакты |
 | --- | --- | --- |
