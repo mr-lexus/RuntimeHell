@@ -109,14 +109,14 @@ jobs:
           pattern: runtimehell-*
           path: release-assets
           merge-multiple: false
-      - name: Create draft prerelease and upload installers
+      - name: Create prerelease and upload installers
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         shell: bash
         run: |
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --draft --prerelease --title "RuntimeHell $TAG (alpha)" --notes-file .github/alpha-release-notes.md
+            gh release create "$TAG" --prerelease --title "RuntimeHell $TAG (alpha)" --notes-file .github/alpha-release-notes.md
           fi
           mapfile -d '' assets < <(
             find release-assets -type f \( \
