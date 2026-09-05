@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 import type { PkgEvent, PkgOpResponse, PkgSearchRow } from '@rh/protocol';
 import { workspaceRoot } from '../workspace/files.js';
 import { managedRuntimeDir } from '../runtimes/runtime-resolver.js';
-import { commandLookup, executableName, isWindows } from '../platform.js';
+import { commandLookup, executableName, isWindows, managedRuntimeExecutablePath } from '../platform.js';
 
 export interface PackageServiceDeps {
   readonly emit: (event: PkgEvent) => void;
@@ -81,12 +81,14 @@ export async function resolveNpm(
   probeFile: (p: string) => Promise<boolean> = defaultProbe,
   whereNpm: () => Promise<string | null> = defaultWhereNpm
 ): Promise<NpmResolution> {
-  const npmCliRelative = join('node_modules', 'npm', 'bin', 'npm-cli.js');
+  const npmCliRelative = isWindows()
+    ? join('node_modules', 'npm', 'bin', 'npm-cli.js')
+    : join('lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
 
   // 1) Managed active runtime: bundled Node + its npm-cli.js.
   if (managedVersion !== null) {
     const dir = managedRuntimeDir(managedVersion);
-    const nodeExe = join(dir, executableName('node'));
+    const nodeExe = managedRuntimeExecutablePath(dir, 'node');
     const cliJs = join(dir, npmCliRelative);
     if ((await probeFile(nodeExe)) && (await probeFile(cliJs))) {
       return { kind: 'direct', nodeExe, cliJs, origin: 'managed' };

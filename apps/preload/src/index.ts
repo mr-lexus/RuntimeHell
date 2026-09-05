@@ -64,6 +64,8 @@ import {
 import { isLegacyPerformanceContractError, toLegacyPerformanceStartRequest } from './performance-compat.js';
 
 const api = {
+  /** Read-only host information needed for platform-specific window chrome. */
+  platform: process.platform,
   ping: async (sentAt: number): Promise<unknown> => {
     const req = PingRequestSchema.parse({ sentAt });
     return PingResponseSchema.parse(await ipcRenderer.invoke(IPC.ping, req));

@@ -3,6 +3,7 @@
  * structured failures — all against FAKE runner/runtime so no processes
  * spawn here (real-process coverage lives in process-runner*.test.ts).
  */
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -174,5 +175,23 @@ describe('ExecutionManager', () => {
     expect(opts?.args?.[0]).toBe('--require');
     expect(String(opts?.args?.[2])).toContain('.rhbuild');
     expect(['fd3', 'stderr']).toContain(opts?.reportTransport);
+  });
+
+  it('uses the selected TypeScript flavor even when the tab has a .js extension', async () => {
+    const runner = new FakeRunner();
+    const { manager } = makeManager(runner, { exePath: 'C:/node/node.exe', version: '24' });
+    const response = await manager.start({
+      ...REQ,
+      relPath: 'entry.js',
+      lang: 'ts',
+      content: 'const answer: number = 42; console.log(answer);\n'
+    });
+    expect(response.ok).toBe(true);
+    const entryPath = runner.handles[0]?.args?.[2];
+    expect(typeof entryPath).toBe('string');
+    if (typeof entryPath !== 'string') return;
+    const generated = readFileSync(entryPath, 'utf8');
+    expect(generated).toContain('answer = 42');
+    expect(generated).not.toContain(': number');
   });
 });

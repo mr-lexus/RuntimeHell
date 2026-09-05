@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { detectSystemNode } from './node/node-runtime.js';
 import { detectNvmNode, detectSystemRuntime } from './runtime-detection.js';
 import { installedNodeVersions, resolveRuntimeChoice } from './runtime-resolver.js';
-import { executableName } from '../platform.js';
+import { managedRuntimeExecutablePath, executableName } from '../platform.js';
 
 export interface ResolvedRuntime {
   readonly exePath: string;
@@ -83,7 +83,7 @@ export class DenoBunRuntimeAdapter implements RuntimeAdapter {
     if (requestedVersion !== undefined && requestedVersion !== '') {
       const match = managed.find((e) => e.version === requestedVersion);
       if (match?.installedPath !== undefined) {
-        return { exePath: join(match.installedPath, this.exeName()), version: match.version };
+        return { exePath: managedRuntimeExecutablePath(match.installedPath, this.id), version: match.version };
       }
       // Named version vanished (uninstalled mid-session) → fall through to system.
     }
@@ -97,7 +97,7 @@ export class DenoBunRuntimeAdapter implements RuntimeAdapter {
         b.version.localeCompare(a.version, undefined, { numeric: true })
       )[0];
       if (newest?.installedPath !== undefined) {
-        return { exePath: join(newest.installedPath, this.exeName()), version: newest.version };
+        return { exePath: managedRuntimeExecutablePath(newest.installedPath, this.id), version: newest.version };
       }
     }
     return null;

@@ -21,6 +21,10 @@ import { APP_LOGO_URL } from '../branding';
 
 interface FileLike { id: string; relPath: string; language: string; content: string; dirty: boolean; }
 
+function languageLabel(lang: 'js' | 'ts'): 'JavaScript' | 'TypeScript' {
+  return lang === 'js' ? 'JavaScript' : 'TypeScript';
+}
+
 function livePerformanceCases(cases: readonly PerformanceCase[], files: readonly FileLike[]): PerformanceCase[] {
   return cases.map((item) => {
     const ref = item.sourceRef;
@@ -156,6 +160,8 @@ interface TabRenameState {
 }
 
 export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
+  const selectedLanguage = languageLabel(props.lang);
+  const editorLanguage = props.lang === 'js' ? 'javascript' : 'typescript';
   const [selection, setSelection] = useState<SelectionInfo | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
@@ -323,6 +329,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
   const editorFontSize = Math.round(props.settings.editor.fontSize * props.settings.appearance.uiScale / 100);
   const editorLineHeight = Math.max(18, Math.round(editorFontSize * 1.5));
   const contextFile = tabContextMenu ? props.files.find((file) => file.id === tabContextMenu.fileId) ?? null : null;
+  const isMac = window.api?.platform === 'darwin';
   const beginRename = (file: FileLike): void => {
     setTabContextMenu(null);
     setTabRename({ fileId: file.id, value: file.relPath });
@@ -348,20 +355,21 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
     tabsRef.current?.scrollBy({ left: amount, behavior: 'smooth' });
   };
   return (
-    <div className="rh-app">
-      <header className="rh-titlebar">
+    <div className={`rh-app${isMac ? ' is-mac' : ''}`}>
+      <header className={`rh-titlebar${isMac ? ' is-mac' : ''}`}>
         <div className="rh-brand"><img className="rh-brand-logo" src={APP_LOGO_URL} alt="" /><span>RuntimeHell</span></div>
         <div className="rh-titlebar-actions">
           <div className="rh-titlebar-editor-controls" aria-label="Editor controls">
           <Button variant="primary" className="rh-titlebar-run" onClick={props.onRun} disabled={!props.activeFile || props.phase !== 'idle'} aria-label={props.phase === 'idle' ? 'Run source (Ctrl+Enter)' : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'} title={props.phase === 'idle' ? 'Run source (Ctrl+Enter)' : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'}><span className="rh-action-marker" aria-hidden="true">{props.phase === 'idle' ? '▶' : <BlockLoader />}</span></Button>
           <div ref={languageMenuRef} className="rh-titlebar-language-picker">
-            <button type="button" className="rh-titlebar-language-trigger" aria-label={`Language: ${props.lang.toUpperCase()}`} title={`Language: ${props.lang.toUpperCase()}`} aria-haspopup="menu" aria-expanded={languageMenuOpen} onClick={() => setLanguageMenuOpen((open) => !open)}>
+            <button type="button" className="rh-titlebar-language-trigger" aria-label={`Language: ${selectedLanguage}`} title={`Language: ${selectedLanguage}`} aria-haspopup="menu" aria-expanded={languageMenuOpen} onClick={() => setLanguageMenuOpen((open) => !open)}>
               <span className="rh-language-icon" aria-hidden="true">{props.lang === 'js' ? '\u{e781}' : '\u{e628}'}</span>
+              <span>{selectedLanguage}</span>
             </button>
             {languageMenuOpen && <div className="rh-titlebar-language-menu" role="menu" aria-label="Select language">
               {(['js', 'ts'] as const).map((item) => <button key={item} type="button" role="menuitemradio" className={`rh-titlebar-language-option ${props.lang === item ? 'is-selected' : ''}`} aria-checked={props.lang === item} onClick={() => { props.onSetLang(item); setLanguageMenuOpen(false); }}>
                 <span className="rh-language-icon" aria-hidden="true">{item === 'js' ? '\u{e781}' : '\u{e628}'}</span>
-                <span>{item.toUpperCase()}</span>
+                <span>{languageLabel(item)}</span>
                 {props.lang === item && <span className="rh-titlebar-language-check" aria-hidden="true">✓</span>}
               </button>)}
             </div>}
@@ -370,16 +378,16 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
         </div>
           <button className={`rh-top-settings ${props.settingsViewActive ? 'is-active' : ''}`} onClick={() => props.settingsViewActive ? props.onSetWorkspaceView('editor') : props.onOpenSettings()} aria-label={props.settingsViewActive ? 'Return to workspace' : 'Settings'} title={props.settingsViewActive ? 'Return to workspace' : 'Settings (Ctrl+,)'}><span className="rh-top-settings-icon" aria-hidden="true">{props.settingsViewActive ? '\u{f02dc}' : '\u{f0493}'}</span></button>
         </div>
-        <div className="rh-window-controls" aria-label="Window controls">
+        {!isMac && <div className="rh-window-controls" aria-label="Window controls">
           <button className="rh-window-control" aria-label="Minimize" title="Minimize" onClick={() => { if (typeof window.api?.windowMinimize === 'function') void window.api.windowMinimize(); }}><span className="rh-window-glyph rh-window-glyph-minimize" aria-hidden="true" /></button>
           <button className="rh-window-control" aria-label={windowMaximized ? 'Restore' : 'Maximize'} title={windowMaximized ? 'Restore' : 'Maximize'} onClick={() => { if (typeof window.api?.windowToggleMaximize === 'function') void window.api.windowToggleMaximize().then(setWindowMaximized); }}><span className={`rh-window-glyph ${windowMaximized ? 'rh-window-glyph-restore' : 'rh-window-glyph-maximize'}`} aria-hidden="true" /></button>
           <button className="rh-window-control rh-window-control-close" aria-label="Close" title="Close" onClick={() => { if (typeof window.api?.windowClose === 'function') void window.api.windowClose(); }}><span className="rh-window-glyph rh-window-glyph-close" aria-hidden="true" /></button>
-        </div>
+        </div>}
       </header>
       <div className="rh-workspace">
         <main className={`rh-main ${props.settingsViewActive ? 'is-settings' : ''}`}>
           {props.settingsViewActive ? <div className="rh-settings-region"><SettingsView settings={props.settings} onPatch={props.onPatchSettings} onResetAppearance={props.onResetAppearance} onResetEditor={props.onResetEditor} onResetAll={props.onResetAll} onClose={() => props.onSetWorkspaceView('editor')} /></div> : <>
-            <InstrumentFrame index="SRC" title="SOURCE" metadata={props.activeFile ? `${props.lang.toUpperCase()} / LIVE${props.settings.editor.vimMode ? ` / VIM ${vimMode.toUpperCase()}` : ''}` : 'NO SOURCE'} showHeader={false} state="active" className="rh-source-frame">
+            <InstrumentFrame index="SRC" title="SOURCE" metadata={props.activeFile ? `${selectedLanguage} / LIVE${props.settings.editor.vimMode ? ` / VIM ${vimMode.toUpperCase()}` : ''}` : 'NO SOURCE'} showHeader={false} state="active" className="rh-source-frame">
               <div className="rh-source-tabs-shell">
                 {tabScrollState.left && <button type="button" className="rh-tab-scroll-control" onClick={() => scrollTabs(-220)} aria-label="Scroll tabs left" title="Scroll tabs left">‹</button>}
                 <div
@@ -433,7 +441,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
                 {tabScrollState.right && <button type="button" className="rh-tab-scroll-control" onClick={() => scrollTabs(220)} aria-label="Scroll tabs right" title="Scroll tabs right">›</button>}
               </div>
               <div className="rh-editor-region">
-                <div className="rh-editor-host">{props.activeFile ? <CodeEditor key={props.activeFile.id} path={props.activeFile.relPath} value={props.activeFile.content} language={props.activeFile.language} theme={theme === 'light' ? 'rh-light' : 'rh-dark'} fontSize={editorFontSize} editorSettings={props.settings.editor} vimMode={props.settings.editor.vimMode} onVimModeChange={setVimMode} onVimHelp={() => setVimHelpOpen(true)} onVimCommandChange={setVimCommandLine} onChange={props.onChange} onSave={props.onSave} onRun={props.onRun} onFormatError={props.onFormatError} onSelectionChanged={(info) => { setSelection(info); props.onSelectionChanged(info); }} onScrollTop={props.onScrollTop} scrollController={editorScrollController.current} onLineCount={props.onLineCount} analyzeActions={props.analyzeActions} inlineOutputs={props.inlineByLine} inlineResults={props.resultByLine} onAnalyze={props.onAnalyze} /> : <div className="rh-empty-state"><div className="rh-empty-mark">◇</div><strong>No source open</strong><span>Open or create a source slot to begin.</span></div>}</div>
+                <div className="rh-editor-host">{props.activeFile ? <CodeEditor key={props.activeFile.id} path={props.activeFile.relPath} value={props.activeFile.content} language={editorLanguage} theme={theme === 'light' ? 'rh-light' : 'rh-dark'} fontSize={editorFontSize} editorSettings={props.settings.editor} vimMode={props.settings.editor.vimMode} onVimModeChange={setVimMode} onVimHelp={() => setVimHelpOpen(true)} onVimCommandChange={setVimCommandLine} onChange={props.onChange} onSave={props.onSave} onRun={props.onRun} onFormatError={props.onFormatError} onSelectionChanged={(info) => { setSelection(info); props.onSelectionChanged(info); }} onScrollTop={props.onScrollTop} scrollController={editorScrollController.current} onLineCount={props.onLineCount} analyzeActions={props.analyzeActions} inlineOutputs={props.inlineByLine} inlineResults={props.resultByLine} onAnalyze={props.onAnalyze} /> : <div className="rh-empty-state"><div className="rh-empty-mark">◇</div><strong>No source open</strong><span>Open or create a source slot to begin.</span></div>}</div>
                 {props.activeFile && props.showOutputColumn && <div className="rh-inline-output"><LineOutputColumn fileId={props.activeFile.id} lineCount={props.lineCount} scrollTop={props.scrollTop} lineHeight={editorLineHeight} allowExpand scrollController={editorScrollController.current} /></div>}
               </div>
             </InstrumentFrame>
@@ -444,7 +452,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
               <summary aria-label="How to use Performance" title="How to use Performance">i</summary>
               <div><strong>Compare code samples</strong><span>1. Add files or selections as cases.</span><span>2. Configure runtimes and profiles in the run matrix.</span><span>3. Run every case across the selected matrix.</span></div>
             </details><PerformanceHeaderControls files={props.files}/> </>} state={props.drawerOpen ? 'active' : 'idle'} className={`rh-dock ${props.drawerOpen ? '' : 'is-collapsed'}`} style={{ height: `${Math.round(props.drawerRatio * 100)}%` }} actions={<><div className="rh-dock-tabs" role="tablist" aria-label="Tool windows">{drawerItems.map((item) => <button key={item.id} className={`rh-dock-tab ${props.drawerTab === item.id ? 'is-active' : ''}`} role="tab" aria-label={item.id} aria-selected={props.drawerTab === item.id} onClick={() => selectTab(item.id)}>{item.label}</button>)}</div><Button onClick={() => props.onSetDrawerOpen(!props.drawerOpen)} aria-label={props.drawerOpen ? 'Collapse bottom dock' : 'Expand bottom dock'}>{props.drawerOpen ? 'collapse' : 'expand'}</Button></>}>
-            <div className="rh-dock-body"><div ref={dockContentRef} className={`rh-dock-content ${props.drawerTab === 'analysis' ? 'is-analysis' : ''} ${props.drawerTab === 'console' ? 'is-console' : ''}`}>{props.drawerTab === 'console' && <ConsolePanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}{props.drawerTab === 'inspector' && <InspectorPanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}{props.drawerTab === 'analysis' && <AnalysisPanel code={props.activeFile?.content ?? ''} selection={selection} lang={props.activeFile?.language === 'typescript' ? 'ts' : 'js'} onLoadDemo={props.onLoadAnalysisDemo} />}{props.drawerTab === 'packages' && <PackagesPanel />}{props.drawerTab === 'runtimes' && <RuntimesPanel />}{props.drawerTab === 'performance' && <PerformancePanel activeFile={props.activeFile} selection={selection} />}</div></div>
+            <div className="rh-dock-body"><div ref={dockContentRef} className={`rh-dock-content ${props.drawerTab === 'analysis' ? 'is-analysis' : ''} ${props.drawerTab === 'console' ? 'is-console' : ''}`}>{props.drawerTab === 'console' && <ConsolePanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}{props.drawerTab === 'inspector' && <InspectorPanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}{props.drawerTab === 'analysis' && <AnalysisPanel code={props.activeFile?.content ?? ''} selection={selection} lang={props.lang} onLoadDemo={props.onLoadAnalysisDemo} />}{props.drawerTab === 'packages' && <PackagesPanel />}{props.drawerTab === 'runtimes' && <RuntimesPanel />}{props.drawerTab === 'performance' && <PerformancePanel activeFile={props.activeFile} selection={selection} />}</div></div>
             </InstrumentFrame>
           </>}
           <footer className="rh-statusbar">

@@ -84,6 +84,16 @@ describe('transpile-service', () => {
     expect(res.mapPath).toBeNull();
   });
 
+  it('transpiles TypeScript selected for a .js source tab', async () => {
+    process.env['RH_CACHE_ROOT'] = dir;
+    const result = await transpileTo(join(dir, '.rhbuild'), 'entry.js', 'const answer: number = 42; console.log(answer);');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const output = await fs.readFile(result.outputPath, 'utf8');
+    expect(output).toContain('answer = 42');
+    expect(output).not.toContain(': number');
+  });
+
   it('bundles a CommonJS workspace package for the browser lane', async () => {
     process.env['RH_CACHE_ROOT'] = dir;
     const workspace = join(dir, 'browser-workspace');

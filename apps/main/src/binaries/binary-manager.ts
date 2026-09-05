@@ -19,7 +19,7 @@ import {
   type ManifestEntry
 } from '@rh/protocol';
 import { engineDir, manifestPath, runtimeDir, supportDir, tmpDir } from './paths.js';
-import { executableName, hostArch, hostPlatform } from '../platform.js';
+import { executableName, hostArch, hostPlatform, managedRuntimeExecutableRelativePath } from '../platform.js';
 
 export interface DownloadProgress {
   id: string;
@@ -208,6 +208,17 @@ const IMPORT_BINARY_NAME: Record<string, string> = {
   'moddable-xs': executableName('xst')
 };
 
+async function makeExecutable(path: string): Promise<void> {
+  if (process.platform === 'win32') return;
+  await fs.chmod(path, 0o755);
+}
+
+function stagedExecutablePath(entry: Pick<ManifestEntry, 'kind' | 'id'>, executablePath?: string): string | null {
+  if (entry.kind === 'runtime' && entry.id === 'node') return managedRuntimeExecutableRelativePath('node');
+  if (executablePath !== undefined) return basename(executablePath);
+  return IMPORT_BINARY_NAME[entry.id] ?? null;
+}
+
 function safeImportSegment(value: string, label: string): void {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(value)) throw new Error(`invalid ${label}`);
 }
@@ -263,18 +274,32 @@ export async function importLocalArtifact(
     await fs.rm(stageDir, { recursive: true, force: true });
     await fs.mkdir(stageDir, { recursive: true });
     if (sourceStat.isDirectory()) {
-      const executableName = IMPORT_BINARY_NAME[id];
-      if (executableName === undefined) throw new Error(`no executable mapping for ${kind}/${id}`);
+      const executableRelativePath = kind === 'runtime' && id === 'node'
+        ? managedRuntimeExecutableRelativePath(id)
+        : IMPORT_BINARY_NAME[id];
+      if (executableRelativePath === undefined) throw new Error(`no executable mapping for ${kind}/${id}`);
       try {
-        await fs.access(join(sourcePath, executableName));
+        await fs.access(join(sourcePath, executableRelativePath));
       } catch {
-        throw new Error(`local artifact folder must contain ${executableName}`);
+        throw new Error(`local artifact folder must contain ${executableRelativePath}`);
       }
       // Materialize links into the cache so an imported tree cannot keep a
       // path back out of the sandbox when it is executed later.
       await fs.cp(sourcePath, stageDir, { recursive: true, dereference: true });
     } else {
-      await fs.copyFile(sourcePath, join(stageDir, IMPORT_BINARY_NAME[id] ?? basename(sourcePath)));
+      const targetRelativePath = kind === 'runtime' && id === 'node'
+        ? managedRuntimeExecutableRelativePath(id)
+        : IMPORT_BINARY_NAME[id] ?? basename(sourcePath);
+      const targetPath = join(stageDir, targetRelativePath);
+      await fs.mkdir(dirname(targetPath), { recursive: true });
+      await fs.copyFile(sourcePath, targetPath);
+      await makeExecutable(targetPath);
+    }
+    if (sourceStat.isDirectory()) {
+      const executableRelativePath = kind === 'runtime' && id === 'node'
+        ? managedRuntimeExecutableRelativePath(id)
+        : IMPORT_BINARY_NAME[id];
+      if (executableRelativePath !== undefined) await makeExecutable(join(stageDir, executableRelativePath));
     }
     await fs.mkdir(dirname(finalDir), { recursive: true });
     await fs.rename(stageDir, finalDir);
@@ -322,6 +347,8 @@ export async function installArtifact(req: InstallRequest): Promise<ManifestEntr
       if (req.stripRoot !== false) await hoistSingleRoot(stageDir);
     }
     if (req.executablePath !== undefined) await materializeExecutable(stageDir, req.entry.id, req.executablePath);
+    const stagedExecutable = stagedExecutablePath(req.entry, req.executablePath);
+    if (stagedExecutable !== null) await makeExecutable(join(stageDir, stagedExecutable));
 
     const finalDir = targetDirFor(req.entry);
     await fs.mkdir(dirname(finalDir), { recursive: true });

@@ -141,7 +141,7 @@ export const RunStartRequestSchema = z
     runtimeId: RuntimeIdSchema.optional(),
     /** Requested MANAGED node version; falls back to system when absent/uninstalled. */
     runtimeVersion: z.string().min(1).optional(),
-    /** Language flavor override from the editor toggle ('js' skips TS transpile). */
+    /** Language flavor override from the editor toggle ('ts' forces transpile; 'js' skips it). */
     lang: z.enum(['js', 'ts']).optional()
   })
   .strict();

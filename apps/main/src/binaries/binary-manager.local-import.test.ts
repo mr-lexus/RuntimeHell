@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { importLocalArtifact, readManifest, removeEntry, targetDirFor } from './binary-manager.js';
-import { executableName } from '../platform.js';
+import { executableName, managedRuntimeExecutablePath } from '../platform.js';
 
 let sandbox: string;
 let previousCache: string | undefined;
@@ -28,7 +28,7 @@ describe('importLocalArtifact', () => {
     const entry = await importLocalArtifact('runtime', 'node', source, 'local-test-1');
     expect(entry.source).toBe('local-import');
     expect(entry.installedPath).toBeTruthy();
-    expect(await readFile(join(targetDirFor(entry), executableName('node')), 'utf8')).toBe('fake node executable');
+    expect(await readFile(managedRuntimeExecutablePath(targetDirFor(entry), 'node'), 'utf8')).toBe('fake node executable');
     expect((await readManifest()).entries).toContainEqual(entry);
 
     await removeEntry('runtime', 'node', 'local-test-1');

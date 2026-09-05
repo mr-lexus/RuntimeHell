@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PkgEvent } from '@rh/protocol';
 import { PackageService, resolveNpm, type CliRunner, type SpawnedCli } from './package-service.js';
 import { managedRuntimeDir } from '../runtimes/runtime-resolver.js';
-import { executableName } from '../platform.js';
+import { executableName, managedRuntimeExecutablePath } from '../platform.js';
 
 let homeBackup: string | undefined;
 let posixHomeBackup: string | undefined;
@@ -33,15 +33,18 @@ afterEach(async () => {
 });
 
 describe('resolveNpm (D7 order)', () => {
-  const npmCliRelative = join('node_modules', 'npm', 'bin', 'npm-cli.js');
+  const npmCliRelative = process.platform === 'win32'
+    ? join('node_modules', 'npm', 'bin', 'npm-cli.js')
+    : join('lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
 
   it('prefers the managed runtime: native Node + bundled npm-cli.js, direct execution', async () => {
     const dir = managedRuntimeDir('22.17.0');
-    const probe = vi.fn(async (p: string) => p === join(dir, executableName('node')) || p === join(dir, npmCliRelative));
+    const nodeExe = managedRuntimeExecutablePath(dir, 'node');
+    const probe = vi.fn(async (p: string) => p === nodeExe || p === join(dir, npmCliRelative));
     const result = await resolveNpm('22.17.0', probe, async () => join(sandbox, 'path-npm.cmd'));
     if (!('kind' in result) || result.kind !== 'direct') throw new Error('expected direct managed resolution');
     expect(result.origin).toBe('managed');
-    expect(result.nodeExe).toBe(join(dir, executableName('node')));
+    expect(result.nodeExe).toBe(nodeExe);
     expect(result.cliJs).toBe(join(dir, npmCliRelative));
   });
 

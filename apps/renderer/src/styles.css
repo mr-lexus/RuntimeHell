@@ -375,6 +375,8 @@ button { border-radius: 0; }
    status strip where it can remain readable and interactive. */
 .rh-titlebar { grid-template-columns: auto minmax(140px, 168px) auto; }
 .rh-title-status { display: none; }
+.rh-titlebar.is-mac { padding-left: 84px; }
+.rh-titlebar.is-mac .rh-brand { min-width: 0; }
 .rh-statusbar { gap: 9px; overflow: hidden; white-space: nowrap; }
 .rh-status-source, .rh-status-types { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-dim); }
 .rh-status-types .rh-block-loader { gap: 2px; margin-right: 3px; }
@@ -1442,6 +1444,13 @@ html[data-motion='reduced'] *::after {
 }
 .rh-titlebar-language-trigger {
   font: inherit;
+  width: auto;
+  min-width: 30px;
+  flex-basis: auto;
+  gap: 6px;
+  padding: 0 8px;
+  font-size: 10px;
+  white-space: nowrap;
 }
 .rh-titlebar-language-trigger .rh-language-icon {
   color: currentColor;
@@ -1515,6 +1524,13 @@ html[data-motion='reduced'] *::after {
   .rh-titlebar-actions .rh-top-settings {
     width: 28px;
     flex-basis: 28px;
+  }
+  .rh-titlebar-language-trigger {
+    width: auto;
+    flex-basis: auto;
+    padding: 0 5px;
+    gap: 4px;
+    font-size: 9px;
   }
   .rh-titlebar-editor-controls { gap: 2px; }
 }

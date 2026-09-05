@@ -28,7 +28,9 @@ function createWindow(): BrowserWindow {
     icon: join(__dirname, 'assets/icon.png'),
     backgroundColor: '#0a0f14',
     autoHideMenuBar: true,
-    titleBarStyle: 'hidden',
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 9 } }
+      : { titleBarStyle: 'hidden' as const }),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -64,7 +66,8 @@ function main(): void {
     ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
   });
 
-  // The renderer owns the compact titlebar, including window actions.
+  // The renderer owns the compact titlebar on Windows/Linux; macOS keeps its
+  // native traffic-light actions and only uses the renderer for the content.
   ipcMain.handle(IPC.windowMinimize, (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize();
     return { ok: true };

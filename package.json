@@ -1,7 +1,7 @@
 {
   "name": "runtimehell",
   "private": true,
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.2",
   "description": "RuntimeHell - multi-runtime JS/TS playground with engine internals analysis",
   "author": "RuntimeHell contributors",
   "repository": {

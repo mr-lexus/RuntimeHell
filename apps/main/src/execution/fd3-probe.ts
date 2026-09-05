@@ -8,10 +8,10 @@
  * by frame nonce.
  */
 import { spawn } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { mainAssetPath } from '../asset-paths.js';
 
 // apps/main builds to CommonJS, so __dirname is available (import.meta is not).
-const PROBE_SCRIPT = join(__dirname, 'templates', 'probe-fd3.cjs');
+const PROBE_SCRIPT = mainAssetPath(__dirname, 'templates', 'probe-fd3.cjs');
 const PROBE_MARKER = '__RH_PROBE__ok';
 const PROBE_TIMEOUT_MS = 5000;
 

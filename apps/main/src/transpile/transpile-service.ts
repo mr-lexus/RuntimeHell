@@ -33,12 +33,17 @@ export async function bundleBrowserTo(
   buildDir: string,
   workspaceDir: string,
   relPath: string,
-  source: string
+  source: string,
+  language?: 'js' | 'ts'
 ): Promise<TranspileResult> {
   const outName = outputNameFor(relPath);
   const outputPath = join(buildDir, outName);
   const resolveDir = join(workspaceDir, dirname(relPath));
-  const loader = relPath.endsWith('.tsx') ? 'tsx' : relPath.endsWith('.ts') || relPath.endsWith('.mts') ? 'ts' : 'js';
+  const loader = language === 'ts'
+    ? (relPath.endsWith('.tsx') ? 'tsx' : 'ts')
+    : language === 'js'
+      ? 'js'
+      : relPath.endsWith('.tsx') ? 'tsx' : relPath.endsWith('.ts') || relPath.endsWith('.mts') ? 'ts' : 'js';
 
   try {
     const result = await build({

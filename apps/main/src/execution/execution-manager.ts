@@ -25,6 +25,7 @@ import { DenoBunRuntimeAdapter, type ResolvedRuntime } from '../runtimes/runtime
 import { EmbeddedBrowserRuntime, type BrowserRuntimeRunner } from '../runtimes/browser/browser-runtime.js';
 import { readManifest } from '../binaries/binary-manager.js';
 import { workspaceRoot } from '../workspace/files.js';
+import { mainAssetPath } from '../asset-paths.js';
 
 export interface ExecutionManagerDeps {
   /**
@@ -127,7 +128,7 @@ async function defaultResolveRuntime(runtimeId: RuntimeId, requestedVersion?: st
  */
 let capturePreludeCache: string | null = null;
 function capturePrelude(): string {
-  capturePreludeCache ??= readFileSync(join(__dirname, 'templates', 'capture-prelude.cjs'), 'utf8');
+  capturePreludeCache ??= readFileSync(mainAssetPath(__dirname, 'templates', 'capture-prelude.cjs'), 'utf8');
   return capturePreludeCache;
 }
 
@@ -188,17 +189,19 @@ export class ExecutionManager {
     let entryPath: string;
     let mapPath: string | null = null;
     // `lang === 'js'` forces passthrough even for .ts/.tsx/.mts so Node 22+
-    // can `--experimental-strip-types` the source unchanged. `undefined`/`'ts'`
-    // preserves the original esbuild-on-extension behavior.
+    // can `--experimental-strip-types` the source unchanged. Conversely,
+    // `lang === 'ts'` must force esbuild even when the source tab is named
+    // .js; the language picker is an execution/editor override, not merely an
+    // extension hint.
     // Deno/Bun KEEP the esbuild transpile: the capture transform emits plain
     // JS (babel strips types) but JSX and module interop still need a real
     // transform, and the esbuild banner carries the prelude with an
     // offset-correct source map. Skipping esbuild (native TS) would cost
     // capture parity for no benefit — documented decision.
     const forcePassthrough = req.lang === 'js';
-    const shouldTranspile = !forcePassthrough && needsTranspile(req.relPath);
+    const shouldTranspile = !forcePassthrough && (req.lang === 'ts' || needsTranspile(req.relPath));
     if (isBrowser && needsBrowserBundle(captured.code)) {
-      const result = await bundleBrowserTo(buildDir, root, req.relPath, captured.code);
+      const result = await bundleBrowserTo(buildDir, root, req.relPath, captured.code, req.lang);
       if (!result.ok) return { ok: false, stage: 'transpile', errors: result.errors };
       entryPath = result.outputPath;
       mapPath = result.mapPath;
@@ -213,7 +216,7 @@ export class ExecutionManager {
       mapPath = result.mapPath;
     }
 
-    const bootstrap = join(__dirname, 'templates', 'bootstrap.cjs');
+    const bootstrap = mainAssetPath(__dirname, 'templates', 'bootstrap.cjs');
     // fd3 transport is Node-only: Deno/Bun run stderr-only and NEVER open fd3.
     const reportTransport = isNode && (await probeFd3Support(runtime.exePath)) ? ('fd3' as const) : ('stderr' as const);
     const startedAt = Date.now();

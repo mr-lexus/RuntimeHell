@@ -111,7 +111,23 @@ export async function detectExecutable(id: string, candidates: string[]): Promis
 }
 
 export function detectSystemRuntime(id: 'node' | 'deno' | 'bun'): Promise<DetectedRuntime | null> {
-  return detectExecutable(id, [id]);
+  return detectExecutable(id, [id, ...commonRuntimeCandidates(id)]);
+}
+
+/** GUI-launched Electron apps may not inherit the user's shell PATH. Keep
+ * detection shell-free but cover conventional package-manager/user bins. */
+function commonRuntimeCandidates(id: 'node' | 'deno' | 'bun'): string[] {
+  const roots = osPlatform() === 'darwin'
+    ? ['/usr/local/bin', '/opt/homebrew/bin', join(homedir(), '.local', 'bin')]
+    : osPlatform() === 'linux'
+      ? ['/usr/local/bin', '/usr/bin', '/snap/bin', join(homedir(), '.local', 'bin')]
+      : [];
+  const userRoots = id === 'deno'
+    ? [join(homedir(), '.deno', 'bin')]
+    : id === 'bun'
+      ? [join(homedir(), '.bun', 'bin')]
+      : [];
+  return [...roots, ...userRoots].map((root) => join(root, executableName(id)));
 }
 
 function browserCandidates(id: 'chrome' | 'firefox'): string[] {

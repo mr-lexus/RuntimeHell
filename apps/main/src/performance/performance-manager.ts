@@ -33,7 +33,8 @@ import { readManifest } from '../binaries/binary-manager.js';
 import { detectNvmNode, detectSystemBrowser, type BrowserId, type DetectedRuntime } from '../runtimes/runtime-detection.js';
 import { EmbeddedBrowserRuntime, type BrowserRuntimeRunner } from '../runtimes/browser/browser-runtime.js';
 import { ExternalBrowserRuntime } from './external-browser-runner.js';
-import { executableName, pathListSeparator } from '../platform.js';
+import { executableName, managedRuntimeExecutableRelativePath, pathListSeparator } from '../platform.js';
+import { mainAssetPath } from '../asset-paths.js';
 
 const require = createRequire(__filename);
 const MAX_BODY_LENGTH = 200_000;
@@ -68,7 +69,7 @@ const NATURAL_PROFILE: PerformanceProfileOption = {
 
 const BROWSER_IDS: readonly BrowserId[] = ['chrome', 'firefox'];
 const MANAGED_EXECUTABLES: Readonly<Record<string, string>> = {
-  node: executableName('node'), deno: executableName('deno'), bun: executableName('bun'), txiki: executableName('tjs'),
+  node: managedRuntimeExecutableRelativePath('node'), deno: executableName('deno'), bun: executableName('bun'), txiki: executableName('tjs'),
   v8: executableName('d8'), 'd8-debug': executableName('d8'), spidermonkey: executableName('js'), javascriptcore: executableName('jsc'),
   quickjs: executableName('qjs'), graaljs: join('bin', executableName('js')), hermes: executableName('hermes'), chakra: executableName('ch'), 'moddable-xs': executableName('xst')
 };
@@ -530,7 +531,7 @@ export class PerformanceManager {
 }
 
 function resolveMitataModule(): string {
-  const bundled = join(__dirname, 'mitata', 'src', 'lib.mjs');
+  const bundled = mainAssetPath(__dirname, 'mitata', 'src', 'lib.mjs');
   if (existsSync(bundled)) return bundled;
   if (typeof process.versions.electron === 'string' && process.defaultApp !== true) throw new Error('Performance Lab kernel assets are missing; rebuild RuntimeHell');
   return join(dirname(require.resolve('mitata')), 'lib.mjs');

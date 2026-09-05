@@ -35,7 +35,7 @@ export interface InlineConsoleEntry {
   readonly args?: SerializedValue[];
 }
 
-/** Language override for the run pipeline. 'ts' transpiles via esbuild (default);
+/** Language override for the run pipeline. 'ts' forces esbuild transpilation;
  * 'js' forces passthrough so Node 22+ can `--experimental-strip-types` the source. */
 export type RunLang = 'js' | 'ts';
 
@@ -56,6 +56,9 @@ interface RunState {
   lastExit: LastExit | null;
   autoRun: boolean;
   notice: string | null;
+  /** Events can arrive before the startRun IPC response (notably the fast
+   * hidden Chromium lane). Hold them until the response gives us the runId. */
+  pendingEvents: RunEvent[];
   lang: RunLang;
   setAutoRun: (v: boolean) => void;
   setTimeoutMs: (ms: number) => void;
@@ -103,6 +106,7 @@ export const useRun = create<RunState>((set, get) => ({
   lastExit: null,
   autoRun: false,
   notice: null,
+  pendingEvents: [],
   // Default 'ts' preserves the historical behavior (esbuild for .ts/.tsx/.mts).
   // The toggle in App.tsx overrides this; auto-detect from file extension runs
   // when a different file is opened.
@@ -134,7 +138,7 @@ export const useRun = create<RunState>((set, get) => ({
       set({ notice: 'no file open' });
       return;
     }
-    set({ phase: 'running', runFileId: file.id, lines: [], reports: [], inlineConsole: [], inlineByLine: {}, resultByLine: {}, lastExit: null, notice: null });
+    set({ phase: 'running', runId: null, runFileId: file.id, lines: [], reports: [], inlineConsole: [], inlineByLine: {}, resultByLine: {}, lastExit: null, notice: null, pendingEvents: [] });
     const rt = useRuntimes.getState();
     const response = await bridge.startRun({
       workspaceId: 'default',
@@ -149,7 +153,7 @@ export const useRun = create<RunState>((set, get) => ({
       lang: get().lang
     });
     if (!response.ok) {
-      set({ phase: 'idle' });
+      set({ phase: 'idle', pendingEvents: [] });
       if (response.stage === 'transform' || response.stage === 'transpile') {
         let lines = get().lines;
         for (const err of response.errors ?? []) {
@@ -163,7 +167,12 @@ export const useRun = create<RunState>((set, get) => ({
       }
       return;
     }
-    set({ runId: response.runId, runtimeVersion: response.runtimeVersion, lastRuntimeId: rt.activeRuntime });
+    const pendingEvents = get().pendingEvents.filter((event) => event.runId === response.runId);
+    set({ runId: response.runId, runtimeVersion: response.runtimeVersion, lastRuntimeId: rt.activeRuntime, pendingEvents: [] });
+    // Replay in arrival order after correlation is established. This prevents
+    // a short browser run from losing its console/result/exit events while the
+    // renderer is still awaiting the startRun IPC response.
+    for (const event of pendingEvents) get().handleEvent(event);
   },
 
   scheduleAutoRun: () => {
@@ -184,7 +193,15 @@ export const useRun = create<RunState>((set, get) => ({
 
   handleEvent: (e) => {
     const state = get();
-    if (state.runId !== e.runId) return;
+    if (state.runId !== e.runId) {
+      if (state.runId === null && state.phase === 'running') {
+        const pending = state.pendingEvents.length >= 256
+          ? [...state.pendingEvents.slice(-255), e]
+          : [...state.pendingEvents, e];
+        set({ pendingEvents: pending });
+      }
+      return;
+    }
     switch (e.type) {
       case 'stdout':
         set({ lines: pushLine(state.lines, 'stdout', e.data.replace(/\n$/, '')) });
@@ -225,7 +242,10 @@ export const useRun = create<RunState>((set, get) => ({
         });
         break;
       case 'error':
-        set({ lines: pushLine(state.lines, 'stderr', `[runner error] ${e.message}`), phase: 'idle', runId: null });
+        // Keep the correlation id until the matching exit event arrives; the
+        // runner emits both for process/browser failures and exit carries the
+        // final duration/code for the status bar.
+        set({ lines: pushLine(state.lines, 'stderr', `[runner error] ${e.message}`), phase: 'idle' });
         break;
     }
   },

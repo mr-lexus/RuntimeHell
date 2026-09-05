@@ -27,6 +27,21 @@ export function executableName(base: string): string {
   return isWindows() ? `${base}.exe` : base;
 }
 
+/**
+ * Managed runtime archives do not all use the Windows flat layout. Node's
+ * macOS/Linux distributions keep the executable under `bin/`, while the
+ * Windows zip places `node.exe` at the archive root. Keep this detail in one
+ * place so execution, npm, imports, and performance targets agree.
+ */
+export function managedRuntimeExecutableRelativePath(id: string, host = osPlatform()): string {
+  const executable = host === 'win32' ? `${id}.exe` : id;
+  return id === 'node' && host !== 'win32' ? join('bin', executable) : executable;
+}
+
+export function managedRuntimeExecutablePath(root: string, id: string): string {
+  return join(root, managedRuntimeExecutableRelativePath(id));
+}
+
 export function pathListSeparator(): string {
   return isWindows() ? ';' : ':';
 }
