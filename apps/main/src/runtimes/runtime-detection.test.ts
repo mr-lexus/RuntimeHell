@@ -60,7 +60,7 @@ describe('nvmRoot / nvmSymlink', () => {
         delete process.env['NVM_SYMLINK'];
         process.env['NVM_DIR'] = '/tmp/custom-nvm';
         process.env['NVM_BIN'] = '/tmp/custom-nodejs/bin';
-        expect(nvmRoot()).toBe('/tmp/custom-nvm');
+        expect(nvmRoot()).toBe('/tmp/custom-nvm/versions/node');
         expect(nvmSymlink()).toBe('/tmp/custom-nodejs/bin');
       }
     } finally {
