@@ -1,7 +1,21 @@
 import { z } from 'zod';
 import { RuntimeIdSchema } from './run.js';
 
-export const ThemeModeSchema = z.enum(['dark', 'light', 'system']);
+/** Complete surface palettes. `system` follows the OS light/dark preference. */
+export const ThemeModeSchema = z.enum([
+  'dark',
+  'light',
+  'system',
+  'midnight',
+  'forest',
+  'amethyst',
+  'cinder',
+  'paper',
+  'arctic',
+  'sage',
+  'rose',
+  'solarized'
+]);
 export type ThemeMode = z.infer<typeof ThemeModeSchema>;
 
 /** Built-in accents plus a validated six-digit custom CSS color. */

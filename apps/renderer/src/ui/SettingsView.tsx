@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { AppSettings, SettingsPatch } from '@rh/protocol';
+import type { AppSettings, SettingsPatch, ThemeMode } from '@rh/protocol';
 import { Button, InstrumentFrame, SegmentedControl, TechnicalToggle, TextInput } from './primitives';
 
 interface SettingsViewProps {
@@ -28,8 +28,36 @@ const ACCENT_PRESETS = [
   { value: 'ruby', label: 'RUBY', color: '#d95767' }
 ] as const;
 
+const THEME_PRESETS: readonly {
+  value: Exclude<ThemeMode, 'system'>;
+  label: string;
+  detail: string;
+  swatch: string;
+}[] = [
+  { value: 'dark', label: 'OBSIDIAN', detail: 'dark / neutral', swatch: 'linear-gradient(135deg, #0a0a0a 0 55%, #7ec8e3 55%)' },
+  { value: 'midnight', label: 'MIDNIGHT', detail: 'dark / blue', swatch: 'linear-gradient(135deg, #080d1b 0 55%, #67b7ff 55%)' },
+  { value: 'forest', label: 'FOREST', detail: 'dark / green', swatch: 'linear-gradient(135deg, #08130f 0 55%, #65c994 55%)' },
+  { value: 'amethyst', label: 'AMETHYST', detail: 'dark / violet', swatch: 'linear-gradient(135deg, #110d1b 0 55%, #b69cff 55%)' },
+  { value: 'cinder', label: 'CINDER', detail: 'dark / warm', swatch: 'linear-gradient(135deg, #17100d 0 55%, #f09a63 55%)' },
+  { value: 'light', label: 'CLOUD', detail: 'light / neutral', swatch: 'linear-gradient(135deg, #f7fafb 0 55%, #08788d 55%)' },
+  { value: 'paper', label: 'PAPER', detail: 'light / warm', swatch: 'linear-gradient(135deg, #fbf7ed 0 55%, #a66a2c 55%)' },
+  { value: 'arctic', label: 'ARCTIC', detail: 'light / blue', swatch: 'linear-gradient(135deg, #eef7ff 0 55%, #287bb5 55%)' },
+  { value: 'sage', label: 'SAGE', detail: 'light / green', swatch: 'linear-gradient(135deg, #f1f8f1 0 55%, #3d8c5a 55%)' },
+  { value: 'rose', label: 'ROSE', detail: 'light / blush', swatch: 'linear-gradient(135deg, #fff4f6 0 55%, #b83261 55%)' },
+  { value: 'solarized', label: 'SOLARIZED', detail: 'light / ochre', swatch: 'linear-gradient(135deg, #fdf6e3 0 55%, #b58900 55%)' }
+];
+
 function Choice({ label, selected, onChange }: { label: string; selected: boolean; onChange: () => void }): React.JSX.Element {
   return <button type="button" className={`rh-choice ${selected ? 'is-selected' : ''}`} aria-pressed={selected} onClick={onChange}>{label}</button>;
+}
+
+function ThemeChoice({ value, label, detail, swatch, selected, onChange }: { value: ThemeMode; label: string; detail: string; swatch: string; selected: boolean; onChange: () => void }): React.JSX.Element {
+  return <button type="button" className={`rh-theme-choice ${selected ? 'is-selected' : ''}`} aria-pressed={selected} aria-label={`${label} theme`} onClick={onChange}>
+    <span className="rh-theme-swatch" style={{ background: swatch }} aria-hidden="true" />
+    <span><strong>{label}</strong><small>{detail}</small></span>
+    <span className="rh-theme-check" aria-hidden="true">{selected ? '✓' : ''}</span>
+    <span className="rh-theme-value" aria-hidden="true">{value}</span>
+  </button>;
 }
 
 function ChoiceRow({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
@@ -60,7 +88,12 @@ export function SettingsView({ settings, onPatch, onResetAppearance, onResetEdit
         <div className="rh-settings-instrument">
           {activeCategory === 'appearance' && <InstrumentFrame key="appearance" index="01" title="APPEARANCE" metadata="SURFACE / ATMOSPHERE" state="active" actions={<Button onClick={onResetAppearance}>reset section</Button>}>
             <div className="rh-settings-body rh-settings-appearance">
-              <ChoiceRow label="theme"><SegmentedControl aria-label="Theme">{(['dark', 'light', 'system'] as const).map((value) => <Choice key={value} label={value.toUpperCase()} selected={appearance.theme === value} onChange={() => setAppearance({ theme: value })} />)}</SegmentedControl></ChoiceRow>
+              <ChoiceRow label="theme">
+                <div className="rh-theme-options" role="group" aria-label="Theme">
+                  <ThemeChoice value="system" label="SYSTEM" detail="follow operating system" swatch="linear-gradient(135deg, #10141d 0 50%, #eef3f5 50%)" selected={appearance.theme === 'system'} onChange={() => setAppearance({ theme: 'system' })} />
+                  {THEME_PRESETS.map((preset) => <ThemeChoice key={preset.value} {...preset} selected={appearance.theme === preset.value} onChange={() => setAppearance({ theme: preset.value })} />)}
+                </div>
+              </ChoiceRow>
               <ChoiceRow label="accent">
                 <div className="rh-accent-options" role="group" aria-label="Accent">
                   {ACCENT_PRESETS.map((preset) => (

@@ -24,6 +24,8 @@ import { ANALYSIS_DEMO_CODE } from './panels/analysis/analysis-demo';
 
 const WORKSPACE_ID = 'default';
 
+const DARK_THEME_MODES = new Set(['dark', 'midnight', 'forest', 'amethyst', 'cinder']);
+
 const DEMO_FILE = {
   id: 'default:entry.ts',
   relPath: 'entry.ts',
@@ -200,10 +202,12 @@ export function App(): React.JSX.Element {
   }, [appSettings.appearance.theme]);
   const resolvedTheme = appSettings.appearance.theme === 'system'
     ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
-    : appSettings.appearance.theme;
+    : DARK_THEME_MODES.has(appSettings.appearance.theme) ? 'dark' : 'light';
+  const colorTheme = appSettings.appearance.theme === 'system' ? resolvedTheme : appSettings.appearance.theme;
   void systemThemeTick;
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', resolvedTheme);
+    document.documentElement.setAttribute('data-color-theme', colorTheme);
     document.documentElement.setAttribute('data-accent', appSettings.appearance.accent);
     const customAccent = /^#[0-9a-fA-F]{6}$/.test(appSettings.appearance.accent);
     if (customAccent) {
@@ -225,7 +229,7 @@ export function App(): React.JSX.Element {
     // Resolve Monaco colors after the document tokens are updated so the
     // editor matches the selected theme and accent immediately.
     setRhTheme(resolvedTheme === 'light' ? 'rh-light' : 'rh-dark');
-  }, [resolvedTheme, appSettings.appearance.accent, appSettings.appearance.density, appSettings.appearance.intensity, appSettings.appearance.motion, appSettings.appearance.uiScale]);
+  }, [resolvedTheme, colorTheme, appSettings.appearance.theme, appSettings.appearance.accent, appSettings.appearance.density, appSettings.appearance.intensity, appSettings.appearance.motion, appSettings.appearance.uiScale]);
   // Restore persisted lang override once on mount. After mount, the user
   // toggles it freely and the useEffect below auto-tracks file extensions.
   const langHydratedRef = useRef(false);
