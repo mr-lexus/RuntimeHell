@@ -83,7 +83,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: runtimehell-${{ matrix.name }}
-          path: dist-release/**
+          path: |
+            dist-release/*.exe
+            dist-release/*.AppImage
+            dist-release/*.deb
+            dist-release/*.dmg
+            dist-release/*.zip
+            dist-release/*.blockmap
+            dist-release/latest*.yml
+            dist-release/latest*.yaml
           if-no-files-found: error
           retention-days: 14
 
@@ -110,7 +118,18 @@ jobs:
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --draft --prerelease --title "RuntimeHell $TAG (alpha)" --notes-file .github/alpha-release-notes.md
           fi
-          mapfile -d '' assets < <(find release-assets -type f ! -name 'latest*.yml' ! -name 'latest*.yaml' -print0)
+          mapfile -d '' assets < <(
+            find release-assets -type f \( \
+              -name '*.exe' -o \
+              -name '*.AppImage' -o \
+              -name '*.deb' -o \
+              -name '*.dmg' -o \
+              -name '*.zip' -o \
+              -name '*.blockmap' -o \
+              -name 'latest*.yml' -o \
+              -name 'latest*.yaml' \
+            \) -print0
+          )
           if ((${#assets[@]} == 0)); then
             echo 'No platform artifacts were downloaded' >&2
             exit 1
