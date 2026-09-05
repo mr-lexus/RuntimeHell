@@ -17,6 +17,29 @@ let homeBackup: string | undefined;
 let localAppDataBackup: string | undefined;
 let sandbox = '';
 
+function emptyZip(fileName: string): Buffer {
+  const name = Buffer.from(fileName, 'utf8');
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(20, 4);
+  local.writeUInt16LE(name.length, 26);
+
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(20, 4);
+  central.writeUInt16LE(20, 6);
+  central.writeUInt16LE(name.length, 28);
+
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(46 + name.length, 12);
+  end.writeUInt32LE(30 + name.length, 16);
+
+  return Buffer.concat([local, name, central, name, end]);
+}
+
 beforeAll(() => {
   homeBackup = process.env['USERPROFILE'];
   localAppDataBackup = process.env['LOCALAPPDATA'];
@@ -101,9 +124,9 @@ describe('guessMilestoneVersion (EXPERIMENTAL)', () => {
 
 describe('installEngine (record-mode sha, fake network)', () => {
   it.skipIf(hostPlatform() === 'mac64arm')('downloads via injected fetch, records observed sha, re-install verifies', async () => {
-    // Build a tiny valid zip in memory: EOCD is exactly 22 bytes for an
-    // empty archive (sig4 + fixed fields 16 + comment-len 2).
-    const zipBytes = Buffer.from('PK\x05\x06' + '\0'.repeat(18), 'utf8');
+    // Build a tiny valid zip containing the staged executable name. The file
+    // is empty, but its presence lets POSIX chmod exercise the real path.
+    const zipBytes = emptyZip('d8');
     const sha = createHash('sha256').update(zipBytes).digest('hex');
     const originalFetch = globalThis.fetch;
     let downloads = 0;
