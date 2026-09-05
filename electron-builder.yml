@@ -29,6 +29,7 @@ mac:
 linux:
   icon: build/icon.png
   category: Development
+  maintainer: RuntimeHell contributors <runtimehell@users.noreply.github.com>
   synopsis: Multi-runtime JavaScript and TypeScript playground
   description: RuntimeHell runs JavaScript and TypeScript across multiple runtimes and analyzes engine internals.
   target:
