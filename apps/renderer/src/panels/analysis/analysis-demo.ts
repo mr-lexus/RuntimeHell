@@ -92,7 +92,7 @@ function triggerDeopt(): number {
   forceOptimization(readNumber);
   result += readNumber({ value: 41 });
   // Deliberately violate the warm numeric shape. This is the interesting call
-  // for --trace-deopt; the cast affects TypeScript only, not runtime values.
+  // for deoptimization tracing; the cast affects TypeScript only, not runtime values.
   result += readNumber({ value: 'deopt-me' } as unknown as NumericBox);
   return result;
 }

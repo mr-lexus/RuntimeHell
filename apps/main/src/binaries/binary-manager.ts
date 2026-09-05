@@ -19,6 +19,7 @@ import {
   type ManifestEntry
 } from '@rh/protocol';
 import { engineDir, manifestPath, runtimeDir, supportDir, tmpDir } from './paths.js';
+import { executableName, hostArch, hostPlatform } from '../platform.js';
 
 export interface DownloadProgress {
   id: string;
@@ -43,7 +44,7 @@ export interface InstallRequest {
   entry: Omit<ManifestEntry, 'installedPath' | 'addedAt'>;
   source: FetchSource;
   /** Archive format; zip remains the default for existing installers. */
-  archive?: 'zip' | 'tar.gz' | 'file';
+  archive?: 'zip' | 'tar.gz' | 'tar.xz' | 'file';
   /** Optional executable path inside an extracted archive to materialize at its root. */
   executablePath?: string;
   /** Directory name inside the archive containing the payload root (auto-detect when absent). */
@@ -147,6 +148,11 @@ async function extractTarGz(archiveFile: string, destDir: string): Promise<void>
   await execFileAsync('tar', ['-xzf', archiveFile, '-C', destDir], { windowsHide: true });
 }
 
+async function extractTarXz(archiveFile: string, destDir: string): Promise<void> {
+  await fs.mkdir(destDir, { recursive: true });
+  await execFileAsync('tar', ['-xJf', archiveFile, '-C', destDir], { windowsHide: true });
+}
+
 function safeRelativePath(value: string): string {
   if (isAbsolute(value)) throw new Error('executablePath must be relative');
   const normalized = value.replace(/\\/g, '/');
@@ -188,18 +194,18 @@ export function targetDirFor(entry: ManifestEntry): string {
 }
 
 const IMPORT_BINARY_NAME: Record<string, string> = {
-  node: 'node.exe',
-  deno: 'deno.exe',
-  bun: 'bun.exe',
-  v8: 'd8.exe',
-  'd8-debug': 'd8.exe',
-  spidermonkey: 'js.exe',
-  javascriptcore: 'jsc.exe',
-  quickjs: 'qjs.exe',
-  hermes: 'hermes.exe',
-  chakra: 'ch.exe',
-  txiki: 'tjs.exe',
-  'moddable-xs': 'xst.exe'
+  node: executableName('node'),
+  deno: executableName('deno'),
+  bun: executableName('bun'),
+  v8: executableName('d8'),
+  'd8-debug': executableName('d8'),
+  spidermonkey: executableName('js'),
+  javascriptcore: executableName('jsc'),
+  quickjs: executableName('qjs'),
+  hermes: executableName('hermes'),
+  chakra: executableName('ch'),
+  txiki: executableName('tjs'),
+  'moddable-xs': executableName('xst')
 };
 
 function safeImportSegment(value: string, label: string): void {
@@ -222,7 +228,7 @@ async function hashImportSource(sourcePath: string): Promise<string> {
   return hash.digest('hex');
 }
 
-/** Copy an existing Windows runtime/engine into the private RuntimeHell cache. */
+/** Copy an existing runtime/engine into the private RuntimeHell cache. */
 export async function importLocalArtifact(
   kind: 'runtime' | 'engine',
   id: string,
@@ -236,8 +242,8 @@ export async function importLocalArtifact(
   const entry: ManifestEntry = {
     kind,
     id,
-    platform: 'win64',
-    arch: 'x64',
+    platform: hostPlatform(),
+    arch: hostArch(),
     version,
     url: pathToFileURL(sourcePath).toString(),
     sha256: await hashImportSource(sourcePath),
@@ -258,7 +264,7 @@ export async function importLocalArtifact(
     await fs.mkdir(stageDir, { recursive: true });
     if (sourceStat.isDirectory()) {
       const executableName = IMPORT_BINARY_NAME[id];
-      if (executableName === undefined) throw new Error(`no Windows executable mapping for ${kind}/${id}`);
+      if (executableName === undefined) throw new Error(`no executable mapping for ${kind}/${id}`);
       try {
         await fs.access(join(sourcePath, executableName));
       } catch {
@@ -307,6 +313,9 @@ export async function installArtifact(req: InstallRequest): Promise<ManifestEntr
       await fs.copyFile(stageZip, join(stageDir, targetName));
     } else if (req.archive === 'tar.gz') {
       await extractTarGz(stageZip, stageDir);
+      if (req.stripRoot !== false) await hoistSingleRoot(stageDir);
+    } else if (req.archive === 'tar.xz') {
+      await extractTarXz(stageZip, stageDir);
       if (req.stripRoot !== false) await hoistSingleRoot(stageDir);
     } else {
       await extractZip(stageZip, stageDir);

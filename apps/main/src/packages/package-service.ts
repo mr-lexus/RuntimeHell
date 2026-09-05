@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 import type { PkgEvent, PkgOpResponse, PkgSearchRow } from '@rh/protocol';
 import { workspaceRoot } from '../workspace/files.js';
 import { managedRuntimeDir } from '../runtimes/runtime-resolver.js';
+import { commandLookup, executableName, isWindows } from '../platform.js';
 
 export interface PackageServiceDeps {
   readonly emit: (event: PkgEvent) => void;
@@ -67,7 +68,7 @@ export const nodeCliRunner: CliRunner = (exe, args, cwd, onLine) =>
 
 /**
  * Resolved npm execution strategy. We prefer running npm-cli.js DIRECTLY with
- * a sibling node.exe (no shell, no .cmd quoting hazards); the legacy .cmd
+ * a sibling Node executable (no shell, no quoting hazards); the legacy shell
  * shell path is a last-resort fallback.
  */
 export type NpmResolution =
@@ -82,21 +83,21 @@ export async function resolveNpm(
 ): Promise<NpmResolution> {
   const npmCliRelative = join('node_modules', 'npm', 'bin', 'npm-cli.js');
 
-  // 1) Managed active runtime: bundled node.exe + its npm-cli.js.
+  // 1) Managed active runtime: bundled Node + its npm-cli.js.
   if (managedVersion !== null) {
     const dir = managedRuntimeDir(managedVersion);
-    const nodeExe = join(dir, 'node.exe');
+    const nodeExe = join(dir, executableName('node'));
     const cliJs = join(dir, npmCliRelative);
     if ((await probeFile(nodeExe)) && (await probeFile(cliJs))) {
       return { kind: 'direct', nodeExe, cliJs, origin: 'managed' };
     }
   }
 
-  // 2) PATH npm.cmd → derive sibling node.exe + npm-cli.js from its directory.
+  // 2) PATH npm (or npm.cmd) → derive sibling Node + npm-cli.js when present.
   const pathNpmCmd = await whereNpm();
   if (pathNpmCmd !== null) {
     const dir = dirname(pathNpmCmd);
-    const nodeExe = join(dir, 'node.exe');
+    const nodeExe = join(dir, executableName('node'));
     const cliJs = join(dir, npmCliRelative);
     if ((await probeFile(nodeExe)) && (await probeFile(cliJs))) {
       return { kind: 'direct', nodeExe, cliJs, origin: 'path' };
@@ -121,7 +122,7 @@ async function defaultProbe(p: string): Promise<boolean> {
 
 function defaultWhereNpm(): Promise<string | null> {
   return new Promise((resolve) => {
-    const child = spawn('where.exe', ['npm'], { windowsHide: true });
+    const child = spawn(commandLookup(), ['npm'], isWindows() ? { windowsHide: true } : undefined);
     let out = '';
     child.stdout?.on('data', (d) => {
       out += String(d);
@@ -129,7 +130,7 @@ function defaultWhereNpm(): Promise<string | null> {
     child.on('error', () => resolve(null));
     child.on('close', (code) => {
       if (code !== 0) return resolve(null);
-      const first = out.split(/\r?\n/).find((l) => l.trim().toLowerCase().endsWith('.cmd'));
+      const first = out.split(/\r?\n/).map((l) => l.trim()).find(Boolean);
       resolve(first?.trim() ?? null);
     });
   });
@@ -199,29 +200,33 @@ export class PackageService {
     if (npm.kind === 'direct') {
       result = await runCli(npm.nodeExe, [npm.cliJs, ...verbArgs], root, sink);
     } else {
-      // Legacy .cmd fallback: cmd.exe /d /s /c with cross-spawn-style quoting.
-      const command = `"${npm.exePath} ${verbArgs.join(' ')}"`;
-      result = await new Promise<SpawnedCli>((resolve) => {
-        const child = spawn('cmd.exe', ['/d', '/s', '/c', command], {
-          cwd: root,
-          windowsHide: true,
-          windowsVerbatimArguments: true
+      // Legacy shell fallback on Windows; POSIX can execute npm directly.
+      if (!isWindows()) {
+        result = await runCli(npm.exePath, verbArgs, root, sink);
+      } else {
+        const command = `"${npm.exePath} ${verbArgs.join(' ')}"`;
+        result = await new Promise<SpawnedCli>((resolve) => {
+          const child = spawn('cmd.exe', ['/d', '/s', '/c', command], {
+            cwd: root,
+            windowsHide: true,
+            windowsVerbatimArguments: true
+          });
+          let stderr = '';
+          child.stdout?.on('data', (c: Buffer) => {
+            for (const line of String(c).split('\n')) if (line.trim() !== '') sink('stdout', line.replace(/\r$/, ''));
+          });
+          child.stderr?.on('data', (c: Buffer) => {
+            for (const line of String(c).split('\n')) {
+              const t = line.replace(/\r$/, '');
+              if (t.trim() === '') continue;
+              stderr += `${t}\n`;
+              sink('stderr', t);
+            }
+          });
+          child.on('error', (e) => resolve({ code: -1, stdout: '', stderr: e.message }));
+          child.on('close', (code) => resolve({ code, stdout: '', stderr }));
         });
-        let stderr = '';
-        child.stdout?.on('data', (c: Buffer) => {
-          for (const line of String(c).split('\n')) if (line.trim() !== '') sink('stdout', line.replace(/\r$/, ''));
-        });
-        child.stderr?.on('data', (c: Buffer) => {
-          for (const line of String(c).split('\n')) {
-            const t = line.replace(/\r$/, '');
-            if (t.trim() === '') continue;
-            stderr += `${t}\n`;
-            sink('stderr', t);
-          }
-        });
-        child.on('error', (e) => resolve({ code: -1, stdout: '', stderr: e.message }));
-        child.on('close', (code) => resolve({ code, stdout: '', stderr }));
-      });
+      }
     }
 
     if (result.code !== 0) {

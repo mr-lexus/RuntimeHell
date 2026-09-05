@@ -1,43 +1,55 @@
-name: ci
+name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  windows:
-    runs-on: windows-latest
+  compatibility:
+    name: ${{ matrix.os }} compatibility
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            smoke: node scripts/e2e-compatibility.mjs
+            tests: pnpm test
+          - os: macos-latest
+            smoke: node scripts/e2e-compatibility.mjs
+            tests: pnpm test
+          - os: macos-15-intel
+            smoke: node scripts/e2e-compatibility.mjs
+            tests: pnpm test
+          - os: ubuntu-latest
+            smoke: xvfb-run -a node scripts/e2e-compatibility.mjs
+            tests: xvfb-run -a pnpm test
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        # version read from package.json#packageManager
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
-      - name: Install
+      - name: Install dependencies
         run: pnpm install --frozen-lockfile
         env:
-          # Electron postinstall downloads its binary; allow trusted builds on CI
           ELECTRON_SKIP_NOTHING: '1'
+      - name: Lint
+        run: pnpm lint
       - name: Typecheck
-        run: pnpm typecheck
+        run: pnpm typecheck:all
       - name: Unit tests
-        run: pnpm test
-      - name: Build smoke
+        run: ${{ matrix.tests }}
+      - name: Build
         run: pnpm build
-
-  linux:
-    runs-on: ubuntu-latest
-    continue-on-error: true # Linux is desirable-but-secondary (plan D1)
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm test
+      - name: Native compatibility smoke
+        run: ${{ matrix.smoke }}

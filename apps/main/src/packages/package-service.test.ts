@@ -10,31 +10,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PkgEvent } from '@rh/protocol';
 import { PackageService, resolveNpm, type CliRunner, type SpawnedCli } from './package-service.js';
 import { managedRuntimeDir } from '../runtimes/runtime-resolver.js';
+import { executableName } from '../platform.js';
 
 let homeBackup: string | undefined;
+let posixHomeBackup: string | undefined;
 let sandbox = '';
 
 beforeEach(async () => {
   homeBackup = process.env['USERPROFILE'];
+  posixHomeBackup = process.env['HOME'];
   sandbox = await mkdtemp(join(tmpdir(), 'rh-pkg-unit-'));
   process.env['USERPROFILE'] = sandbox;
+  if (process.platform !== 'win32') process.env['HOME'] = sandbox;
 });
 
 afterEach(async () => {
   if (homeBackup !== undefined) process.env['USERPROFILE'] = homeBackup;
+  else delete process.env['USERPROFILE'];
+  if (posixHomeBackup !== undefined) process.env['HOME'] = posixHomeBackup;
+  else delete process.env['HOME'];
   await rm(sandbox, { recursive: true, force: true });
 });
 
 describe('resolveNpm (D7 order)', () => {
   const npmCliRelative = join('node_modules', 'npm', 'bin', 'npm-cli.js');
 
-  it('prefers the managed runtime: node.exe + bundled npm-cli.js, direct execution', async () => {
+  it('prefers the managed runtime: native Node + bundled npm-cli.js, direct execution', async () => {
     const dir = managedRuntimeDir('22.17.0');
-    const probe = vi.fn(async (p: string) => p === join(dir, 'node.exe') || p === join(dir, npmCliRelative));
+    const probe = vi.fn(async (p: string) => p === join(dir, executableName('node')) || p === join(dir, npmCliRelative));
     const result = await resolveNpm('22.17.0', probe, async () => join(sandbox, 'path-npm.cmd'));
     if (!('kind' in result) || result.kind !== 'direct') throw new Error('expected direct managed resolution');
     expect(result.origin).toBe('managed');
-    expect(result.nodeExe).toBe(join(dir, 'node.exe'));
+    expect(result.nodeExe).toBe(join(dir, executableName('node')));
     expect(result.cliJs).toBe(join(dir, npmCliRelative));
   });
 
@@ -43,7 +50,7 @@ describe('resolveNpm (D7 order)', () => {
     const result = await resolveNpm(null, async (p) => p.startsWith(sandbox), async () => pathNpm);
     if (!('kind' in result) || result.kind !== 'direct') throw new Error('expected direct path resolution');
     expect(result.origin).toBe('path');
-    expect(result.nodeExe).toBe(join(sandbox, 'node.exe'));
+    expect(result.nodeExe).toBe(join(sandbox, executableName('node')));
   });
 
   it('degrades to shell fallback when only the .cmd shim exists', async () => {

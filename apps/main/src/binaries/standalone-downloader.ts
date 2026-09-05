@@ -1,8 +1,8 @@
 /**
  * Official standalone runtime/engine downloads discovered from GitHub
- * releases. These are deliberately narrow asset selectors: a release must
- * provide the expected Windows x64 executable, and GitHub's sha256 asset
- * digest is used whenever it is available.
+ * releases. These selectors currently target Windows x64 assets; the
+ * controller rejects other hosts before reaching this module. GitHub's
+ * sha256 asset digest is used whenever it is available.
  */
 import type { ManifestEntry, RuntimeVersionRow } from '@rh/protocol';
 import { installArtifact, type InstallRequest } from './binary-manager.js';

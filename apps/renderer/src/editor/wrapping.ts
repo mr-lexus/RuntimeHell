@@ -94,7 +94,7 @@ export function buildAnalysisSnippet(input: WrapInput): WrappedSnippet {
       if (functionName !== null) {
         // V8 in ES module mode (the adapter writes `snippet.mjs`) does NOT
         // eagerly compile top-level function declarations even with
-        // `--no-lazy`. A bare `function sum(){}` snippet emits no `sum`
+        // lazy-compilation suppression. A bare `function sum(){}` snippet emits no `sum`
         // bytecode block, so the renderer's focus filter falls back to all
         // functions. A top-level reference `const __rh_force = sum;` forces
         // V8 to compile the declaration without executing it.

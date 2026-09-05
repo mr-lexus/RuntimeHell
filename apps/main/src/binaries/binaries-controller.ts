@@ -4,7 +4,7 @@
  * progress sink is injected (index.ts binds webContents.send).
  *
  * Multi-runtime management (feature): list() now reports system-wide detection
- * for node/deno/bun, nvm-windows Node versions, managed installs, and
+ * for node/deno/bun, native nvm Node versions, managed installs, and
  * available versions per runtime. install() dispatches by runtime id.
  */
 import type {
@@ -34,16 +34,17 @@ import {
   type RuntimeId
 } from '../runtimes/runtime-detection.js';
 import { importLocalArtifact, installArtifact, readManifest, removeEntry } from './binary-manager.js';
+import { hostArch, hostPlatform } from '../platform.js';
 
 export interface BinariesControllerDeps {
   readonly emitProgress: (event: BinaryProgressEvent) => void;
   /** Injectable for tests; default = live nodejs.org / GitHub fetch. */
   readonly fetchAvailable?: (id: string) => Promise<RuntimeVersionRow[]>;
-  /** Injectable for tests; default = where.exe detection. */
+  /** Injectable for tests; default = native command-lookup detection. */
   readonly detectSystem?: (id: string) => Promise<DetectedRuntime | null>;
   /** Injectable for tests; default = PATH/common-install-location detection. */
   readonly detectBrowser?: (id: BrowserId) => Promise<DetectedRuntime | null>;
-  /** Injectable for tests; default = nvm-windows detection. */
+  /** Injectable for tests; default = native nvm layout detection. */
   readonly detectNvm?: () => Promise<NvmInfo | null>;
 }
 
@@ -161,12 +162,18 @@ export class BinariesController {
     try {
       if (kind === 'engine') {
         if (id === 'spidermonkey') {
+          if (hostPlatform() !== 'win64' || hostArch() !== 'x64') {
+            throw new Error('SpiderMonkey managed download currently targets Windows x64; import a local build instead');
+          }
           const { installSmEngine } = await import('./sm-downloader.js');
           const entry = await installSmEngine({ onProgress: (p) => this.deps.emitProgress({ kind: 'runtime', id, version: p.totalBytes === null ? '' : id, receivedBytes: p.receivedBytes, totalBytes: p.totalBytes }) });
           this.deps.emitProgress({ kind: 'runtime', id, version: entry.version, receivedBytes: 0, totalBytes: null, done: true });
           return { ok: true, entry };
         }
         if (id === 'javascriptcore') {
+          if (hostPlatform() !== 'win64' || hostArch() !== 'x64') {
+            throw new Error('JavaScriptCore managed download currently targets Windows x64; import a local build instead');
+          }
           // JSC needs the WebKitRequirements DLLs on the CHILD PATH (todo 25).
           const { ensureWebKitRequirements } = await import('./webkit-requirements.js');
           await ensureWebKitRequirements();
@@ -176,6 +183,9 @@ export class BinariesController {
           return { ok: true, entry };
         }
         if (id === 'quickjs' || id === 'graaljs' || id === 'hermes' || id === 'chakra' || id === 'moddable-xs') {
+          if (hostPlatform() !== 'win64' || hostArch() !== 'x64') {
+            throw new Error(`${id} managed download currently targets Windows x64; import a local build instead`);
+          }
           const { buildChakraInstall, buildGraalJsInstall, buildHermesInstall, buildModdableXsInstall, buildQuickJsInstall } = await import('./standalone-downloader.js');
           const built = id === 'quickjs'
             ? await buildQuickJsInstall()
@@ -220,6 +230,9 @@ export class BinariesController {
       // compares against available-version rows (also v-less).
       const progressVersion = normalized.replace(/^v/, '');
       if (id === 'txiki') {
+        if (hostPlatform() !== 'win64' || hostArch() !== 'x64') {
+          throw new Error('txiki.js managed download currently targets Windows x64; import a local build instead');
+        }
         const built = await buildTxikiInstall(progressVersion);
         const entry = await installStandalone(built, (p) => this.deps.emitProgress({
           kind: 'runtime',
@@ -246,6 +259,7 @@ export class BinariesController {
       const entry: ManifestEntry = await installArtifact({
         entry: built.entry,
         source: { url: built.url, sha256: built.sha256 },
+        ...(built.archive !== undefined ? { archive: built.archive } : {}),
         onProgress: (p) => {
           this.deps.emitProgress({
             kind: 'runtime',
@@ -263,7 +277,7 @@ export class BinariesController {
     }
   }
 
-  /** Copy an existing Windows executable/folder into the private cache. */
+  /** Copy an existing native executable/folder into the private cache. */
   async importLocal(
     kind: 'runtime' | 'engine',
     id: string,

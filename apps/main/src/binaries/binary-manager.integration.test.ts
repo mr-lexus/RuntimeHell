@@ -19,6 +19,7 @@ import {
   targetDirFor
 } from './binary-manager.js';
 import { buildNodeInstall } from '../runtimes/node/node-runtime.js';
+import { executableName } from '../platform.js';
 
 const execFileP = promisify(execFile);
 const RUN = process.env['RH_NET_TESTS'] === '1';
@@ -46,6 +47,7 @@ describe.skipIf(!RUN)('node runtime install (network)', () => {
     const entry = await installArtifact({
       entry: built.entry,
       source: { url: built.url, sha256: built.sha256 },
+      archive: built.archive,
       onProgress: (p) => {
         lastProgress = { received: p.receivedBytes, total: p.totalBytes };
       }
@@ -56,7 +58,7 @@ describe.skipIf(!RUN)('node runtime install (network)', () => {
     expect(lastProgress.received).toBeGreaterThan(10_000_000); // ~30MB zip
 
     // Spawn the downloaded binary for real.
-    const exe = join(targetDirFor(entry), 'node.exe');
+    const exe = join(targetDirFor(entry), executableName('node'));
     const { stdout } = await execFileP(exe, ['--version']);
     expect(stdout.trim()).toBe(`v${NODE_VERSION}`);
 

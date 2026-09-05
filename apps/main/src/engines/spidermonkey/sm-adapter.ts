@@ -15,6 +15,7 @@ import type { AnalysisContext, EngineAdapter, EngineDescription } from '../engin
 import { CapabilityGateError } from '../v8-adapter.js';
 import { trackedProcessIsolation } from '../../execution/isolation.js';
 import type { EngineRegistry } from '../registry.js';
+import { cacheRoot } from '../../binaries/paths.js';
 
 const SUPPORTED: Partial<Record<'ast' | 'bytecode', keyof import('@rh/protocol').EngineCapabilities>> = {
   ast: 'astDump',
@@ -63,7 +64,7 @@ export class SpiderMonkeyAdapter implements EngineAdapter {
       }
 
       const token = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const workDir = join(process.env['RH_CACHE_ROOT'] ?? '.', 'analysis-tmp', `sm-${token}`);
+      const workDir = join(cacheRoot(), 'analysis-tmp', `sm-${token}`);
       await fs.mkdir(workDir, { recursive: true });
 
       // TS strip (same policy as the V8 adapter).

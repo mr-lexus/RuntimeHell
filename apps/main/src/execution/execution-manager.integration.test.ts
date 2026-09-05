@@ -2,19 +2,16 @@
  * ExecutionManager composed-path integration (plan todo 11 QA happy):
  * REAL system node through transform → esbuild → capture → runner.
  */
-import { execFile } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { RunEvent } from '@rh/protocol';
 import { ExecutionManager } from './execution-manager.js';
 import { ProcessRunner } from './process-runner.js';
 
-const execFileP = promisify(execFile);
-
 let homeBackup: string | undefined;
+let posixHomeBackup: string | undefined;
 let sandbox: string;
 let nodeExe = '';
 
@@ -30,17 +27,19 @@ const DEMO_TS = [
 ].join('\n');
 
 beforeAll(async () => {
-  const { stdout } = await execFileP('where.exe', ['node']);
-  const found = stdout.split(/\r?\n/).find((l) => l.trim().toLowerCase().endsWith('.exe'));
-  if (found === undefined) throw new Error('node.exe not found');
-  nodeExe = found.trim();
+  nodeExe = process.execPath;
   homeBackup = process.env['USERPROFILE'];
+  posixHomeBackup = process.env['HOME'];
   sandbox = await mkdtemp(join(tmpdir(), 'rh-exec-e2e-'));
   process.env['USERPROFILE'] = sandbox;
+  if (process.platform !== 'win32') process.env['HOME'] = sandbox;
 });
 
 afterAll(async () => {
   if (homeBackup !== undefined) process.env['USERPROFILE'] = homeBackup;
+  else delete process.env['USERPROFILE'];
+  if (posixHomeBackup !== undefined) process.env['HOME'] = posixHomeBackup;
+  else delete process.env['HOME'];
   await rm(sandbox, { recursive: true, force: true });
 });
 

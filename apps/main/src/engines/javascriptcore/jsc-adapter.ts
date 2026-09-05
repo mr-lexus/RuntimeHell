@@ -15,6 +15,7 @@ import type { AnalysisEvent, AnalysisResult, AnalysisStartRequest } from '@rh/pr
 import type { AnalysisContext, EngineAdapter, EngineDescription } from '../engine-adapter.js';
 import { trackedProcessIsolation } from '../../execution/isolation.js';
 import type { EngineRegistry } from '../registry.js';
+import { cacheRoot } from '../../binaries/paths.js';
 
 const TYPE_ENV: Partial<Record<'bytecode' | 'deopts' | 'gc', Record<string, string>>> = {
   bytecode: { JSC_dumpGeneratedBytecodes: 'true' },
@@ -65,7 +66,7 @@ export class JavaScriptCoreAdapter implements EngineAdapter {
       }
 
       const token = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const workDir = join(process.env['RH_CACHE_ROOT'] ?? '.', 'analysis-tmp', `jsc-${token}`);
+      const workDir = join(cacheRoot(), 'analysis-tmp', `jsc-${token}`);
       await fs.mkdir(workDir, { recursive: true });
 
       // TS strip (same policy as V8/SM adapters).

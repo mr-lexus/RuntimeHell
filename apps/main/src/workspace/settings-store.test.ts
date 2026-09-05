@@ -10,15 +10,26 @@ import { DEFAULT_SETTINGS, loadSettings, saveSettings, settingsPath, updateSetti
 
 let dir = '';
 let realAppData: string | undefined;
+let realHome: string | undefined;
+let realXdgConfig: string | undefined;
 
 beforeEach(async () => {
   realAppData = process.env['APPDATA'];
+  realHome = process.env['HOME'];
+  realXdgConfig = process.env['XDG_CONFIG_HOME'];
   dir = await mkdtemp(join(tmpdir(), 'rh-settings-'));
-  process.env['APPDATA'] = dir;
+  if (process.platform === 'win32') process.env['APPDATA'] = dir;
+  else if (process.platform === 'darwin') process.env['HOME'] = dir;
+  else process.env['XDG_CONFIG_HOME'] = dir;
 });
 
 afterEach(async () => {
   if (realAppData !== undefined) process.env['APPDATA'] = realAppData;
+  else delete process.env['APPDATA'];
+  if (realHome !== undefined) process.env['HOME'] = realHome;
+  else delete process.env['HOME'];
+  if (realXdgConfig !== undefined) process.env['XDG_CONFIG_HOME'] = realXdgConfig;
+  else delete process.env['XDG_CONFIG_HOME'];
   await rm(dir, { recursive: true, force: true });
 });
 

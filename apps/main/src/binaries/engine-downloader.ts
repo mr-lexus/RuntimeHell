@@ -18,6 +18,7 @@ import {
   v8ZipUrl,
   type EngineId
 } from './engine-catalog.js';
+import { hostArch, hostPlatform } from '../platform.js';
 
 const ENGINE_VARIANT: Record<string, 'rel' | 'dbg'> = {
   v8: 'rel',
@@ -25,7 +26,7 @@ const ENGINE_VARIANT: Record<string, 'rel' | 'dbg'> = {
 };
 
 export async function fetchLatestV8Version(variant: 'rel' | 'dbg'): Promise<string> {
-  const res = await fetch(v8LatestJsonUrl(variant));
+  const res = await fetch(v8LatestJsonUrl(variant, hostPlatform()));
   if (!res.ok) throw new Error(`v8 latest fetch failed: ${res.status}`);
   const version = parseV8Latest(await res.text());
   if (version === null) throw new Error('v8 latest payload malformed');
@@ -45,7 +46,9 @@ export interface EngineInstallOutcome {
 
 /** Install a managed engine binary per the catalog. */
 export async function installEngine(req: EngineInstallRequest): Promise<EngineInstallOutcome> {
-  const source = resolveEngineArtifact(req.engineId, 'win64', 'x64');
+  const platform = hostPlatform();
+  const arch = hostArch();
+  const source = resolveEngineArtifact(req.engineId, platform, arch);
   // The IPC boundary accepts a string id. Keep malformed/legacy ids from
   // turning an unsupported lookup into a cryptic "reading enabled" crash.
   if (source === undefined) throw new Error(`unknown engine '${req.engineId}'`);
@@ -67,17 +70,17 @@ export async function installEngine(req: EngineInstallRequest): Promise<EngineIn
     entry: {
       kind: 'engine',
       id: req.engineId,
-      platform: 'win64',
-      arch: 'x64',
+      platform,
+      arch,
       version,
-      url: v8ZipUrl(version, variant),
+      url: v8ZipUrl(version, variant, platform),
       sha256: prior?.sha256 ?? '',
       license: 'BSD-style (V8 LICENSE)',
       source: 'official-canary',
       customBuildRequired: false as const
     },
     source: {
-      url: v8ZipUrl(version, variant),
+      url: v8ZipUrl(version, variant, platform),
       // Re-install of a previously recorded version verifies against the
       // recorded digest; first install enters record mode.
       sha256: prior?.sha256

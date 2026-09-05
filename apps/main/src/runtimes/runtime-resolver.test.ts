@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ManifestEntry, NvmInfo } from '@rh/protocol';
 import { installedNodeVersions, resolveRuntimeChoice } from './runtime-resolver.js';
+import { executableName } from '../platform.js';
 
 function managedEntry(version: string): ManifestEntry {
   return {
@@ -42,7 +43,7 @@ describe('resolveRuntimeChoice', () => {
     if (choice.kind !== 'managed') throw new Error(`expected managed, got ${choice.kind}`);
     expect(choice.version).toBe('22.17.0');
     // join() yields platform separators; compare normalized.
-    expect(normalize(choice.exePath)).toBe('C:/cache/runtimes/node/22.17.0/node.exe');
+    expect(normalize(choice.exePath)).toBe(`C:/cache/runtimes/node/22.17.0/${executableName('node')}`);
   });
 
   it('falls back to system when the requested version is not installed', () => {
@@ -84,7 +85,7 @@ describe('resolveRuntimeChoice', () => {
     expect(installedNodeVersions([managedEntry('20.11.0'), managedEntry('22.17.0')])).toEqual(['22.17.0', '20.11.0']);
   });
 
-  // --- nvm-windows integration --------------------------------------------
+  // --- native nvm integration ---------------------------------------------
 
   it('resolves an explicit nvm: selection to the nvm executable', () => {
     const choice = resolveRuntimeChoice('nvm:20.11.0', [], SYSTEM, NVM);

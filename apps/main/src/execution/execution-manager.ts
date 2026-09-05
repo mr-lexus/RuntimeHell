@@ -98,7 +98,7 @@ export function runtimeUnavailableMessage(runtimeId: RuntimeId): string {
 }
 
 /**
- * Displayed resolution order (todo 12): requested managed version → nvm-windows
+ * Displayed resolution order (todo 12): requested managed version → native nvm
  * version → system installation → 'none' (UI offers a managed download). The
  * manifest is read per call: installs/uninstalls mutate it between runs.
  * Deno/Bun skip the nvm lane entirely (DenoBunRuntimeAdapter).

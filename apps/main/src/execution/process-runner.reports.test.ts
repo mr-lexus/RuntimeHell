@@ -3,17 +3,14 @@
  * Covers BOTH transports: stderr sentinel lines (always) and the fd-3 pipe
  * (gated on the one-time probe; explicit skip marker when unsupported).
  */
-import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { probeFd3Support, resetFd3ProbeCache } from './fd3-probe.js';
 import type { RunEvent, RunResult } from '@rh/protocol';
 import { ProcessRunner } from './process-runner.js';
 
-const execFileP = promisify(execFile);
 // Vitest executes this spec from its source location, so __dirname is
 // apps/main/src/execution.
 const BOOTSTRAP = join(__dirname, 'templates', 'bootstrap.cjs');
@@ -36,10 +33,7 @@ let nodeExe: string;
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'rh-capture-'));
-  const { stdout } = await execFileP('where.exe', ['node']);
-  const found = stdout.split(/\r?\n/).find((l) => l.trim().toLowerCase().endsWith('.exe'));
-  if (found === undefined) throw new Error('node.exe not found on PATH');
-  nodeExe = found.trim();
+  nodeExe = process.execPath;
 });
 
 afterAll(async () => {

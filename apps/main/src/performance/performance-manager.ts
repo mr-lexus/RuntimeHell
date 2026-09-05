@@ -33,6 +33,7 @@ import { readManifest } from '../binaries/binary-manager.js';
 import { detectNvmNode, detectSystemBrowser, type BrowserId, type DetectedRuntime } from '../runtimes/runtime-detection.js';
 import { EmbeddedBrowserRuntime, type BrowserRuntimeRunner } from '../runtimes/browser/browser-runtime.js';
 import { ExternalBrowserRuntime } from './external-browser-runner.js';
+import { executableName, pathListSeparator } from '../platform.js';
 
 const require = createRequire(__filename);
 const MAX_BODY_LENGTH = 200_000;
@@ -67,9 +68,9 @@ const NATURAL_PROFILE: PerformanceProfileOption = {
 
 const BROWSER_IDS: readonly BrowserId[] = ['chrome', 'firefox'];
 const MANAGED_EXECUTABLES: Readonly<Record<string, string>> = {
-  node: 'node.exe', deno: 'deno.exe', bun: 'bun.exe', txiki: 'tjs.exe',
-  v8: 'd8.exe', 'd8-debug': 'd8.exe', spidermonkey: 'js.exe', javascriptcore: 'jsc.exe',
-  quickjs: 'qjs.exe', graaljs: join('bin', 'js.exe'), hermes: 'hermes.exe', chakra: 'ch.exe', 'moddable-xs': 'xst.exe'
+  node: executableName('node'), deno: executableName('deno'), bun: executableName('bun'), txiki: executableName('tjs'),
+  v8: executableName('d8'), 'd8-debug': executableName('d8'), spidermonkey: executableName('js'), javascriptcore: executableName('jsc'),
+  quickjs: executableName('qjs'), graaljs: join('bin', executableName('js')), hermes: executableName('hermes'), chakra: executableName('ch'), 'moddable-xs': executableName('xst')
 };
 
 export interface PerformanceInventoryDeps {
@@ -196,7 +197,10 @@ export class RegistryPerformanceTargetResolver implements PerformanceTargetResol
       try {
         execFile(target.executable, args, {
           windowsHide: true, timeout: 8_000, maxBuffer: 8 * 1024 * 1024,
-          env: { SystemRoot: process.env['SystemRoot'], windir: process.env['windir'], PATH: `${dirname(target.executable)};${join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32')}` }
+          env: {
+            ...(process.platform === 'win32' ? { SystemRoot: process.env['SystemRoot'], windir: process.env['windir'] } : {}),
+            PATH: [dirname(target.executable), ...(process.env['PATH'] ?? '').split(pathListSeparator()).filter(Boolean)].join(pathListSeparator())
+          }
         }, (error, stdout, stderr) => resolve(error && !stdout ? stderr : `${stdout}\n${stderr}`));
       } catch {
         resolve('');

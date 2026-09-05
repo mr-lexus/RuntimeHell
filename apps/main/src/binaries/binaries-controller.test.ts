@@ -11,19 +11,29 @@ import type { BinaryProgressEvent, NvmInfo, RuntimeVersionRow } from '@rh/protoc
 import { BinariesController } from './binaries-controller.js';
 
 let homeBackup: string | undefined;
+let cacheRootBackup: string | undefined;
+let localAppDataBackup: string | undefined;
 let sandbox: string;
 
 beforeAll(() => {
   homeBackup = process.env['USERPROFILE'];
+  cacheRootBackup = process.env['RH_CACHE_ROOT'];
+  localAppDataBackup = process.env['LOCALAPPDATA'];
   return mkdtemp(join(tmpdir(), 'rh-binc-')).then((dir) => {
     sandbox = dir;
-    process.env['USERPROFILE'] = dir; // redirect %LOCALAPPDATA%? LOCALAPPDATA read separately below
+    process.env['USERPROFILE'] = dir;
     process.env['LOCALAPPDATA'] = dir;
+    process.env['RH_CACHE_ROOT'] = join(dir, 'cache');
   });
 });
 
 afterAll(async () => {
   if (homeBackup !== undefined) process.env['USERPROFILE'] = homeBackup;
+  else delete process.env['USERPROFILE'];
+  if (cacheRootBackup !== undefined) process.env['RH_CACHE_ROOT'] = cacheRootBackup;
+  else delete process.env['RH_CACHE_ROOT'];
+  if (localAppDataBackup !== undefined) process.env['LOCALAPPDATA'] = localAppDataBackup;
+  else delete process.env['LOCALAPPDATA'];
   await rm(sandbox, { recursive: true, force: true });
 });
 
@@ -93,11 +103,15 @@ describe('BinariesController.install/remove', () => {
   it('reports install failure without throwing on bad checksum source', async () => {
     const events: BinaryProgressEvent[] = [];
     const controller = makeController(events);
-    // buildNodeInstall hits the network for SHASUMS; simulate failure via an
-    // unreachable version that yields a rejected fetch.
-    const response = await controller.install('runtime', 'node', 'v0.0.1-nonexistent');
-    expect(response.ok).toBe(false);
-    if (!response.ok) expect(response.message.length).toBeGreaterThan(0);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => Promise.reject(new Error('network unavailable'))) as typeof fetch;
+    try {
+      const response = await controller.install('runtime', 'node', 'v0.0.1-nonexistent');
+      expect(response.ok).toBe(false);
+      if (!response.ok) expect(response.message.length).toBeGreaterThan(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it('refuses disabled engines before any network access', async () => {

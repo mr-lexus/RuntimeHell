@@ -8,6 +8,7 @@
 import type { EngineCapabilities, EngineId } from '@rh/protocol';
 import { readManifest } from '../binaries/binary-manager.js';
 import { join } from 'node:path';
+import { executableName } from '../platform.js';
 import { hashBinary, probeV8Binary, realExecutor, type ExecuteBinary } from './probe.js';
 import type { AnalysisEvent, AnalysisStartRequest } from '@rh/protocol';
 import type { EngineAdapter } from './engine-adapter.js';
@@ -22,10 +23,10 @@ export interface EngineDescription {
 }
 
 const ENGINE_BINARY_NAME: Record<string, string> = {
-  v8: 'd8.exe',
-  'd8-debug': 'd8.exe',
-  spidermonkey: 'js.exe',
-  javascriptcore: 'jsc.exe'
+  v8: executableName('d8'),
+  'd8-debug': executableName('d8'),
+  spidermonkey: executableName('js'),
+  javascriptcore: executableName('jsc')
 };
 /** Registry ids map to manifest entry ids; 'd8-debug' IS its own entry id. */
 const KNOWN_IDS: (EngineId | 'd8-debug')[] = ['v8', 'd8-debug', 'spidermonkey', 'javascriptcore'];
@@ -61,7 +62,7 @@ export class EngineRegistry {
     return [...byId.entries()].map(([id, v]) => ({
       id,
       version: v.version,
-      binaryPath: join(v.installedPath, ENGINE_BINARY_NAME[id] ?? 'engine.exe')
+      binaryPath: join(v.installedPath, ENGINE_BINARY_NAME[id] ?? executableName('engine'))
     }));
   }
 

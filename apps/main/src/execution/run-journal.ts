@@ -4,8 +4,7 @@
  *
  * Every spawned run is journaled so a crashed parent can sweep orphaned
  * children on startup. Cancellation uses `taskkill /pid <pid> /T /F` on
- * Windows so the whole tree dies; idempotent, with a direct TerminateProcess
- * fallback when taskkill is stalled or blocked.
+ * Windows and detached process-group signals on POSIX.
  */
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
@@ -15,11 +14,17 @@ import { cacheRoot } from '../binaries/paths.js';
 export function treeKill(pid: number): Promise<void> {
   return new Promise((resolve) => {
     if (process.platform !== 'win32') {
-      try {
-        process.kill(pid);
-      } catch {
-        /* already dead */
+      // Children are started detached on POSIX, so signal the whole process
+      // group first and fall back to the individual pid for older runtimes.
+      try { process.kill(-pid, 'SIGTERM'); } catch {
+        try { process.kill(pid, 'SIGTERM'); } catch { /* already dead */ }
       }
+      const timer = setTimeout(() => {
+        try { process.kill(-pid, 'SIGKILL'); } catch {
+          try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
+        }
+      }, 1000);
+      timer.unref?.();
       resolve();
       return;
     }
@@ -94,21 +99,46 @@ export async function readJournal(): Promise<JournalEntry[]> {
 }
 
 export async function writeJournal(entries: JournalEntry[]): Promise<void> {
+  const run = journalMutation.then(() => writeJournalNow(entries), () => writeJournalNow(entries));
+  journalMutation = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+async function writeJournalNow(entries: JournalEntry[]): Promise<void> {
   await fs.mkdir(cacheRoot(), { recursive: true });
   await fs.writeFile(journalPath(), JSON.stringify(entries, null, 2), 'utf8');
 }
 
+let journalMutation: Promise<void> = Promise.resolve();
+
+/** Serialize read/modify/write journal updates so async process exits cannot
+ * resurrect stale entries after an orphan sweep. */
+export function updateJournal(mutator: (entries: JournalEntry[]) => void | Promise<void>): Promise<void> {
+  const run = journalMutation.then(async () => {
+    const entries = await readJournal();
+    await mutator(entries);
+    await writeJournalNow(entries);
+  }, async () => {
+    const entries = await readJournal();
+    await mutator(entries);
+    await writeJournalNow(entries);
+  });
+  journalMutation = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 /** Kill any journaled processes that never reported exit (crash recovery). */
 export async function sweepOrphans(): Promise<number> {
-  const entries = await readJournal();
   let killed = 0;
-  for (const entry of entries) {
-    if (!entry.exited && (await isAlive(entry.pid))) {
-      await treeKill(entry.pid);
-      killed++;
+  await updateJournal(async (entries) => {
+    for (const entry of entries) {
+      if (!entry.exited && (await isAlive(entry.pid))) {
+        await treeKill(entry.pid);
+        killed++;
+      }
+      entry.exited = true;
     }
-    entry.exited = true;
-  }
-  await writeJournal([]);
+    entries.splice(0, entries.length);
+  });
   return killed;
 }

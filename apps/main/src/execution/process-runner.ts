@@ -2,13 +2,13 @@
  * ProcessRunner (plan todo 8): isolated child-process execution.
  *
  * Environment policy (documented per plan): children receive a MINIMAL
- * environment — SystemRoot/windir/TEMP/TMP/PROCESSOR_* plus a trimmed PATH
- * (System32 + the executable's own directory). Caller may extend via
+ * environment — native temp/home/locale values plus a trimmed PATH (on
+ * Windows, System32 + the executable's own directory). Caller may extend via
  * `extraEnv` (used e.g. for JSC_* option overrides later). User secrets in the
  * parent environment are never inherited.
  *
- * Cancellation uses `taskkill /pid <pid> /T /F` on Windows so the whole tree
- * dies; idempotent; every run is journaled for startup orphan sweeps.
+ * Cancellation uses `taskkill /pid <pid> /T /F` on Windows and detached
+ * process-group signals on POSIX; every run is journaled for startup sweeps.
  */
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -16,7 +16,8 @@ import { dirname, join } from 'node:path';
 import type { RunEvent, RunResult, SerializedValue } from '@rh/protocol';
 import { parseConsoleFrame, parseReportFrame, SentinelLineSplitter } from './report-transport.js';
 import type { ReportTransport } from './report-transport.js';
-import { isAlive, readJournal, treeKill, writeJournal } from './run-journal.js';
+import { isAlive, treeKill, updateJournal } from './run-journal.js';
+import { pathListSeparator } from '../platform.js';
 
 // Compatibility surface: existing consumers import these from process-runner.
 export { readJournal, sweepOrphans, writeJournal } from './run-journal.js';
@@ -50,15 +51,27 @@ function sanitizedEnv(
   extraEnv?: Record<string, string>,
   pathPrepend?: string[]
 ): NodeJS.ProcessEnv {
-  const basePATH = join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32') + ';' + dirname(exePath);
+  const inheritedPath = process.env['PATH'] ?? (process.platform === 'win32' ? '' : '/usr/local/bin:/usr/bin:/bin');
+  const basePaths = process.platform === 'win32'
+    ? [join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32'), dirname(exePath)]
+    : [dirname(exePath), ...inheritedPath.split(pathListSeparator()).filter(Boolean)];
   const env: NodeJS.ProcessEnv = {
-    SystemRoot: process.env['SystemRoot'],
-    windir: process.env['windir'],
-    TEMP: process.env['TEMP'],
-    TMP: process.env['TMP'],
-    PROCESSOR_ARCHITECTURE: process.env['PROCESSOR_ARCHITECTURE'],
-    NUMBER_OF_PROCESSORS: process.env['NUMBER_OF_PROCESSORS'],
-    PATH: pathPrepend !== undefined && pathPrepend.length > 0 ? [...pathPrepend, basePATH].join(';') : basePATH,
+    ...(process.platform === 'win32'
+      ? {
+          SystemRoot: process.env['SystemRoot'],
+          windir: process.env['windir'],
+          TEMP: process.env['TEMP'],
+          TMP: process.env['TMP'],
+          PROCESSOR_ARCHITECTURE: process.env['PROCESSOR_ARCHITECTURE'],
+          NUMBER_OF_PROCESSORS: process.env['NUMBER_OF_PROCESSORS']
+        }
+      : {
+          HOME: process.env['HOME'],
+          LANG: process.env['LANG'],
+          LC_ALL: process.env['LC_ALL'],
+          TMPDIR: process.env['TMPDIR']
+        }),
+    PATH: [...(pathPrepend ?? []), ...basePaths].join(pathListSeparator()),
     ...(extraEnv ?? {})
   };
   return env;
@@ -197,10 +210,9 @@ export class ProcessRunner {
         reports: [...reports.entries()].sort((a, b) => a[0] - b[0]).map(([index, value]) => ({ index, value }))
       });
       // Mark journal entry exited.
-      void readJournal().then((entries) => {
+      void updateJournal((entries) => {
         const entry = entries.find((e) => e.runId === runId);
         if (entry) entry.exited = true;
-        return writeJournal(entries);
       });
     };
 
@@ -226,6 +238,7 @@ export class ProcessRunner {
         cwd: options.cwd,
         env,
         windowsHide: true,
+        detached: process.platform !== 'win32',
         stdio
       });
       childRef = child;
@@ -233,9 +246,9 @@ export class ProcessRunner {
 
       // Journal for orphan sweep.
       if (child.pid) {
-        void readJournal().then((entries) =>
-          writeJournal([...entries, { runId, pid: child.pid as number, startedAt: new Date(startedAt).toISOString(), exited: false }])
-        );
+        void updateJournal((entries) => {
+          entries.push({ runId, pid: child.pid as number, startedAt: new Date(startedAt).toISOString(), exited: false });
+        });
       }
 
       child.stdout?.on('data', (c: Buffer) => stdoutPump.push(c));

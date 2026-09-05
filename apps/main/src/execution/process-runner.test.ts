@@ -1,24 +1,19 @@
 /**
  * ProcessRunner integration tests (plan todo 8 QA): REAL child processes.
- * Uses the system node.exe as the spawned binary.
+ * Uses the current Node executable as the spawned binary.
  */
-import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ProcessRunner, sweepOrphans } from './process-runner.js';
-
-const execFileP = promisify(execFile);
 
 let dir: string;
 let nodeExe: string;
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'rh-runner-'));
-  const { stdout } = await execFileP('where.exe', ['node']);
-  nodeExe = stdout.split(/\r?\n/).find((l) => l.trim().toLowerCase().endsWith('.exe'))!.trim();
+  nodeExe = process.execPath;
 });
 
 afterAll(async () => {
@@ -81,7 +76,7 @@ describe('ProcessRunner (real processes)', () => {
       if (e.type === 'error') errors.push(e.code ?? '');
     });
     const handle = runner.run({
-      exePath: join(dir, 'definitely-missing.exe'),
+      exePath: join(dir, 'definitely-missing'),
       cwd: dir,
       timeoutMs: 2000
     });
@@ -103,7 +98,7 @@ describe('ProcessRunner (real processes)', () => {
     delete process.env['RH_SECRET_CANARY'];
     const env = JSON.parse(chunks.join('')) as Record<string, string>;
     expect(env['RH_SECRET_CANARY']).toBeUndefined();
-    expect(env['SystemRoot']).toBeTruthy();
+    expect(env['PATH']).toBeTruthy();
   });
 
   it('sweepOrphans clears the journal without throwing', async () => {

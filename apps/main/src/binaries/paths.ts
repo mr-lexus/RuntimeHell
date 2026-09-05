@@ -1,16 +1,17 @@
 /**
  * Binary cache layout (plan D2):
- *   %LOCALAPPDATA%\RuntimeHell\cache\manifest.json
- *   %LOCALAPPDATA%\RuntimeHell\cache\runtimes\{id}\{version}\
- *   %LOCALAPPDATA%\RuntimeHell\cache\engines\{id}\{version}\
- *   %LOCALAPPDATA%\RuntimeHell\cache\tmp\            (staging, atomic renames)
+ *   Native user cache directory/RuntimeHell/cache/manifest.json
+ *   Native user cache directory/RuntimeHell/cache/runtimes/{id}/{version}/
+ *   Native user cache directory/RuntimeHell/cache/engines/{id}/{version}/
+ *   Native user cache directory/RuntimeHell/cache/tmp/ (staging, atomic renames)
  */
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { userCacheDir } from '../platform.js';
 
 export function cacheRoot(): string {
   // Test override: RH_CACHE_ROOT redirects the whole cache (unit tests).
-  const base = process.env['RH_CACHE_ROOT'] ?? join(process.env['LOCALAPPDATA'] ?? tmpdir(), 'RuntimeHell', 'cache');
+  const base = process.env['RH_CACHE_ROOT'] ?? join(userCacheDir() || tmpdir(), 'RuntimeHell', 'cache');
   return base;
 }
 

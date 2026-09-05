@@ -1,5 +1,5 @@
 /**
- * WorkspaceStore (plan todo 21): CRUD over %USERPROFILE%\RuntimeHell\
+ * WorkspaceStore (plan todo 21): CRUD over the native home directory.
  * workspaces\{id}\ with a meta.json per workspace. IDs are 12-char base62
  * (nanoid-style, crypto-backed) unless the caller supplies one.
  */

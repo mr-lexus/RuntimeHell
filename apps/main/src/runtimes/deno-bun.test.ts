@@ -4,7 +4,7 @@
  * sha256 sidecar / release digest respectively.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { buildBunInstall, buildDenoInstall, parseDenoSha256, parseGitHubReleases } from './deno-bun.js';
+import { buildBunInstall, buildDenoInstall, bunArtifactName, denoArtifactName, parseDenoSha256, parseGitHubReleases } from './deno-bun.js';
 
 describe('parseGitHubReleases', () => {
   it('maps tag_name rows to version rows, dropping malformed entries', () => {
@@ -51,7 +51,7 @@ describe('buildDenoInstall', () => {
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const u = String(url);
       if (u.endsWith('.sha256sum')) {
-        return new Response('  abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  deno-x86_64-pc-windows-msvc.zip\n');
+        return new Response(`  abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  ${denoArtifactName('2.3.4')}\n`);
       }
       throw new Error(`unexpected fetch: ${u}`);
     });
@@ -60,7 +60,7 @@ describe('buildDenoInstall', () => {
       const spec = await buildDenoInstall('2.3.4');
       expect(spec.entry.id).toBe('deno');
       expect(spec.entry.version).toBe('2.3.4');
-      expect(spec.entry.url).toContain('/v2.3.4/deno-x86_64-pc-windows-msvc.zip');
+      expect(spec.entry.url).toContain(`/v2.3.4/${denoArtifactName('2.3.4')}`);
       expect(spec.sha256).toBe('abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789');
       expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('.sha256sum'));
     } finally {
@@ -86,8 +86,8 @@ describe('buildBunInstall', () => {
         return new Response(
           JSON.stringify({
             assets: [
-              { name: 'bun-windows-x64.zip', digest: 'sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789' },
-              { name: 'bun-windows-x64.zip.sig', digest: 'sha256:0000000000000000000000000000000000000000000000000000000000000000' }
+              { name: bunArtifactName('1.2.3'), digest: 'sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789' },
+              { name: `${bunArtifactName('1.2.3')}.sig`, digest: 'sha256:0000000000000000000000000000000000000000000000000000000000000000' }
             ]
           })
         );
@@ -99,7 +99,7 @@ describe('buildBunInstall', () => {
       const spec = await buildBunInstall('1.2.3');
       expect(spec.entry.id).toBe('bun');
       expect(spec.entry.version).toBe('1.2.3');
-      expect(spec.entry.url).toContain('/bun-v1.2.3/bun-windows-x64.zip');
+      expect(spec.entry.url).toContain(`/bun-v1.2.3/${bunArtifactName('1.2.3')}`);
       expect(spec.sha256).toBe('abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789');
     } finally {
       vi.unstubAllGlobals();

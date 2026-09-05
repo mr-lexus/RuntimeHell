@@ -2,14 +2,16 @@
  * Deno + Bun runtime adapters (plan todo 27).
  *
  * Both runtimes execute TS natively — TranspileService is bypassed when
- * `capabilities.supportsTypeScriptNative` is true. Download URLs verified:
- *   Deno: https://github.com/denoland/deno/releases (deno-x86_64-pc-windows-msvc.zip)
- *   Bun:  https://github.com/oven-sh/bun/releases     (bun-windows-x64.zip)
+ * `capabilities.supportsTypeScriptNative` is true. Download URLs use the
+ * host's native OS/CPU asset from the official release:
+ *   Deno: https://github.com/denoland/deno/releases
+ *   Bun:  https://github.com/oven-sh/bun/releases
  * Checksums: Deno publishes a `.sha256sum` sidecar per asset; Bun exposes the
  * asset digest via the GitHub releases API (`sha256:`-prefixed).
  */
 import type { ManifestEntry, RuntimeVersionRow } from '@rh/protocol';
 import type { RuntimeCapabilities } from '@rh/protocol';
+import { hostArch, hostPlatform } from '../platform.js';
 
 export interface DenoBunCapabilities {
   readonly supportsTypeScriptNative: boolean;
@@ -53,23 +55,34 @@ export function denoPermissionFlags(perms: DenoPermissions): string[] {
   return flags;
 }
 
-export function denoArtifactName(version: string): string {
-  return `deno-x86_64-pc-windows-msvc.zip`;
+function targetTriple(): string {
+  const platform = hostPlatform();
+  const arch = hostArch();
+  const cpu = arch === 'arm64' ? 'aarch64' : 'x86_64';
+  if (platform === 'win64') return `${cpu}-pc-windows-msvc`;
+  if (platform === 'mac64' || platform === 'mac64arm') return `${cpu}-apple-darwin`;
+  return `${cpu}-unknown-linux-gnu`;
+}
+
+export function denoArtifactName(_version: string): string {
+  return `deno-${targetTriple()}.zip`;
 }
 
 export function denoDownloadUrl(version: string): string {
   const v = version.startsWith('v') ? version : `v${version}`;
-  return `https://github.com/denoland/deno/releases/download/${v}/deno-x86_64-pc-windows-msvc.zip`;
+  return `https://github.com/denoland/deno/releases/download/${v}/${denoArtifactName(v)}`;
 }
 
-export function bunArtifactName(version: string): string {
-  return `bun-windows-x64.zip`;
+export function bunArtifactName(_version: string): string {
+  const platform = hostPlatform() === 'win64' ? 'windows' : hostPlatform() === 'linux64' ? 'linux' : 'darwin';
+  const cpu = hostArch() === 'arm64' ? 'aarch64' : 'x64';
+  return `bun-${platform}-${cpu}.zip`;
 }
 
 export function bunDownloadUrl(version: string): string {
   const v = version.startsWith('v') ? version : `v${version}`;
   // Bun release tags are `bun-vX.Y.Z` (unlike Deno's plain `vX.Y.Z`).
-  return `https://github.com/oven-sh/bun/releases/download/bun-${v}/bun-windows-x64.zip`;
+  return `https://github.com/oven-sh/bun/releases/download/bun-${v}/${bunArtifactName(v)}`;
 }
 
 // --- version listing (GitHub releases API) --------------------------------
@@ -110,6 +123,7 @@ export interface RuntimeInstallSpec {
   entry: Omit<ManifestEntry, 'installedPath' | 'addedAt'>;
   url: string;
   sha256: string;
+  archive?: 'zip' | 'tar.gz' | 'tar.xz' | 'file';
 }
 
 /** Parse Deno's checksum sidecar in both Unix and Windows PowerShell formats. */
@@ -139,8 +153,8 @@ export async function buildDenoInstall(version: string): Promise<RuntimeInstallS
     entry: {
       kind: 'runtime',
       id: 'deno',
-      platform: 'win64',
-      arch: 'x64',
+      platform: hostPlatform(),
+      arch: hostArch(),
       version: v.replace(/^v/, ''),
       url,
       sha256,
@@ -160,15 +174,15 @@ export async function buildBunInstall(version: string): Promise<RuntimeInstallSp
   const res = await fetch(`${GITHUB_RELEASES}/oven-sh/bun/releases/tags/bun-${v}`);
   if (!res.ok) throw new Error(`bun release lookup failed: ${res.status}`);
   const data = (await res.json()) as { assets?: Array<{ name?: string; digest?: string }> };
-  const asset = data.assets?.find((a) => a.name === 'bun-windows-x64.zip');
+  const asset = data.assets?.find((a) => a.name === bunArtifactName(v));
   const sha256 = (asset?.digest ?? '').replace(/^sha256:/, '');
   if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error(`invalid bun sha256: ${sha256}`);
   return {
     entry: {
       kind: 'runtime',
       id: 'bun',
-      platform: 'win64',
-      arch: 'x64',
+      platform: hostPlatform(),
+      arch: hostArch(),
       version: v.replace(/^v/, ''),
       url,
       sha256,

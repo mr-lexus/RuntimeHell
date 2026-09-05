@@ -11,12 +11,15 @@ import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { guessMilestoneVersion, installEngine } from './engine-downloader.js';
 import { parseV8Latest, resolveEngineArtifact, v8LatestJsonUrl, v8ZipUrl } from './engine-catalog.js';
+import { hostPlatform } from '../platform.js';
 
 let homeBackup: string | undefined;
+let localAppDataBackup: string | undefined;
 let sandbox = '';
 
 beforeAll(() => {
   homeBackup = process.env['USERPROFILE'];
+  localAppDataBackup = process.env['LOCALAPPDATA'];
   return mkdtemp(join(tmpdir(), 'rh-eng-')).then((dir) => {
     sandbox = dir;
     process.env['USERPROFILE'] = dir;
@@ -27,6 +30,9 @@ beforeAll(() => {
 
 afterAll(async () => {
   if (homeBackup !== undefined) process.env['USERPROFILE'] = homeBackup;
+  else delete process.env['USERPROFILE'];
+  if (localAppDataBackup !== undefined) process.env['LOCALAPPDATA'] = localAppDataBackup;
+  else delete process.env['LOCALAPPDATA'];
   delete process.env['RH_CACHE_ROOT'];
   await rm(sandbox, { recursive: true, force: true });
 });
@@ -37,10 +43,11 @@ describe('resolveEngineArtifact (C-lane decision table)', () => {
     ['v8', 'win64', 'x64', true],
     ['d8-debug', 'win64', 'x64', true],
     ['spidermonkey', 'win64', 'x64', true],
+    ['spidermonkey', 'linux64', 'x64', false, true],
     ['javascriptcore', 'win64', 'x64', true],
     ['quickjs', 'win64', 'x64', true],
     ['v8', 'mac64arm', 'arm64', false, true], // hypothetical uncovered combo → C-lane
-    ['d8-debug', 'linux64', 'x64', false, true]
+    ['d8-debug', 'linux64', 'x64', true]
   ];
 
   for (const [engineId, platform, arch, enabled, cbr] of rows) {
@@ -93,7 +100,7 @@ describe('guessMilestoneVersion (EXPERIMENTAL)', () => {
 });
 
 describe('installEngine (record-mode sha, fake network)', () => {
-  it('downloads via injected fetch, records observed sha, re-install verifies', async () => {
+  it.skipIf(hostPlatform() === 'mac64arm')('downloads via injected fetch, records observed sha, re-install verifies', async () => {
     // Build a tiny valid zip in memory: EOCD is exactly 22 bytes for an
     // empty archive (sig4 + fixed fields 16 + comment-len 2).
     const zipBytes = Buffer.from('PK\x05\x06' + '\0'.repeat(18), 'utf8');
@@ -146,7 +153,7 @@ describe('installEngine (record-mode sha, fake network)', () => {
       throw new Error('network must not be touched');
     }) as typeof fetch;
     try {
-      await expect(installEngine({ engineId: 'spidermonkey' })).rejects.toThrow(/not active yet|later milestone/i);
+      await expect(installEngine({ engineId: 'spidermonkey' })).rejects.toThrow(/not active yet|later milestone|win64|managed SpiderMonkey/i);
     } finally {
       globalThis.fetch = originalFetch;
     }

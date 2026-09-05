@@ -76,7 +76,7 @@ button { border-radius: 0; }
 .rh-frame-readout .rh-readout-mark { color: var(--accent); }
 
 .rh-source-frame { flex: 1 1 auto; min-height: 200px; }
-.rh-source-frame:focus-within { z-index: 10; overflow: visible; }
+.rh-source-frame { z-index: 10; overflow: visible; }
 .rh-source-actions { display: inline-flex; align-items: center; gap: 6px; }
 .rh-source-tabs { display: flex; align-items: stretch; gap: 2px; min-height: 31px; padding: 3px 7px 0; overflow-x: auto; border-bottom: 1px solid var(--separator); }
 .rh-tab { display: inline-flex; align-items: center; gap: 7px; min-width: max-content; min-height: 27px; padding: 0 8px; color: var(--text-dim); background: transparent; border: 1px solid transparent; cursor: pointer; font-size: 10px; }

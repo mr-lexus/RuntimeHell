@@ -92,7 +92,7 @@ function parseAstCandidate(value: unknown): unknown | null {
 }
 
 /**
- * V8's --print-ast is deliberately a human-readable text dump, unlike
+ * V8's AST dump is deliberately a human-readable text dump, unlike
  * SpiderMonkey's JSON AST. Build a stable ESTree-like fallback from the
  * analyzed source so the normalized AST tab is still a real collapsible tree.
  * The raw engine dump remains available as the authoritative view.

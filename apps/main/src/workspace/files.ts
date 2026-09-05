@@ -2,7 +2,7 @@
  * Workspace file operations (early minimal surface; WorkspaceStore in todo 21
  * builds metadata/history on top of the same root layout).
  *
- * Root: %USERPROFILE%\RuntimeHell\workspaces\{workspaceId}\
+ * Root: native home directory/RuntimeHell/workspaces/{workspaceId}/
  * Path safety: relPath is validated by RelPathSchema AND re-verified here
  * (defense in depth) after normalization.
  */

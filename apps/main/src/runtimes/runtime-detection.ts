@@ -1,222 +1,183 @@
-/**
- * Runtime detection (multi-runtime management feature):
- *   - detectSystemRuntime(id): system-wide (PATH) detection for node/deno/bun
- *     via where.exe + `--version` (generalized from node-runtime.ts).
- *   - detectSystemBrowser(id): PATH/common-install-location detection for
- *     desktop browsers which are not execution adapters yet.
- *   - detectNvmNode(): nvm-windows Node version discovery. nvm-windows keeps
- *     each version in a `vX.Y.Z` directory under NVM_HOME (default
- *     %APPDATA%\nvm) and symlinks the active version at NVM_SYMLINK (default
- *     C:\Program Files\nodejs). We consume these versions read-only — the app
- *     never installs/removes through nvm itself.
- */
+/** Cross-platform system runtime and browser detection. */
 import { spawn } from 'node:child_process';
-import { access, readdir, realpath, stat } from 'node:fs/promises';
-import { join } from 'node:path';
-import type { NvmInfo, NvmVersionInfo } from '@rh/protocol';
+import { access, readdir, realpath } from 'node:fs/promises';
+import { homedir, platform as osPlatform } from 'node:os';
+import { isAbsolute, join } from 'node:path';
+import type { NvmInfo, NvmVersionInfo, SystemRuntimeInfo } from '@rh/protocol';
+import { commandLookup, executableName, isWindows } from '../platform.js';
 
-export interface DetectedRuntime {
-  exePath: string;
-  version: string;
-}
-
+export interface DetectedRuntime extends SystemRuntimeInfo {}
 export type RuntimeId = 'node' | 'deno' | 'bun';
 export type BrowserId = 'chrome' | 'firefox';
 
-/**
- * Normalize `<exe> --version` output into a bare `X.Y.Z` version string.
- *   - node: `v24.18.0`
- *   - deno: multi-line — line 1 is `deno 2.3.4 (stable, release, ...)`
- *   - bun:  `1.3.14` (no leading v)
- * Returns null when the output doesn't look like a version at all.
- */
-export function parseRuntimeVersionOutput(id: RuntimeId | BrowserId, raw: string): string | null {
-  const firstLine = raw.split(/\r?\n/)[0]?.trim() ?? '';
-  // The first X.Y.Z token in the first line is the version for all three
-  // runtimes: `v24.18.0` (node), `deno 2.3.4 (stable, release, ...)` (deno),
-  // `1.3.14` (bun), and `Mozilla Firefox 141.0.1` (Firefox).
-  return /(?:v)?(\d+(?:\.\d+){2,3})/.exec(firstLine)?.[1] ?? null;
+function spawnOptions(): { windowsHide?: boolean } {
+  return isWindows() ? { windowsHide: true } : {};
 }
 
-/** Locate a system runtime via where.exe; returns null when absent. */
-export function detectSystemRuntime(id: RuntimeId): Promise<DetectedRuntime | null> {
+/** Extract a semver-ish token from the first useful version line. */
+export function parseRuntimeVersionOutput(id: string, output: string): string | null {
+  const text = output.trim();
+  if (!text) return null;
+  const patterns: RegExp[] = id === 'chrome'
+    ? [/Google Chrome\s+([\d.]+)/i, /Chromium\s+([\d.]+)/i]
+    : id === 'firefox'
+      ? [/Mozilla Firefox\s+([\d.]+)/i]
+      : [/(?:^|\s)v?(\d+(?:\.\d+){2,3}(?:[-+][0-9A-Za-z.-]+)?)/];
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+function lookupCommand(command: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const child = spawn(commandLookup(), [command], spawnOptions());
+    let output = '';
+    child.stdout?.on('data', (chunk) => { output += String(chunk); });
+    child.on('error', () => resolve(null));
+    child.on('close', (code) => {
+      if (code !== 0) return resolve(null);
+      const first = output.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+      resolve(first ?? null);
+    });
+  });
+}
+
+async function resolveCandidate(candidate: string): Promise<string | null> {
+  if (isAbsolute(candidate) || candidate.includes('/') || candidate.includes('\\')) {
+    try { await access(candidate); return candidate; } catch { return null; }
+  }
+  return lookupCommand(candidate);
+}
+
+async function readVersion(exePath: string, id: string): Promise<string | null> {
+  if (isWindows() && (id === 'chrome' || id === 'firefox')) {
+    return readWindowsProductVersion(exePath);
+  }
+  return new Promise((resolve) => {
+    const child = spawn(exePath, ['--version'], spawnOptions());
+    let output = '';
+    child.stdout?.on('data', (chunk) => { output += String(chunk); });
+    child.stderr?.on('data', (chunk) => { output += String(chunk); });
+    const timer = setTimeout(() => { child.kill(); resolve(null); }, 5000);
+    child.on('error', () => { clearTimeout(timer); resolve(null); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0 && !output) return resolve(null);
+      resolve(parseRuntimeVersionOutput(id, output));
+    });
+  });
+}
+
+/** Read PE metadata instead of launching a GUI browser with `--version`. */
+function readWindowsProductVersion(exePath: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const powershell = join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const child = spawn(powershell, [
+      '-NoProfile', '-NonInteractive', '-Command',
+      '[Diagnostics.FileVersionInfo]::GetVersionInfo($env:RH_BROWSER_EXE).ProductVersion'
+    ], {
+      windowsHide: true,
+      env: {
+        SystemRoot: process.env['SystemRoot'],
+        windir: process.env['windir'],
+        TEMP: process.env['TEMP'],
+        TMP: process.env['TMP'],
+        PATH: join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32'),
+        RH_BROWSER_EXE: exePath
+      }
+    });
+    let output = '';
+    child.stdout?.on('data', (chunk) => { output += String(chunk); });
+    const timer = setTimeout(() => { child.kill(); resolve(null); }, 5000);
+    child.on('error', () => { clearTimeout(timer); resolve(null); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve(code === 0 ? parseRuntimeVersionOutput('browser', output) : null);
+    });
+  });
+}
+
+/** Detect a command or explicit executable path and read its version. */
+export async function detectExecutable(id: string, candidates: string[]): Promise<DetectedRuntime | null> {
+  for (const candidate of candidates) {
+    const exePath = await resolveCandidate(candidate);
+    if (!exePath) continue;
+    const version = await readVersion(exePath, id);
+    if (version) return { exePath, version };
+  }
+  return null;
+}
+
+export function detectSystemRuntime(id: 'node' | 'deno' | 'bun'): Promise<DetectedRuntime | null> {
   return detectExecutable(id, [id]);
 }
 
-/** Locate a desktop browser on PATH or in its standard Windows install dirs. */
-export function detectSystemBrowser(id: BrowserId): Promise<DetectedRuntime | null> {
-  const candidates = id === 'chrome'
-    ? [
-        'chrome',
-        join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-        join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
-        join(process.env['LOCALAPPDATA'] ?? '', 'Google', 'Chrome', 'Application', 'chrome.exe')
-      ]
-    : [
-        'firefox',
-        join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'Mozilla Firefox', 'firefox.exe'),
-        join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'Mozilla Firefox', 'firefox.exe'),
-        join(process.env['LOCALAPPDATA'] ?? '', 'Mozilla Firefox', 'firefox.exe')
-      ];
-  return detectExecutable(id, candidates);
-}
-
-function detectExecutable(id: RuntimeId | BrowserId, candidates: readonly string[]): Promise<DetectedRuntime | null> {
-  return new Promise((resolve) => {
-    const child = spawn('where.exe', [candidates[0] ?? id], { windowsHide: true });
-    let out = '';
-    child.stdout?.on('data', (d) => {
-      out += String(d);
-    });
-    child.on('error', () => void tryCandidates(candidates.slice(1), id, resolve));
-    child.on('close', (code) => {
-      if (code !== 0) return void tryCandidates(candidates.slice(1), id, resolve);
-      const first = out.split(/\r?\n/).find((l) => l.trim().toLowerCase().endsWith('.exe'))?.trim();
-      if (!first) return void tryCandidates(candidates.slice(1), id, resolve);
-      void readExecutableVersion(first, id, resolve, () => tryCandidates(candidates.slice(1), id, resolve));
-    });
-  });
-}
-
-function readExecutableVersion(
-  exePath: string,
-  id: RuntimeId | BrowserId,
-  resolve: (value: DetectedRuntime | null) => void,
-  fallback: () => void
-): void {
-  // Windows GUI browser executables may open a window (and never produce
-  // stdout) for `--version`. Read their PE ProductVersion without launching
-  // the browser itself. Runtime CLIs keep using their native version flag.
-  const isBrowser = id === 'chrome' || id === 'firefox';
-  const powershell = join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-  const ver = isBrowser && process.platform === 'win32'
-    ? spawn(powershell, ['-NoProfile', '-NonInteractive', '-Command', '[Diagnostics.FileVersionInfo]::GetVersionInfo($env:RH_BROWSER_EXE).ProductVersion'], {
-        windowsHide: true,
-        env: {
-          SystemRoot: process.env['SystemRoot'], windir: process.env['windir'], TEMP: process.env['TEMP'], TMP: process.env['TMP'],
-          PATH: join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32'), RH_BROWSER_EXE: exePath
-        }
-      })
-    : spawn(exePath, ['--version'], { windowsHide: true });
-  let vout = '';
-  let settled = false;
-  const finish = (value: DetectedRuntime | null): void => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timeout);
-    if (value === null) fallback(); else resolve(value);
-  };
-  const timeout = setTimeout(() => {
-    ver.kill();
-    finish(null);
-  }, 5_000);
-  ver.stdout?.on('data', (d) => {
-    vout += String(d);
-  });
-  ver.on('error', () => finish(null));
-  ver.on('close', (vc) => {
-    if (vc !== 0) return finish(null);
-    const version = parseRuntimeVersionOutput(id, vout);
-    finish(version === null ? null : { exePath, version });
-  });
-}
-
-async function tryCandidates(
-  candidates: readonly string[],
-  id: RuntimeId | BrowserId,
-  resolve: (value: DetectedRuntime | null) => void
-): Promise<void> {
-  for (const candidate of candidates) {
-    if (candidate === '') continue;
-    if (candidate.toLowerCase().endsWith('.exe')) {
-      try {
-        await access(candidate);
-      } catch {
-        continue;
-      }
-      let settled = false;
-      await new Promise<void>((done) => {
-        readExecutableVersion(candidate, id, (value) => {
-          settled = true;
-          resolve(value);
-          done();
-        }, done);
-      });
-      if (settled) return;
-    }
+function browserCandidates(id: 'chrome' | 'firefox'): string[] {
+  if (isWindows()) {
+    const roots = [process.env['PROGRAMFILES'], process.env['PROGRAMFILES(X86)'], process.env['LOCALAPPDATA']].filter(Boolean) as string[];
+    return id === 'chrome'
+      ? ['chrome', ...roots.flatMap((root) => [join(root, 'Google', 'Chrome', 'Application', 'chrome.exe')])]
+      : ['firefox', ...roots.flatMap((root) => [join(root, 'Mozilla Firefox', 'firefox.exe')])];
   }
-  resolve(null);
+  if (osPlatform() === 'darwin') {
+    return id === 'chrome'
+      ? ['google-chrome', join('/Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome'), join(homedir(), 'Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome')]
+      : ['firefox', join('/Applications', 'Firefox.app', 'Contents', 'MacOS', 'firefox'), join(homedir(), 'Applications', 'Firefox.app', 'Contents', 'MacOS', 'firefox')];
+  }
+  return id === 'chrome'
+    ? ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser']
+    : ['firefox'];
 }
 
-/** nvm-windows root directory (NVM_HOME env, else %APPDATA%\nvm). */
+export function detectSystemBrowser(id: 'chrome' | 'firefox'): Promise<DetectedRuntime | null> {
+  return detectExecutable(id, browserCandidates(id));
+}
+
+/** Native nvm-windows and nvm (POSIX) roots. */
 export function nvmRoot(): string {
-  return process.env['NVM_HOME'] ?? join(process.env['APPDATA'] ?? '', 'nvm');
+  if (isWindows()) return process.env['NVM_HOME'] || join(process.env['APPDATA'] || join(homedir(), 'AppData', 'Roaming'), 'nvm');
+  const configured = process.env['NVM_DIR'];
+  if (configured) return /[\\/]versions[\\/]node$/.test(configured) ? configured : join(configured, 'versions', 'node');
+  return join(homedir(), '.nvm', 'versions', 'node');
 }
 
-/** nvm-windows active-version symlink (NVM_SYMLINK env, else Program Files\nodejs). */
 export function nvmSymlink(): string {
-  return process.env['NVM_SYMLINK'] ?? join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'nodejs');
+  if (isWindows()) return process.env['NVM_SYMLINK'] ?? join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'nodejs');
+  return process.env['NVM_BIN'] || dirnameSafe(process.execPath);
 }
 
-/**
- * Pure mapping of nvm directory names to version rows. `activeTarget` is the
- * resolved realpath of the nvm symlink (or null when absent); a version dir
- * whose path equals it (case- and separator-insensitive) is the active one.
- * No fs access — the caller filters unusable rows afterwards.
- */
-export function parseNvmVersions(root: string, dirNames: string[], activeTarget: string | null): NvmVersionInfo[] {
-  const normalize = (p: string): string => p.replace(/\//g, '\\').toLowerCase();
-  const target = activeTarget !== null ? normalize(activeTarget) : null;
-  const versions: NvmVersionInfo[] = [];
-  for (const name of dirNames) {
-    if (!/^v\d+\.\d+\.\d+$/.test(name)) continue;
-    const dir = join(root, name);
-    const active = target !== null && normalize(dir) === target;
-    versions.push({ version: name.replace(/^v/, ''), exePath: join(dir, 'node.exe'), active });
-  }
-  versions.sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }));
-  return versions;
+function dirnameSafe(path: string): string {
+  const index = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  return index > 0 ? path.slice(0, index) : path;
 }
 
-/**
- * Detect nvm-windows installed Node versions. Returns null when nvm is not
- * installed (no root dir) or has no usable versions.
- */
+export function parseNvmVersions(root: string, names: string[], activeTarget: string | null): NvmVersionInfo[] {
+  const rows = names
+    .filter((name) => /^v\d+\.\d+\.\d+$/.test(name))
+    .map((name) => {
+      const version = name.slice(1);
+      const exePath = isWindows() ? join(root, name, executableName('node')) : join(root, name, 'bin', executableName('node'));
+      const normalizedTarget = activeTarget ? activeTarget.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase() : null;
+      const normalizedVersion = join(root, name).replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+      const normalizedExeDir = dirnameSafe(exePath).replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+      const active = normalizedTarget !== null && (normalizedTarget === normalizedVersion || normalizedTarget === normalizedExeDir);
+      return { version, exePath, active };
+    });
+  return rows.sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }));
+}
+
 export async function detectNvmNode(): Promise<NvmInfo | null> {
   const root = nvmRoot();
-  try {
-    const s = await stat(root);
-    if (!s.isDirectory()) return null;
-  } catch {
-    return null;
-  }
-
-  let dirNames: string[];
-  try {
-    dirNames = await readdir(root);
-  } catch {
-    return null;
-  }
-
-  // Resolve the active-version symlink target (may be absent).
+  let names: string[];
+  try { names = await readdir(root); } catch { return null; }
   let activeTarget: string | null = null;
-  try {
-    activeTarget = await realpath(nvmSymlink());
-  } catch {
-    /* no symlink — no active version */
+  try { activeTarget = await realpath(nvmSymlink()); } catch { /* no active link */ }
+  const versions = parseNvmVersions(root, names, activeTarget);
+  const existing: NvmVersionInfo[] = [];
+  for (const row of versions) {
+    try { await access(row.exePath); existing.push(row); } catch { /* stale directory */ }
   }
-
-  const versions = parseNvmVersions(root, dirNames, activeTarget);
-  // Keep only rows whose node.exe actually exists.
-  const usable: NvmVersionInfo[] = [];
-  for (const v of versions) {
-    try {
-      await access(v.exePath);
-      usable.push(v);
-    } catch {
-      /* skip version dirs without node.exe */
-    }
-  }
-  if (usable.length === 0) return null;
-  return { root, versions: usable };
+  return existing.length > 0 ? { root, versions: existing } : null;
 }

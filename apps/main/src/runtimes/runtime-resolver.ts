@@ -1,7 +1,7 @@
 /**
  * Runtime executable resolution (plan todo 12).
  *
- * Displayed order — managed selected version → nvm-windows version → system
+ * Displayed order — managed selected version → native nvm version → system
  * installation → offer managed download — is implemented by
  * `resolveRuntimeChoice` and mirrored verbatim in the Runtimes panel UI.
  *
@@ -11,6 +11,7 @@
 import { join } from 'node:path';
 import type { ManifestEntry, NvmInfo, SystemRuntimeInfo } from '@rh/protocol';
 import { runtimeDir } from '../binaries/paths.js';
+import { executableName } from '../platform.js';
 
 export type RuntimeChoice =
   | { kind: 'managed'; exePath: string; version: string }
@@ -50,7 +51,7 @@ export function resolveRuntimeChoice(
         (e) => e.kind === 'runtime' && e.id === 'node' && e.version === requestedVersion && e.installedPath !== undefined
       );
       if (match?.installedPath !== undefined) {
-        return { kind: 'managed', exePath: join(match.installedPath, 'node.exe'), version: match.version };
+        return { kind: 'managed', exePath: join(match.installedPath, executableName('node')), version: match.version };
       }
       // Selected version vanished (uninstalled mid-session) → try nvm, then system.
       const nvmVersion = findNvmVersion(nvm, requestedVersion);
@@ -70,7 +71,7 @@ export function resolveRuntimeChoice(
     .filter((e) => e.kind === 'runtime' && e.id === 'node' && e.installedPath !== undefined)
     .sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }))[0];
   if (newestManaged?.installedPath !== undefined) {
-    return { kind: 'managed', exePath: join(newestManaged.installedPath, 'node.exe'), version: newestManaged.version };
+    return { kind: 'managed', exePath: join(newestManaged.installedPath, executableName('node')), version: newestManaged.version };
   }
   return { kind: 'none' };
 }

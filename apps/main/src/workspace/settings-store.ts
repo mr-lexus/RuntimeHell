@@ -1,13 +1,13 @@
-/** Versioned RuntimeHell preferences stored in %APPDATA%/RuntimeHell. */
+/** Versioned RuntimeHell preferences stored in the native user config dir. */
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import {
   AppSettingsSchema,
   SettingsPatchSchema,
   type AppSettings,
   type SettingsPatch
 } from '@rh/protocol';
+import { userConfigDir } from '../platform.js';
 
 export type { AppSettings, SettingsPatch } from '@rh/protocol';
 
@@ -39,8 +39,7 @@ export const DEFAULT_SETTINGS: AppSettings = AppSettingsSchema.parse({
 });
 
 export function settingsPath(): string {
-  const appData = process.env['APPDATA'] ?? join(homedir(), 'AppData', 'Roaming');
-  return join(appData, 'RuntimeHell', 'settings.json');
+  return join(userConfigDir(), 'RuntimeHell', 'settings.json');
 }
 
 type LegacySettings = {

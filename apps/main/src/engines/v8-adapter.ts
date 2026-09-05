@@ -24,6 +24,7 @@ import { CapabilityGateError } from './engine-adapter.js';
 import type { EngineAdapter, EngineDescription, AnalysisContext } from './engine-adapter.js';
 import type { EngineRegistry } from './registry.js';
 import { loadNormalizedIrGraph } from './ir-graph-normalize.js';
+import { cacheRoot } from '../binaries/paths.js';
 
 export { CapabilityGateError } from './engine-adapter.js';
 export type { IsolatedRun, IsolatedRunOptions, IsolatedRunResult } from '../execution/isolation.js';
@@ -69,10 +70,7 @@ const CAPABILITY_KEY: Record<AnalysisType, keyof Omit<EngineCapabilities, 'notes
 };
 
 function tmpRoot(): string {
-  return join(
-    process.env['RH_CACHE_ROOT'] ?? join(process.env['LOCALAPPDATA'] ?? '.', 'RuntimeHell'),
-    'analysis-tmp'
-  );
+  return join(cacheRoot(), 'analysis-tmp');
 }
 
 function buildFlags(

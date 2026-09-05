@@ -8,17 +8,23 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { appendHistory, readHistory, type HistoryRecord } from './history.js';
 import { createWorkspace, deleteWorkspace, listWorkspaces } from './workspace-store.js';
 
-let homeBackup: string | undefined;
+let userProfileBackup: string | undefined;
+let posixHomeBackup: string | undefined;
 let sandbox = '';
 
 beforeEach(async () => {
-  homeBackup = process.env['USERPROFILE'];
+  userProfileBackup = process.env['USERPROFILE'];
+  posixHomeBackup = process.env['HOME'];
   sandbox = await mkdtemp(join(tmpdir(), 'rh-hist-'));
   process.env['USERPROFILE'] = sandbox;
+  if (process.platform !== 'win32') process.env['HOME'] = sandbox;
 });
 
 afterEach(async () => {
-  if (homeBackup !== undefined) process.env['USERPROFILE'] = homeBackup;
+  if (userProfileBackup !== undefined) process.env['USERPROFILE'] = userProfileBackup;
+  else delete process.env['USERPROFILE'];
+  if (posixHomeBackup !== undefined) process.env['HOME'] = posixHomeBackup;
+  else delete process.env['HOME'];
   await rm(sandbox, { recursive: true, force: true });
 });
 

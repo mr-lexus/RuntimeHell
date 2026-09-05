@@ -1,12 +1,13 @@
 /**
  * Node.js runtime source (plan evidence fact 5):
  *   versions: https://nodejs.org/dist/index.json
- *   artifact: https://nodejs.org/dist/v{ver}/node-v{ver}-win-x64.zip
+ *   artifact: native Node archive (win.zip, linux.tar.xz, or darwin.tar.gz)
  *   checksum: https://nodejs.org/dist/v{ver}/SHASUMS256.txt
  */
-import { spawn } from 'node:child_process';
 import type { ManifestEntry } from '@rh/protocol';
 import { parseShasums, findShasum } from '../../binaries/shasums.js';
+import { detectSystemRuntime } from '../runtime-detection.js';
+import { hostArch, hostPlatform } from '../../platform.js';
 
 export interface NodeVersionInfo {
   version: string; // 'v22.17.0'
@@ -38,17 +39,26 @@ export async function listNodeVersions(): Promise<NodeVersionInfo[]> {
   return parseNodeIndex(await res.text());
 }
 
-export function nodeArtifactName(version: string, platform = 'win', arch = 'x64'): string {
-  // v22.17.0 -> node-v22.17.0-win-x64.zip
-  return `node-${version}-${platform}-${arch}.zip`;
+function nodeTargetPlatform(): 'win' | 'linux' | 'darwin' {
+  const platform = hostPlatform();
+  return platform === 'win64' ? 'win' : platform === 'linux64' ? 'linux' : 'darwin';
+}
+
+export function nodeArtifactName(version: string, platform = nodeTargetPlatform(), arch = hostArch()): string {
+  // Node publishes zip archives for Windows and tar archives elsewhere.
+  const extension = platform === 'win' ? 'zip' : platform === 'linux' ? 'tar.xz' : 'tar.gz';
+  return `node-${version}-${platform}-${arch}.${extension}`;
 }
 
 export async function buildNodeInstall(
   version: string,
   onProgress?: (received: number, total: number | null) => void
-): Promise<{ entry: Omit<ManifestEntry, 'installedPath' | 'addedAt'>; url: string; sha256: string }> {
+): Promise<{ entry: Omit<ManifestEntry, 'installedPath' | 'addedAt'>; url: string; sha256: string; archive: 'zip' | 'tar.gz' | 'tar.xz' }> {
   const v = version.startsWith('v') ? version : `v${version}`;
-  const filename = nodeArtifactName(v);
+  const platform = hostPlatform();
+  const arch = hostArch();
+  const nodePlatform = platform === 'win64' ? 'win' : platform === 'linux64' ? 'linux' : 'darwin';
+  const filename = nodeArtifactName(v, nodePlatform, arch);
   const base = `https://nodejs.org/dist/${v}`;
   const shasumsRes = await fetch(`${base}/SHASUMS256.txt`);
   if (!shasumsRes.ok) throw new Error(`SHASUMS256.txt fetch failed: ${shasumsRes.status}`);
@@ -59,8 +69,8 @@ export async function buildNodeInstall(
     entry: {
       kind: 'runtime',
       id: 'node',
-      platform: 'win64',
-      arch: 'x64',
+      platform,
+      arch,
       version: v.replace(/^v/, ''),
       url: `${base}/${filename}`,
       sha256,
@@ -69,7 +79,8 @@ export async function buildNodeInstall(
       customBuildRequired: false as const
     },
     url: `${base}/${filename}`,
-    sha256
+    sha256,
+    archive: nodePlatform === 'win' ? 'zip' : nodePlatform === 'linux' ? 'tar.xz' : 'tar.gz'
   };
 }
 
@@ -78,30 +89,7 @@ export interface DetectedNode {
   version: string;
 }
 
-/** Locate a system Node via where.exe; returns null when absent. */
+/** Locate a system Node through the native command lookup utility. */
 export function detectSystemNode(): Promise<DetectedNode | null> {
-  return new Promise((resolve) => {
-    const child = spawn('where.exe', ['node'], { windowsHide: true });
-    let out = '';
-    child.stdout?.on('data', (d) => {
-      out += String(d);
-    });
-    child.on('error', () => resolve(null));
-    child.on('close', (code) => {
-      if (code !== 0) return resolve(null);
-      const first = out.split(/\r?\n/).find((l) => l.trim().toLowerCase().endsWith('.exe'));
-      if (!first) return resolve(null);
-      const exePath = first.trim();
-      const ver = spawn(exePath, ['--version'], { windowsHide: true });
-      let vout = '';
-      ver.stdout?.on('data', (d) => {
-        vout += String(d);
-      });
-      ver.on('error', () => resolve(null));
-      ver.on('close', (vc) => {
-        if (vc !== 0) return resolve(null);
-        resolve({ exePath, version: vout.trim().replace(/^v/, '') });
-      });
-    });
-  });
+  return detectSystemRuntime('node');
 }

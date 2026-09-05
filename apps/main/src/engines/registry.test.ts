@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { EngineCapabilities } from '@rh/protocol';
 import { probeV8Binary, type ExecuteBinary } from './probe.js';
 import { EngineRegistry } from './registry.js';
+import { executableName } from '../platform.js';
 
 let dir = '';
 
@@ -121,7 +122,7 @@ describe('EngineRegistry', () => {
       }
     ]);
     // Point ENGINE_BINARY_NAME resolution at our fake binary file.
-    await writeFile(join(dir, 'd8.exe'), 'binary:d8-dbg', 'utf8');
+    await writeFile(join(dir, executableName('d8')), 'binary:d8-dbg', 'utf8');
 
     let executions = 0;
     const countingExecutor: ExecuteBinary = async (exe, args) => {

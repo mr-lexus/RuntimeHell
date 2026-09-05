@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { detectSystemNode } from './node/node-runtime.js';
 import { detectNvmNode, detectSystemRuntime } from './runtime-detection.js';
 import { installedNodeVersions, resolveRuntimeChoice } from './runtime-resolver.js';
+import { executableName } from '../platform.js';
 
 export interface ResolvedRuntime {
   readonly exePath: string;
@@ -116,7 +117,7 @@ export class DenoBunRuntimeAdapter implements RuntimeAdapter {
   }
 
   private exeName(): string {
-    return this.id === 'deno' ? 'deno.exe' : 'bun.exe';
+    return this.id === 'deno' ? executableName('deno') : executableName('bun');
   }
 
   private readEntries(): Promise<ManifestEntry[]> {

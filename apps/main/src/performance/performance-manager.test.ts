@@ -7,6 +7,7 @@ import type { ManifestEntry, PerformanceEvent, PerformanceRawSample } from '@rh/
 import { RuntimeRegistry } from '../runtimes/runtime-adapter.js';
 import { detectSystemBrowser, detectSystemRuntime, type BrowserId } from '../runtimes/runtime-detection.js';
 import { workspaceRoot } from '../workspace/files.js';
+import { executableName } from '../platform.js';
 
 function samples(caseId: string, values: number[]): PerformanceRawSample[] {
   return values.map((durationNs, round) => ({ caseId, round, durationNs, iterations: 1, orderIndex: round % 2 }));
@@ -51,8 +52,8 @@ describe('Performance optimizer catalog', () => {
     const id = randomUUID();
     const root = workspaceRoot(`perf-catalog-${id.slice(0, 8)}`);
     const executableNames: Record<string, string> = {
-      txiki: 'tjs.exe', v8: 'd8.exe', 'd8-debug': 'd8.exe', spidermonkey: 'js.exe', javascriptcore: 'jsc.exe',
-      quickjs: 'qjs.exe', graaljs: join('bin', 'js.exe'), hermes: 'hermes.exe', chakra: 'ch.exe', 'moddable-xs': 'xst.exe'
+      txiki: executableName('tjs'), v8: executableName('d8'), 'd8-debug': executableName('d8'), spidermonkey: executableName('js'), javascriptcore: executableName('jsc'),
+      quickjs: executableName('qjs'), graaljs: join('bin', executableName('js')), hermes: executableName('hermes'), chakra: executableName('ch'), 'moddable-xs': executableName('xst')
     };
     const entries: ManifestEntry[] = [];
     try {
@@ -86,7 +87,7 @@ describe('Performance optimizer catalog', () => {
       expect(available.find((target) => target.ref.id === 'chrome')?.label).toContain('Google Chrome');
       expect(available.find((target) => target.ref.id === 'firefox')?.engineId).toBe('spidermonkey');
       const graal = await resolver.resolve({ source: 'engine', id: 'graaljs', version: '1.2.3', provenance: 'managed' });
-      expect(graal?.executable).toBe(join(root, 'graaljs', 'bin', 'js.exe'));
+      expect(graal?.executable).toBe(join(root, 'graaljs', 'bin', executableName('js')));
       expect(performanceLaunchArgs({
         ref: { source: 'runtime', id: 'txiki', version: '1.2.3' }, executable: join(root, 'txiki', 'tjs.exe'),
         runtimeId: 'txiki', runtimeVersion: '1.2.3', engineId: 'quickjs', launchKind: 'shell'

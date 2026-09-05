@@ -13,7 +13,7 @@ export interface NormalizedGcEvent {
 
 const GC_LINE_RE = /^\s*(?:\[[^\]]+\]\s+)?([\d.]+)\s+ms:\s+([A-Za-z][\w-]*)\s+([\d.]+)\s+\(([\d.]+)\)\s+->\s+([\d.]+)\s+\(([\d.]+)\)\s+MB,\s+(?:pooled:\s+[\d.]+\s+MB,\s+)?([\d.]+)\s+\/\s+([\d.]+)\s+ms(?:\s+\(([^)]*)\))?(?:\s+(.*?))?;?\s*$/i;
 
-/** Parse V8 --trace-gc lines into compact, sortable GC events. */
+/** Parse V8 garbage-collection trace lines into compact, sortable GC events. */
 export function parseV8Gc(raw: string): NormalizedGcEvent[] {
   const events: NormalizedGcEvent[] = [];
   for (const line of raw.split(/\r?\n/)) {

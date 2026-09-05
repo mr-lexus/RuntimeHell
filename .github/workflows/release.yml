@@ -1,0 +1,120 @@
+name: Alpha release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate source and alpha tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        env:
+          ELECTRON_SKIP_NOTHING: '1'
+      - name: Validate alpha version/tag
+        run: pnpm release:validate "${GITHUB_REF_NAME}"
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck:all
+      - name: Unit tests
+        run: xvfb-run -a pnpm test
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            target: win
+            arch: x64
+          - name: linux-x64
+            os: ubuntu-latest
+            target: linux
+            arch: x64
+          - name: macos-x64
+            os: macos-15-intel
+            target: mac
+            arch: x64
+          - name: macos-arm64
+            os: macos-14
+            target: mac
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        env:
+          ELECTRON_SKIP_NOTHING: '1'
+      - name: Build application
+        run: pnpm build
+      - name: Package installer
+        run: pnpm exec electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Upload platform artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtimehell-${{ matrix.name }}
+          path: dist-release/**
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub prerelease
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: runtimehell-*
+          path: release-assets
+          merge-multiple: false
+      - name: Create draft prerelease and upload installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --prerelease --title "RuntimeHell $TAG (alpha)" --notes-file .github/alpha-release-notes.md
+          fi
+          mapfile -d '' assets < <(find release-assets -type f ! -name 'latest*.yml' ! -name 'latest*.yaml' -print0)
+          if ((${#assets[@]} == 0)); then
+            echo 'No platform artifacts were downloaded' >&2
+            exit 1
+          fi
+          for asset in "${assets[@]}"; do
+            gh release upload "$TAG" "$asset" --clobber
+          done

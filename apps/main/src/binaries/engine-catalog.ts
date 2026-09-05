@@ -29,8 +29,8 @@ export interface EngineSource {
 }
 
 /**
- * Decision table. Rows mirror the capability matrix's "win64 stock binary"
- * line and the C-lane spec; tested exhaustively in engine-catalog.test.ts.
+ * Decision table. Rows mirror the capability matrix's stock binaries and the
+ * C-lane spec; tested exhaustively in engine-catalog.test.ts.
  */
 export function resolveEngineArtifact(engineId: EngineId, platform: Platform, arch: Arch): EngineSource {
   const key: EngineKey = `${engineId}:${platform}:${arch}`;
@@ -39,9 +39,12 @@ export function resolveEngineArtifact(engineId: EngineId, platform: Platform, ar
   switch (engineId) {
     case 'v8':
     case 'd8-debug': {
-      // Official canary covers win64/x64 here; other platform zips exist on
-      // the same bucket and are added when those targets ship (P10+).
-      if (platform === 'win64' && arch === 'x64') return { kind: 'v8-canary', enabled: true };
+      // Official canary publishes the same naming scheme for Windows, Linux,
+      // and Intel macOS. ARM macOS and Linux remain explicit C-lane entries
+      // until upstream publishes a stable matching artifact.
+      if ((platform === 'win64' || platform === 'linux64' || platform === 'mac64') && arch === 'x64') {
+        return { kind: 'v8-canary', enabled: true };
+      }
       return {
         kind: 'v8-canary',
         enabled: false,
@@ -50,8 +53,10 @@ export function resolveEngineArtifact(engineId: EngineId, platform: Platform, ar
       };
     }
     case 'spidermonkey':
-      // Mozilla taskcluster jsshell (evidence fact 2); adapter todo 24.
-      return { kind: 'sm-shell', enabled: true };
+      // Mozilla taskcluster jsshell source currently exposes a Windows x64
+      // package only; other hosts stay in the explicit C-lane.
+      if (platform === 'win64' && arch === 'x64') return { kind: 'sm-shell', enabled: true };
+      return { kind: 'sm-shell', enabled: false, customBuildRequired: true, reason: 'managed SpiderMonkey download currently targets win64/x64' };
     case 'javascriptcore':
       // jsvu win64 build REQUIRES WebKitRequirements bin64 DLLs (evidence 3).
       if (platform === 'win64' && arch === 'x64') {

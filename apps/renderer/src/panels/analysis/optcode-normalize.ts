@@ -33,7 +33,7 @@ function parseInstructionText(value: string): { op: string; operands: string } |
   return match ? { op: match[1] ?? '', operands: match[2] ?? '' } : null;
 }
 
-/** Parse V8 --print-opt-code disassembly into compact instruction rows. */
+/** Parse V8 optimized-code disassembly into compact instruction rows. */
 export function parseV8Optcode(raw: string): NormalizedOptcodeRow[] {
   const rows: NormalizedOptcodeRow[] = [];
   for (const line of raw.split(/\r?\n/)) {

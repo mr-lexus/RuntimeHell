@@ -19,19 +19,25 @@ type EmitInput = { runId?: string } & (
 );
 
 let homeBackup: string | undefined;
+let posixHomeBackup: string | undefined;
 let sandbox: string;
 
 beforeAll(() => {
   // Redirect workspace writes (USERPROFILE drives workspaceRoot).
   homeBackup = process.env['USERPROFILE'];
+  posixHomeBackup = process.env['HOME'];
   return mkdtemp(join(tmpdir(), 'rh-exec-mgr-')).then((dir) => {
     sandbox = dir;
     process.env['USERPROFILE'] = dir;
+    if (process.platform !== 'win32') process.env['HOME'] = dir;
   });
 });
 
 afterAll(async () => {
   if (homeBackup !== undefined) process.env['USERPROFILE'] = homeBackup;
+  else delete process.env['USERPROFILE'];
+  if (posixHomeBackup !== undefined) process.env['HOME'] = posixHomeBackup;
+  else delete process.env['HOME'];
   await rm(sandbox, { recursive: true, force: true });
 });
 

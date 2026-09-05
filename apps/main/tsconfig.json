@@ -2,6 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "types": ["node"],
+    "verbatimModuleSyntax": false,
     "paths": {
       "@rh/protocol": ["../../packages/protocol/src/index.ts"]
     }
