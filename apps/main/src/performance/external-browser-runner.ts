@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { promises as fs } from 'node:fs';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import type { RunEvent, RunResult } from '@rh/protocol';
 import { ProcessRunner, type RunHandle, type RunOptions } from '../execution/process-runner.js';
 import type { BrowserRuntimeRunner } from '../runtimes/browser/browser-runtime.js';
@@ -11,7 +11,11 @@ const MAX_EVENT_BYTES = 2 * 1024 * 1024;
 export type ExternalBrowserId = 'chrome' | 'firefox';
 
 export function externalBrowserId(executable: string): ExternalBrowserId {
-  return basename(executable).toLowerCase().startsWith('firefox') ? 'firefox' : 'chrome';
+  // Detection results can come from a different host (for example, a
+  // Windows-style imported path while tests run on POSIX). `path.basename`
+  // only understands the current host's separator, so split both forms.
+  const fileName = executable.split(/[\\/]/).pop() ?? executable;
+  return fileName.toLowerCase().startsWith('firefox') ? 'firefox' : 'chrome';
 }
 
 export function browserLaunchArgs(id: ExternalBrowserId, url: string, profileDir: string): string[] {

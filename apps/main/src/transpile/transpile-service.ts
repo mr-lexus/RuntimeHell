@@ -188,7 +188,14 @@ export async function mapFrame(
  */
 export async function remapStack(stack: string, mapPath: string, generatedFile: string): Promise<string> {
   const norm = (p: string): string => p.replace(/\\/g, '/').toLowerCase();
+  // macOS exposes /var as a symlink to /private/var. A child process may
+  // report the canonical path even though the parent retained /var, so
+  // compare both normalized and real paths.
+  const canonical = async (p: string): Promise<string> => {
+    try { return await fs.realpath(p); } catch { return p; }
+  };
   const target = norm(generatedFile);
+  const canonicalTarget = norm(await canonical(generatedFile));
   const out: string[] = [];
 
   for (const line of stack.split('\n')) {
@@ -201,7 +208,9 @@ export async function remapStack(stack: string, mapPath: string, generatedFile: 
     const genLine = Number(frameMatch[3]);
     const genCol = Number(frameMatch[4]);
     const rawPath = frameMatch[2] ?? '';
-    if (norm(rawPath) !== target) {
+    const rawNorm = norm(rawPath);
+    const samePath = rawNorm === target || rawNorm === canonicalTarget || norm(await canonical(rawPath)) === canonicalTarget;
+    if (!samePath) {
       out.push(line);
       continue;
     }

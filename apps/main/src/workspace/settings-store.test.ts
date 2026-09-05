@@ -4,7 +4,7 @@
  */
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, settingsPath, updateSettings } from './settings-store.js';
 
@@ -102,7 +102,7 @@ describe('settings store', () => {
     const backupText = await readFile(corruptBackupPath!, 'utf8');
     expect(backupText).toContain('this is not json');
     // Only the backup + main file exist in the app-data dir.
-    const files = await readdir(join(dir, 'RuntimeHell'));
+    const files = await readdir(dirname(path));
     expect(files.some((f) => f.startsWith('settings.json.corrupt-'))).toBe(true);
   });
 

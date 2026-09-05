@@ -44,19 +44,34 @@ describe('parseNvmVersions', () => {
 });
 
 describe('nvmRoot / nvmSymlink', () => {
-  it('honors NVM_HOME and NVM_SYMLINK env vars', () => {
+  it('honors platform-specific nvm environment variables', () => {
     const home = process.env['NVM_HOME'];
     const symlink = process.env['NVM_SYMLINK'];
+    const nvmDir = process.env['NVM_DIR'];
+    const nvmBin = process.env['NVM_BIN'];
     try {
-      process.env['NVM_HOME'] = 'D:/custom-nvm';
-      process.env['NVM_SYMLINK'] = 'D:/custom-nodejs';
-      expect(nvmRoot()).toBe('D:/custom-nvm');
-      expect(nvmSymlink()).toBe('D:/custom-nodejs');
+      if (isWindows()) {
+        process.env['NVM_HOME'] = 'D:/custom-nvm';
+        process.env['NVM_SYMLINK'] = 'D:/custom-nodejs';
+        expect(nvmRoot()).toBe('D:/custom-nvm');
+        expect(nvmSymlink()).toBe('D:/custom-nodejs');
+      } else {
+        delete process.env['NVM_HOME'];
+        delete process.env['NVM_SYMLINK'];
+        process.env['NVM_DIR'] = '/tmp/custom-nvm';
+        process.env['NVM_BIN'] = '/tmp/custom-nodejs/bin';
+        expect(nvmRoot()).toBe('/tmp/custom-nvm');
+        expect(nvmSymlink()).toBe('/tmp/custom-nodejs/bin');
+      }
     } finally {
       if (home !== undefined) process.env['NVM_HOME'] = home;
       else delete process.env['NVM_HOME'];
       if (symlink !== undefined) process.env['NVM_SYMLINK'] = symlink;
       else delete process.env['NVM_SYMLINK'];
+      if (nvmDir !== undefined) process.env['NVM_DIR'] = nvmDir;
+      else delete process.env['NVM_DIR'];
+      if (nvmBin !== undefined) process.env['NVM_BIN'] = nvmBin;
+      else delete process.env['NVM_BIN'];
     }
   });
 
