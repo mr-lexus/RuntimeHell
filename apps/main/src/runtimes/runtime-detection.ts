@@ -1,6 +1,6 @@
 /** Cross-platform system runtime and browser detection. */
 import { spawn } from 'node:child_process';
-import { access, readdir, realpath } from 'node:fs/promises';
+import { access, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir, platform as osPlatform } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { NvmInfo, NvmVersionInfo, SystemRuntimeInfo } from '@rh/protocol';
@@ -46,7 +46,13 @@ function lookupCommand(command: string): Promise<string | null> {
 
 async function resolveCandidate(candidate: string): Promise<string | null> {
   if (isAbsolute(candidate) || candidate.includes('/') || candidate.includes('\\')) {
-    try { await access(candidate); return candidate; } catch { return null; }
+    try {
+      const resolved = await realpath(candidate);
+      const details = await stat(resolved);
+      return details.isFile() ? resolved : null;
+    } catch {
+      return null;
+    }
   }
   return lookupCommand(candidate);
 }

@@ -75,14 +75,16 @@ describe.skipIf(!existsSync(mainEntry))('monaco e2e (built app)', () => {
       // in JavaScript, then becomes valid again when switched back.
       const languageTrigger = page.locator('.rh-titlebar-language-trigger');
       const initialLanguage = await languageTrigger.textContent();
-      expect(initialLanguage === null || initialLanguage.includes('JavaScript') || initialLanguage.includes('TypeScript')).toBe(true);
+      expect(initialLanguage === null || !/JavaScript|TypeScript/.test(initialLanguage)).toBe(true);
+      expect(await languageTrigger.getAttribute('aria-label')).toMatch(/Language: (JavaScript|TypeScript)/);
       await languageTrigger.click();
       const languageOptions = page.locator('.rh-titlebar-language-option');
       const optionText = await languageOptions.allTextContents();
       expect(optionText.join(' ')).toContain('JavaScript');
       expect(optionText.join(' ')).toContain('TypeScript');
-      await languageOptions.nth(1).click();
-      expect(await languageTrigger.textContent()).toContain('TypeScript');
+      await languageOptions.filter({ hasText: 'TypeScript' }).click();
+      expect((await languageTrigger.textContent()) ?? '').not.toMatch(/JavaScript|TypeScript/);
+      expect(await languageTrigger.getAttribute('aria-label')).toBe('Language: TypeScript');
       await page.evaluate(() => {
         const ed = (window as never as Record<string, unknown>)['__rh_editor'] as { setValue: (v: string) => void; setLanguage: (v: string) => void };
         ed.setLanguage('typescript');

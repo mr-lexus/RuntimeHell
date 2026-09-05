@@ -198,7 +198,10 @@ export const useRuntimes = create<RuntimesState>((set, get) => ({
   },
 
   install: async (kind, id, version) => {
-    if (!window.api) return;
+    if (!window.api) {
+      set({ notice: 'runtime installation is unavailable: preload bridge is not connected' });
+      return;
+    }
     const progressVersion = version ?? 'latest';
     const key = progressKey(id, progressVersion);
     if (get().progress[key] !== undefined) return;

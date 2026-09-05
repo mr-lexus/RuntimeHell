@@ -143,14 +143,32 @@ async function extractZip(zipFile: string, destDir: string): Promise<void> {
 
 const execFileAsync = promisify(execFile);
 
+/** Finder-launched macOS apps may not inherit the interactive shell PATH. */
+function tarExecutable(): string {
+  return process.platform === 'darwin' ? '/usr/bin/tar' : 'tar';
+}
+
+function extractionError(archiveFile: string, error: unknown): Error {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new Error(`failed to extract ${basename(archiveFile)} with ${tarExecutable()}: ${detail}`);
+}
+
 async function extractTarGz(archiveFile: string, destDir: string): Promise<void> {
   await fs.mkdir(destDir, { recursive: true });
-  await execFileAsync('tar', ['-xzf', archiveFile, '-C', destDir], { windowsHide: true });
+  try {
+    await execFileAsync(tarExecutable(), ['-xzf', archiveFile, '-C', destDir], { windowsHide: true });
+  } catch (error) {
+    throw extractionError(archiveFile, error);
+  }
 }
 
 async function extractTarXz(archiveFile: string, destDir: string): Promise<void> {
   await fs.mkdir(destDir, { recursive: true });
-  await execFileAsync('tar', ['-xJf', archiveFile, '-C', destDir], { windowsHide: true });
+  try {
+    await execFileAsync(tarExecutable(), ['-xJf', archiveFile, '-C', destDir], { windowsHide: true });
+  } catch (error) {
+    throw extractionError(archiveFile, error);
+  }
 }
 
 function safeRelativePath(value: string): string {
@@ -208,7 +226,12 @@ const IMPORT_BINARY_NAME: Record<string, string> = {
   'moddable-xs': executableName('xst')
 };
 
-async function makeExecutable(path: string): Promise<void> {
+async function makeExecutable(path: string, required = false): Promise<void> {
+  const stat = await fs.stat(path).catch(() => null);
+  if (stat === null || !stat.isFile()) {
+    if (required) throw new Error(`runtime archive is missing its executable: ${path}`);
+    return;
+  }
   if (process.platform === 'win32') return;
   await fs.chmod(path, 0o755);
 }
@@ -348,7 +371,12 @@ export async function installArtifact(req: InstallRequest): Promise<ManifestEntr
     }
     if (req.executablePath !== undefined) await materializeExecutable(stageDir, req.entry.id, req.executablePath);
     const stagedExecutable = stagedExecutablePath(req.entry, req.executablePath);
-    if (stagedExecutable !== null) await makeExecutable(join(stageDir, stagedExecutable));
+    if (stagedExecutable !== null) {
+      await makeExecutable(
+        join(stageDir, stagedExecutable),
+        req.entry.kind === 'runtime' && req.entry.id === 'node'
+      );
+    }
 
     const finalDir = targetDirFor(req.entry);
     await fs.mkdir(dirname(finalDir), { recursive: true });

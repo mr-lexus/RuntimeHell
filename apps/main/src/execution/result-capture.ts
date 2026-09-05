@@ -13,6 +13,8 @@ export interface CaptureTransformResult {
   ok: true;
   code: string;
   reportCount: number;
+  /** True when the authored AST contains TypeScript-only syntax. */
+  hasTypeScriptSyntax: boolean;
 }
 
 export interface CaptureTransformFailure {
@@ -27,6 +29,15 @@ export interface InjectCaptureOptions {
 
 const DEFAULT_OPTIONS: Required<InjectCaptureOptions> = { captureDeclarations: true };
 
+function containsTypeScriptSyntax(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsTypeScriptSyntax);
+  if (value === null || typeof value !== 'object') return false;
+  const node = value as Record<string, unknown>;
+  const type = typeof node.type === 'string' ? node.type : '';
+  if (type.startsWith('TS') || node.importKind === 'type' || node.exportKind === 'type') return true;
+  return Object.values(node).some(containsTypeScriptSyntax);
+}
+
 export function injectCapture(
   source: string,
   options: InjectCaptureOptions = {}
@@ -38,6 +49,8 @@ export function injectCapture(
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+
+  const hasTypeScriptSyntax = containsTypeScriptSyntax(ast);
 
   // Wrap console.* calls with line-aware __rh.console for RunJS inline
   const CONSOLE_LEVELS = new Set(['log', 'error', 'warn', 'info', 'debug', 'table', 'dir', 'trace']);
@@ -108,5 +121,5 @@ export function injectCapture(
   // downstream esbuild sourcemap (and therefore stack remapping) still points
   // at the original .ts positions.
   const output = generate(ast.program, { retainLines: true, compact: false });
-  return { ok: true, code: output.code, reportCount };
+  return { ok: true, code: output.code, reportCount, hasTypeScriptSyntax };
 }

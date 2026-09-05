@@ -153,6 +153,29 @@ describe('ExecutionManager runtime dispatch', () => {
     expect(entry).toContain('__rh.console');
   });
 
+  it('transpiles TypeScript syntax in a .js browser entry when the JS flag is stale', async () => {
+    const resolver = vi.fn<Resolver>(async () => BROWSER);
+    const runner = new FakeRunner();
+    const manager = new ExecutionManager({
+      resolveRuntime: resolver,
+      createRunner: () => new FakeRunner() as unknown as ProcessRunner,
+      createBrowserRunner: () => runner as unknown as BrowserRuntimeRunner,
+      emit: () => undefined
+    });
+    const workspaceId = `browser-ts-${Date.now()}`;
+    const source = "interface User { name: string }\nconst user: User = { name: 'ok' };\nuser;\n";
+    try {
+      const response = await manager.start({ ...REQ, workspaceId, relPath: 'entry.js', content: source, runtimeId: 'browser', lang: 'js' });
+      expect(response.ok).toBe(true);
+      const entry = await readFile(join(workspaceRoot(workspaceId), '.rhbuild', 'entry.js'), 'utf8');
+      expect(entry).not.toContain('interface User');
+      expect(entry).not.toContain(': User');
+      expect(entry).toContain('name: "ok"');
+    } finally {
+      await fs.rm(workspaceRoot(workspaceId), { recursive: true, force: true });
+    }
+  });
+
   it('bundles a workspace CommonJS dependency before sending browser code to Chromium', async () => {
     const resolver = vi.fn<Resolver>(async () => BROWSER);
     const runner = new FakeRunner();

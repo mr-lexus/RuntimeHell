@@ -87,6 +87,21 @@ const DEFAULT_EDITOR_SETTINGS: AppSettings['editor'] = {
   vimMode: false
 };
 
+function syncCurrentRelativeLineNumber(
+  editor: monaco.editor.IStandaloneCodeEditor,
+  lineNumbers: AppSettings['editor']['lineNumbers'],
+  previous: string[]
+): string[] {
+  const lineNumber = editor.getPosition()?.lineNumber;
+  const decorations = lineNumbers === 'relative' && lineNumber !== undefined
+    ? [{
+        range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+        options: { lineNumberClassName: 'rh-current-relative-line-number' }
+      }]
+    : [];
+  return editor.deltaDecorations(previous, decorations);
+}
+
 const VIM_MODE_LABELS: Record<VimMode, string> = {
   normal: 'NORMAL',
   insert: 'INSERT',
@@ -103,6 +118,7 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
   const propsRef = useRef(props);
   propsRef.current = props;
   const vimRef = useRef<VimModeController | null>(null);
+  const currentLineNumberDecorationsRef = useRef<string[]>([]);
   const commandInputRef = useRef<HTMLInputElement | null>(null);
   const [vimMode, setVimMode] = useState<VimMode>('normal');
   const [vimCommandActive, setVimCommandActive] = useState(false);
@@ -137,6 +153,16 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
       cursorStyle: editorSettings.cursorStyle
     });
     editorRef.current = editor;
+
+    const syncCurrentLineNumber = (): void => {
+      currentLineNumberDecorationsRef.current = syncCurrentRelativeLineNumber(
+        editor,
+        propsRef.current.editorSettings?.lineNumbers ?? DEFAULT_EDITOR_SETTINGS.lineNumbers,
+        currentLineNumberDecorationsRef.current
+      );
+    };
+    editor.onDidChangeCursorPosition(syncCurrentLineNumber);
+    syncCurrentLineNumber();
 
     const scrollController = propsRef.current.scrollController;
     const scrollBy = (deltaY: number): void => {
@@ -283,6 +309,7 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
 
     return () => {
       if (scrollController?.scrollBy === scrollBy) scrollController.scrollBy = () => undefined;
+      currentLineNumberDecorationsRef.current = editor.deltaDecorations(currentLineNumberDecorationsRef.current, []);
       editor.dispose();
       editorRef.current = null;
       for (const m of modelsRef.current.values()) m.dispose();
@@ -313,6 +340,7 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
       stickyScroll: { enabled: settings.stickyScroll },
       ...(props.vimMode ? {} : { cursorStyle: settings.cursorStyle })
     });
+    currentLineNumberDecorationsRef.current = syncCurrentRelativeLineNumber(editor, settings.lineNumbers, currentLineNumberDecorationsRef.current);
   }, [props.theme, props.fontSize, props.editorSettings, props.vimMode]);
 
   useEffect(() => {
@@ -375,6 +403,11 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     if (model.getLanguageId() !== props.language) {
       monaco.editor.setModelLanguage(model, props.language);
     }
+    currentLineNumberDecorationsRef.current = syncCurrentRelativeLineNumber(
+      editor,
+      props.editorSettings?.lineNumbers ?? DEFAULT_EDITOR_SETTINGS.lineNumbers,
+      currentLineNumberDecorationsRef.current
+    );
   }, [props.path, props.value, props.language]);
 
   // Reflect capability probe verdicts into the context-menu keys (todo 19).

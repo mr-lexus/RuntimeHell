@@ -1,5 +1,5 @@
 /**
- * Integration test (plan todo 7 QA): REAL download of a pinned Node LTS zip
+ * Integration test (plan todo 7 QA): REAL download of a pinned Node LTS archive
  * from nodejs.org, sha256 verification against SHASUMS256.txt, atomic extract,
  * spawn of the downloaded exe, then removal.
  *
@@ -19,7 +19,7 @@ import {
   targetDirFor
 } from './binary-manager.js';
 import { buildNodeInstall } from '../runtimes/node/node-runtime.js';
-import { executableName } from '../platform.js';
+import { managedRuntimeExecutablePath } from '../platform.js';
 
 const execFileP = promisify(execFile);
 const RUN = process.env['RH_NET_TESTS'] === '1';
@@ -58,7 +58,7 @@ describe.skipIf(!RUN)('node runtime install (network)', () => {
     expect(lastProgress.received).toBeGreaterThan(10_000_000); // ~30MB zip
 
     // Spawn the downloaded binary for real.
-    const exe = join(targetDirFor(entry), executableName('node'));
+    const exe = managedRuntimeExecutablePath(targetDirFor(entry), 'node');
     const { stdout } = await execFileP(exe, ['--version']);
     expect(stdout.trim()).toBe(`v${NODE_VERSION}`);
 

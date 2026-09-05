@@ -188,8 +188,10 @@ export class ExecutionManager {
 
     let entryPath: string;
     let mapPath: string | null = null;
-    // `lang === 'js'` forces passthrough even for .ts/.tsx/.mts so Node 22+
-    // can `--experimental-strip-types` the source unchanged. Conversely,
+    // `lang === 'js'` forces passthrough even for .ts/.tsx/.mts in the Node
+    // lane so Node 22+ can `--experimental-strip-types` the source unchanged.
+    // The browser lane always strips detected TS syntax because Chromium has
+    // no equivalent native support. Conversely,
     // `lang === 'ts'` must force esbuild even when the source tab is named
     // .js; the language picker is an execution/editor override, not merely an
     // extension hint.
@@ -198,10 +200,19 @@ export class ExecutionManager {
     // transform, and the esbuild banner carries the prelude with an
     // offset-correct source map. Skipping esbuild (native TS) would cost
     // capture parity for no benefit — documented decision.
-    const forcePassthrough = req.lang === 'js';
-    const shouldTranspile = !forcePassthrough && (req.lang === 'ts' || needsTranspile(req.relPath));
+    // Older renderers did not always send the language override. Detecting
+    // TS-only AST nodes here prevents raw `interface`/type annotations from
+    // reaching the browser's `new Function` path for a .js tab. Chromium has
+    // no Node-style type stripping, so browser TS syntax wins over an old
+    // stale `lang: 'js'` value as well.
+    const browserNeedsTypeStrip = isBrowser && captured.hasTypeScriptSyntax;
+    const effectiveLanguage = browserNeedsTypeStrip
+      ? 'ts'
+      : req.lang ?? (captured.hasTypeScriptSyntax ? 'ts' : undefined);
+    const forcePassthrough = req.lang === 'js' && !browserNeedsTypeStrip;
+    const shouldTranspile = !forcePassthrough && (effectiveLanguage === 'ts' || needsTranspile(req.relPath));
     if (isBrowser && needsBrowserBundle(captured.code)) {
-      const result = await bundleBrowserTo(buildDir, root, req.relPath, captured.code, req.lang);
+      const result = await bundleBrowserTo(buildDir, root, req.relPath, captured.code, effectiveLanguage);
       if (!result.ok) return { ok: false, stage: 'transpile', errors: result.errors };
       entryPath = result.outputPath;
       mapPath = result.mapPath;

@@ -7,6 +7,7 @@
  */
 import { create } from 'zustand';
 import type { RunEvent, RuntimeId, SerializedValue } from '@rh/protocol';
+import { detectSourceLanguage, type DetectedLanguage } from '../editor/language-detection';
 import { getActiveFile, type OpenFile } from './ui.js';
 import { useRuntimes } from './runtimes.js';
 
@@ -35,9 +36,14 @@ export interface InlineConsoleEntry {
   readonly args?: SerializedValue[];
 }
 
-/** Language override for the run pipeline. 'ts' forces esbuild transpilation;
- * 'js' forces passthrough so Node 22+ can `--experimental-strip-types` the source. */
-export type RunLang = 'js' | 'ts';
+/** Language mode for the run pipeline. Automatic derives a concrete language from the active source. */
+export type RunLang = 'auto' | DetectedLanguage;
+export type ResolvedRunLang = DetectedLanguage;
+
+export function resolveRunLanguage(mode: RunLang, file: Pick<OpenFile, 'relPath' | 'content'> | null): ResolvedRunLang {
+  if (mode !== 'auto') return mode;
+  return file === null ? 'js' : detectSourceLanguage(file.content, file.relPath);
+}
 
 interface RunState {
   phase: RunPhase;
@@ -107,10 +113,7 @@ export const useRun = create<RunState>((set, get) => ({
   autoRun: false,
   notice: null,
   pendingEvents: [],
-  // Default 'ts' preserves the historical behavior (esbuild for .ts/.tsx/.mts).
-  // The toggle in App.tsx overrides this; auto-detect from file extension runs
-  // when a different file is opened.
-  lang: 'ts',
+  lang: 'auto',
 
   setTimeoutMs: (ms) => set({ timeoutMs: ms }),
 
@@ -140,6 +143,7 @@ export const useRun = create<RunState>((set, get) => ({
     }
     set({ phase: 'running', runId: null, runFileId: file.id, lines: [], reports: [], inlineConsole: [], inlineByLine: {}, resultByLine: {}, lastExit: null, notice: null, pendingEvents: [] });
     const rt = useRuntimes.getState();
+    const language = resolveRunLanguage(get().lang, file);
     const response = await bridge.startRun({
       workspaceId: 'default',
       relPath: file.relPath,
@@ -149,8 +153,9 @@ export const useRun = create<RunState>((set, get) => ({
       // falls back to system/newest-managed resolution in main when undefined.
       runtimeId: rt.activeRuntime,
       runtimeVersion: rt.selected[rt.activeRuntime] ?? undefined,
-      // Language override ('js' skips TS transpile in the main process).
-      lang: get().lang
+      // The protocol receives a concrete language; Automatic is resolved from
+      // the latest source snapshot immediately before the IPC call.
+      lang: language
     });
     if (!response.ok) {
       set({ phase: 'idle', pendingEvents: [] });

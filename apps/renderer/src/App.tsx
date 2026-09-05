@@ -1,5 +1,6 @@
 ﻿import { useEffect, useRef, useState } from 'react';
 import { exposeMonacoForTests, setRhTheme, type RhTheme } from './editor/monaco-setup';
+import { useMemo } from 'react';
 import { CodeEditor } from './editor/CodeEditor';
 import { createAtaController, getAtaStatus, onAtaStatus, type AtaStatus } from './editor/ata';
 import { typescriptDefaults } from './editor/monaco-setup';
@@ -11,7 +12,7 @@ import { RuntimesPanel } from './panels/runtimes/RuntimesPanel';
 import { PackagesPanel } from './panels/packages/PackagesPanel';
 import { emitRunRequested, getActiveFile, onRunRequested, useActiveFile, useUi, type DrawerTab, type OpenFile } from './state/ui';
 import type { SelectionInfo } from './editor/selection-service';
-import { useRun } from './state/run';
+import { resolveRunLanguage, useRun } from './state/run';
 import { useRuntimes } from './state/runtimes';
 import { ANALYSIS_ALL_TYPES } from './state/analysis';
 import { useAnalysis } from './state/analysis';
@@ -96,10 +97,11 @@ export function App(): React.JSX.Element {
   const setAutoRun = useRun((s) => s.setAutoRun);
   const scheduleAutoRun = useRun((s) => s.scheduleAutoRun);
   const requestCancel = useRun((s) => s.requestCancel);
-  const lang = useRun((s) => s.lang);
+  const languageMode = useRun((s) => s.lang);
   const setLang = useRun((s) => s.setLang);
 
   const activeFile = useActiveFile();
+  const lang = useMemo(() => resolveRunLanguage(languageMode, activeFile), [activeFile?.content, activeFile?.relPath, languageMode]);
   const analysisEngines = useAnalysis((s) => s.engines);
   const analysisEngineId = useAnalysis((s) => s.engineId);
   const analyzeActions = ANALYSIS_ALL_TYPES.map((type) => {
@@ -236,24 +238,13 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     if (langHydratedRef.current) return;
     const stored = localStorage.getItem('rh.lang');
-    if (stored === 'js' || stored === 'ts') useRun.getState().setLang(stored);
+    if (stored === 'auto' || stored === 'js' || stored === 'ts') useRun.getState().setLang(stored);
     langHydratedRef.current = true;
   }, []);
   useEffect(() => {
     if (!langHydratedRef.current) return;
-    localStorage.setItem('rh.lang', lang);
-  }, [lang]);
-  // Auto-detect lang from file extension when the active file changes. The
-  // extension drives the default; the explicit toggle in the tab bar overrides.
-  useEffect(() => {
-    const path = activeFile?.relPath ?? '';
-    const lower = path.toLowerCase();
-    const detected: 'js' | 'ts' =
-      lower.endsWith('.ts') || lower.endsWith('.tsx') || lower.endsWith('.mts') ? 'ts' : 'js';
-    if (useRun.getState().lang !== detected) useRun.getState().setLang(detected);
-    // We only want this to re-run when the active file's path changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFile?.relPath]);
+    localStorage.setItem('rh.lang', languageMode);
+  }, [languageMode]);
   useEffect(() => {
     ataRef.current ??= createAtaController({
       spawnWorker: () => {
@@ -338,7 +329,6 @@ export function App(): React.JSX.Element {
         dirty: true
       });
     }
-    useRun.getState().setLang('js');
     setDrawerTab('analysis');
     setDrawerOpen(true);
   };

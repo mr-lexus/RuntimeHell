@@ -951,7 +951,11 @@ export function RuntimesPanel(): React.JSX.Element {
 
   return (
     <div style={{ fontSize: 12, color: 'var(--text)', paddingBottom: 8 }}>
-      {state.notice !== null && <div style={{ color: 'var(--err)', marginBottom: 6 }}>{state.notice}</div>}
+      {state.notice !== null && (
+        <div role="alert" style={{ color: 'var(--err)', marginBottom: 6, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+          {state.notice}
+        </div>
+      )}
       {state.loading && <div className="rh-loading-state"><BlockLoader label="loading runtime catalog" /></div>}
 
       {/* Default runtime: which runtime executes code (Ctrl+Enter / auto-run). */}

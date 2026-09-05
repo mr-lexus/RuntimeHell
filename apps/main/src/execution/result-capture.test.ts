@@ -47,11 +47,15 @@ describe('injectCapture', () => {
   });
 
   it('parses TS and JSX', () => {
-    const ts = injectCapture('const n: number = answer() as number;\n');
+    const ts = injectCapture('interface User { name: string }\nconst n: number = answer() as number;\n');
     expect(ts.ok).toBe(true);
+    if (ts.ok) expect(ts.hasTypeScriptSyntax).toBe(true);
     const jsx = injectCapture('render(<Widget size={"lg"} />);\n');
     expect(jsx.ok).toBe(true);
-    if (jsx.ok) expect(jsx.reportCount).toBe(1);
+    if (jsx.ok) {
+      expect(jsx.reportCount).toBe(1);
+      expect(jsx.hasTypeScriptSyntax).toBe(false);
+    }
   });
 
   it('returns structured failure on syntax errors', () => {

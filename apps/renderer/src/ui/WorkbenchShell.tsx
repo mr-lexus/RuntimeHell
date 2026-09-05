@@ -17,12 +17,21 @@ import type { SelectionInfo } from '../editor/selection-service';
 import type { AnalyzeType, EditorScrollController } from '../editor/CodeEditor';
 import type { VimMode } from '../editor/vim-mode';
 import { usePerformance } from '../state/performance';
+import { useRun, type RunLang } from '../state/run';
 import { APP_LOGO_URL } from '../branding';
 
 interface FileLike { id: string; relPath: string; language: string; content: string; dirty: boolean; }
 
 function languageLabel(lang: 'js' | 'ts'): 'JavaScript' | 'TypeScript' {
   return lang === 'js' ? 'JavaScript' : 'TypeScript';
+}
+
+function languageModeLabel(mode: RunLang): 'Automatic' | 'JavaScript' | 'TypeScript' {
+  return mode === 'auto' ? 'Automatic' : languageLabel(mode);
+}
+
+function languageModeIcon(mode: RunLang): string {
+  return mode === 'auto' ? '✦' : mode === 'js' ? '\u{e781}' : '\u{e628}';
 }
 
 function livePerformanceCases(cases: readonly PerformanceCase[], files: readonly FileLike[]): PerformanceCase[] {
@@ -95,7 +104,7 @@ export interface WorkbenchShellProps {
   onSetDrawerRatio: (ratio: number) => void;
   onSetAutoRun: (value: boolean) => void;
   onCancel: () => void;
-  onSetLang: (value: 'js' | 'ts') => void;
+  onSetLang: (value: RunLang) => void;
   onSetOutputColumn: (value: boolean) => void;
   onPatchSettings: (patch: import('@rh/protocol').SettingsPatch) => void;
   onResetAppearance: () => void;
@@ -161,6 +170,7 @@ interface TabRenameState {
 
 export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
   const selectedLanguage = languageLabel(props.lang);
+  const languageMode = useRun((state) => state.lang);
   const editorLanguage = props.lang === 'js' ? 'javascript' : 'typescript';
   const [selection, setSelection] = useState<SelectionInfo | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
@@ -362,15 +372,14 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
           <div className="rh-titlebar-editor-controls" aria-label="Editor controls">
           <Button variant="primary" className="rh-titlebar-run" onClick={props.onRun} disabled={!props.activeFile || props.phase !== 'idle'} aria-label={props.phase === 'idle' ? 'Run source (Ctrl+Enter)' : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'} title={props.phase === 'idle' ? 'Run source (Ctrl+Enter)' : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'}><span className="rh-action-marker" aria-hidden="true">{props.phase === 'idle' ? '▶' : <BlockLoader />}</span></Button>
           <div ref={languageMenuRef} className="rh-titlebar-language-picker">
-            <button type="button" className="rh-titlebar-language-trigger" aria-label={`Language: ${selectedLanguage}`} title={`Language: ${selectedLanguage}`} aria-haspopup="menu" aria-expanded={languageMenuOpen} onClick={() => setLanguageMenuOpen((open) => !open)}>
+            <button type="button" className="rh-titlebar-language-trigger" aria-label={`Language: ${selectedLanguage}${languageMode === 'auto' ? ' (Automatic)' : ''}`} title={`Language: ${selectedLanguage}${languageMode === 'auto' ? ' (Automatic)' : ''}`} aria-haspopup="menu" aria-expanded={languageMenuOpen} onClick={() => setLanguageMenuOpen((open) => !open)}>
               <span className="rh-language-icon" aria-hidden="true">{props.lang === 'js' ? '\u{e781}' : '\u{e628}'}</span>
-              <span>{selectedLanguage}</span>
             </button>
             {languageMenuOpen && <div className="rh-titlebar-language-menu" role="menu" aria-label="Select language">
-              {(['js', 'ts'] as const).map((item) => <button key={item} type="button" role="menuitemradio" className={`rh-titlebar-language-option ${props.lang === item ? 'is-selected' : ''}`} aria-checked={props.lang === item} onClick={() => { props.onSetLang(item); setLanguageMenuOpen(false); }}>
-                <span className="rh-language-icon" aria-hidden="true">{item === 'js' ? '\u{e781}' : '\u{e628}'}</span>
-                <span>{languageLabel(item)}</span>
-                {props.lang === item && <span className="rh-titlebar-language-check" aria-hidden="true">✓</span>}
+              {(['auto', 'js', 'ts'] as const).map((item) => <button key={item} type="button" role="menuitemradio" className={`rh-titlebar-language-option ${languageMode === item ? 'is-selected' : ''}`} aria-checked={languageMode === item} onClick={() => { props.onSetLang(item); setLanguageMenuOpen(false); }}>
+                <span className="rh-language-icon" aria-hidden="true">{languageModeIcon(item)}</span>
+                <span>{languageModeLabel(item)}</span>
+                {languageMode === item && <span className="rh-titlebar-language-check" aria-hidden="true">✓</span>}
               </button>)}
             </div>}
           </div>
