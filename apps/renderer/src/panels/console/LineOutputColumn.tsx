@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRun, type InlineConsoleEntry } from '../../state/run';
+import type { EditorScrollController } from '../../editor/CodeEditor';
 import type { SerializedValue } from '@rh/protocol';
 import { detectConsoleTable, detectTable, type TableShape } from './table-shape';
 
@@ -427,13 +428,15 @@ export function LineOutputColumn({
   scrollTop,
   allowExpand,
   fileId,
-  lineHeight = LINE_HEIGHT_PX
+  lineHeight = LINE_HEIGHT_PX,
+  scrollController
 }: {
   lineCount: number;
   scrollTop: number;
   allowExpand: boolean;
   fileId: string | null;
   lineHeight?: number;
+  scrollController?: EditorScrollController;
 }): React.JSX.Element {
   const inlineByLine = useRun((s) => s.inlineByLine);
   const resultByLine = useRun((s) => s.resultByLine);
@@ -569,6 +572,17 @@ export function LineOutputColumn({
     });
   };
 
+  const forwardWheel = (event: React.WheelEvent<HTMLDivElement>): void => {
+    if (!scrollController || event.deltaY === 0) return;
+    const deltaY = event.deltaMode === 1
+      ? event.deltaY * rowHeight
+      : event.deltaMode === 2
+        ? event.deltaY * Math.max(viewportH, rowHeight)
+        : event.deltaY;
+    event.preventDefault();
+    scrollController.scrollBy(deltaY);
+  };
+
   const total = Math.max(lineCount, 1);
   // Keep one stable scroll surface sized like Monaco, but only mount rows
   // that actually contain output. Rendering an empty div for every source
@@ -591,6 +605,7 @@ export function LineOutputColumn({
         minHeight: 0,
         height: '100%',
       }}
+      onWheel={forwardWheel}
     >
       {/* ── left-edge resize handle ── */}
       <div

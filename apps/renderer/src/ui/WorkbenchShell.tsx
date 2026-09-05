@@ -14,7 +14,7 @@ import { CommandPalette, type PaletteCommand } from './CommandPalette';
 import { SettingsView } from './SettingsView';
 import type { AtaStatus } from '../editor/ata';
 import type { SelectionInfo } from '../editor/selection-service';
-import type { AnalyzeType } from '../editor/CodeEditor';
+import type { AnalyzeType, EditorScrollController } from '../editor/CodeEditor';
 import type { VimMode } from '../editor/vim-mode';
 import { usePerformance } from '../state/performance';
 import { APP_LOGO_URL } from '../branding';
@@ -171,6 +171,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
   const tabsRef = useRef<HTMLDivElement | null>(null);
   const dockContentRef = useRef<HTMLDivElement | null>(null);
+  const editorScrollController = useRef<EditorScrollController>({ scrollBy: () => undefined });
   // A source slot owns its editor selection/context. Do not carry the
   // previous file's analysis selection into the newly selected tab.
   useEffect(() => {
@@ -432,8 +433,8 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
                 {tabScrollState.right && <button type="button" className="rh-tab-scroll-control" onClick={() => scrollTabs(220)} aria-label="Scroll tabs right" title="Scroll tabs right">›</button>}
               </div>
               <div className="rh-editor-region">
-                <div className="rh-editor-host">{props.activeFile ? <CodeEditor key={props.activeFile.id} path={props.activeFile.relPath} value={props.activeFile.content} language={props.activeFile.language} theme={theme === 'light' ? 'rh-light' : 'rh-dark'} fontSize={editorFontSize} editorSettings={props.settings.editor} vimMode={props.settings.editor.vimMode} onVimModeChange={setVimMode} onVimHelp={() => setVimHelpOpen(true)} onVimCommandChange={setVimCommandLine} onChange={props.onChange} onSave={props.onSave} onRun={props.onRun} onFormatError={props.onFormatError} onSelectionChanged={(info) => { setSelection(info); props.onSelectionChanged(info); }} onScrollTop={props.onScrollTop} onLineCount={props.onLineCount} analyzeActions={props.analyzeActions} inlineOutputs={props.inlineByLine} inlineResults={props.resultByLine} onAnalyze={props.onAnalyze} /> : <div className="rh-empty-state"><div className="rh-empty-mark">◇</div><strong>No source open</strong><span>Open or create a source slot to begin.</span></div>}</div>
-                {props.activeFile && props.showOutputColumn && <div className="rh-inline-output"><LineOutputColumn fileId={props.activeFile.id} lineCount={props.lineCount} scrollTop={props.scrollTop} lineHeight={editorLineHeight} allowExpand /></div>}
+                <div className="rh-editor-host">{props.activeFile ? <CodeEditor key={props.activeFile.id} path={props.activeFile.relPath} value={props.activeFile.content} language={props.activeFile.language} theme={theme === 'light' ? 'rh-light' : 'rh-dark'} fontSize={editorFontSize} editorSettings={props.settings.editor} vimMode={props.settings.editor.vimMode} onVimModeChange={setVimMode} onVimHelp={() => setVimHelpOpen(true)} onVimCommandChange={setVimCommandLine} onChange={props.onChange} onSave={props.onSave} onRun={props.onRun} onFormatError={props.onFormatError} onSelectionChanged={(info) => { setSelection(info); props.onSelectionChanged(info); }} onScrollTop={props.onScrollTop} scrollController={editorScrollController.current} onLineCount={props.onLineCount} analyzeActions={props.analyzeActions} inlineOutputs={props.inlineByLine} inlineResults={props.resultByLine} onAnalyze={props.onAnalyze} /> : <div className="rh-empty-state"><div className="rh-empty-mark">◇</div><strong>No source open</strong><span>Open or create a source slot to begin.</span></div>}</div>
+                {props.activeFile && props.showOutputColumn && <div className="rh-inline-output"><LineOutputColumn fileId={props.activeFile.id} lineCount={props.lineCount} scrollTop={props.scrollTop} lineHeight={editorLineHeight} allowExpand scrollController={editorScrollController.current} /></div>}
               </div>
             </InstrumentFrame>
           </>}

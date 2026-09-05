@@ -14,6 +14,11 @@ export interface AnalyzeActionState {
   readonly reason?: string;
 }
 
+/** Shared vertical scroll control used by the line-aligned inspector. */
+export interface EditorScrollController {
+  scrollBy: (deltaY: number) => void;
+}
+
 export interface CodeEditorProps {
   path: string;
   value: string;
@@ -25,6 +30,8 @@ export interface CodeEditorProps {
   onSelectionChanged?: (info: SelectionInfo | null) => void;
   /** Fires when editor scrolls; value is scrollTop in px. */
   onScrollTop?: (scrollTop: number) => void;
+  /** Lets adjacent views forward wheel movement to Monaco's scroll surface. */
+  scrollController?: EditorScrollController;
   /** Total line count of the current model (for the output column). */
   onLineCount?: (lineCount: number) => void;
   /** Context-menu Analyze actions; disabled entries render with tooltips. */
@@ -130,6 +137,12 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
       cursorStyle: editorSettings.cursorStyle
     });
     editorRef.current = editor;
+
+    const scrollController = propsRef.current.scrollController;
+    const scrollBy = (deltaY: number): void => {
+      editor.setScrollTop(Math.max(0, editor.getScrollTop() + deltaY));
+    };
+    if (scrollController) scrollController.scrollBy = scrollBy;
 
     // E2E/test hook.
     (window as unknown as Record<string, unknown>)['__rh_editor'] = {
@@ -269,6 +282,7 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     });
 
     return () => {
+      if (scrollController?.scrollBy === scrollBy) scrollController.scrollBy = () => undefined;
       editor.dispose();
       editorRef.current = null;
       for (const m of modelsRef.current.values()) m.dispose();

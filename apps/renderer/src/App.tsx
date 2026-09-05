@@ -165,10 +165,7 @@ export function App(): React.JSX.Element {
     })();
     // Real executor wiring (todo 11): Ctrl+Enter and toolbar both funnel into
     // the run store; streamed events update it via the preload bridge.
-    const offRun = onRunRequested(() => {
-      console.log('[ui] onRunRequested fired');
-      void useRun.getState().requestStart().then(() => console.log('[ui] requestStart finished', useRun.getState().phase));
-    });
+    const offRun = onRunRequested(() => { void useRun.getState().requestStart(); });
     const offEvents = window.api?.onRunEvent((event) => useRun.getState().handleEvent(event));
     const offAnalysis = window.api?.onAnalysisEvent((event) => useAnalysis.getState().handleEvent(event));
     const offPerformance = usePerformance.getState().bindEvents();
@@ -433,7 +430,6 @@ export function App(): React.JSX.Element {
       <div style={{ display: 'flex', gap: 2, alignItems: 'center', background: 'var(--bg-bar)', padding: '4px 6px' }}>
         <button
           onClick={() => {
-            console.log('[ui] Run clicked', { file: activeFile?.relPath, hasContent: !!activeFile?.content });
             emitRunRequested();
           }}
           style={{ background: 'var(--accent)', color: '#fff', border: 'none', padding: '4px 12px', cursor: 'pointer', marginRight: 8 }}

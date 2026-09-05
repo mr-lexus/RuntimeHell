@@ -37,16 +37,6 @@ function createWindow(): BrowserWindow {
     }
   });
 
-  win.webContents.on('console-message', (event) => {
-    const { level, message, lineNumber, sourceId } = event as unknown as {
-      level: number;
-      message: string;
-      lineNumber: number;
-      sourceId: string;
-    };
-    const prefix = ['[renderer-TRACE]', '[renderer-WARN]', '[renderer-ERROR]'][level] ?? '[renderer-LOG]';
-    console.log(`${prefix} ${message} (${sourceId}:${lineNumber})`);
-  });
   win.webContents.on('did-finish-load', () => {
     // Boot marker asserted by QA evidence (todo 1).
     console.log('[boot] renderer loaded');

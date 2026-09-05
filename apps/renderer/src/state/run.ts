@@ -121,15 +121,12 @@ export const useRun = create<RunState>((set, get) => ({
   setLang: (lang) => set({ lang }),
 
   requestStart: async () => {
-    console.log('[run] requestStart enter', { phase: get().phase, hasBridge: !!api(), file: getActiveFile()?.relPath, hasContent: !!getActiveFile()?.content });
     const bridge = api();
     if (!bridge) {
-      console.log('[run] no bridge');
       set({ notice: 'runtime bridge unavailable' });
       return;
     }
     if (get().phase !== 'idle') {
-      console.log('[run] not idle', get().phase);
       return;
     }
     const file: OpenFile | null = getActiveFile();
