@@ -10,6 +10,27 @@ const MAX_EVENT_BYTES = 2 * 1024 * 1024;
 
 export type ExternalBrowserId = 'chrome' | 'firefox';
 
+const LINUX_BROWSER_ENV_KEYS = [
+  'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS',
+  'XAUTHORITY', 'FONTCONFIG_PATH', 'FONTCONFIG_FILE'
+] as const;
+
+/**
+ * Desktop browsers need access to the current Linux display/session sockets,
+ * even when their headless flag is used. Keep the exception narrowly
+ * allow-listed instead of forwarding the parent environment wholesale.
+ */
+export function browserSessionEnv(
+  platform: NodeJS.Platform = process.platform,
+  source: NodeJS.ProcessEnv = process.env
+): Record<string, string> {
+  if (platform !== 'linux') return {};
+  return Object.fromEntries(LINUX_BROWSER_ENV_KEYS.flatMap((key) => {
+    const value = source[key];
+    return value === undefined || value === '' ? [] : [[key, value]];
+  }));
+}
+
 export function externalBrowserId(executable: string): ExternalBrowserId {
   // Detection results can come from a different host (for example, a
   // Windows-style imported path while tests run on POSIX). `path.basename`
@@ -168,7 +189,7 @@ export class ExternalBrowserRuntime implements BrowserRuntimeRunner {
         args: browserLaunchArgs(externalBrowserId(options.exePath), `http://127.0.0.1:${port}/run/${token}`, profileDir),
         cwd: options.cwd,
         timeoutMs: options.timeoutMs,
-        extraEnv: options.extraEnv
+        extraEnv: { ...browserSessionEnv(), ...options.extraEnv }
       });
       childRunId = child.runId;
       session.child = child;

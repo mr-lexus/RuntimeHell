@@ -9,6 +9,7 @@ This alpha focuses on native macOS behavior and cross-platform regression harden
 - Filesystem path comparisons preserve case on macOS/Linux, including case-sensitive APFS volumes and nvm installations.
 - Stack trace remapping now handles spaces, file URLs, and both bare and parenthesized Node frames without corrupting their shape.
 - Runtime archive coverage now performs a real TAR extraction/install check on POSIX hosts and verifies executable permissions.
+- External Chrome/Firefox benchmarks retain only the allow-listed Linux display/session variables they need, avoiding headless startup timeouts without exposing the full parent environment.
 - Shortcut labels and local-import guidance adapt to macOS, Windows, and Linux instead of displaying Windows-only text.
 - A large unreachable legacy renderer implementation was removed, reducing `App.tsx` and its maintenance surface substantially.
 - Tagged release builds now run the native Electron compatibility smoke on every packaging runner, including both Intel and Apple Silicon macOS.

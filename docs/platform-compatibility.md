@@ -20,6 +20,11 @@ Path comparisons remain case-sensitive on POSIX so case-sensitive APFS volumes
 and nvm directories are handled correctly. User-facing shortcuts display the
 native `Cmd` modifier on macOS.
 
+External browser benchmarks inherit a narrow Linux display/session allow-list
+(`DISPLAY`, Wayland/XDG runtime, D-Bus, Xauthority, and fontconfig paths). This
+keeps headless Chrome/Firefox launchable under desktop sessions and CI while
+preserving the minimal-environment isolation policy.
+
 Packaged child-process helpers (`bootstrap.cjs`, the fd3 probe, and the
 performance harness) are unpacked beside `app.asar`, because external Node
 processes cannot load Electron's virtual asar paths. POSIX local imports are
