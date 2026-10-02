@@ -101,7 +101,10 @@ export function App(): React.JSX.Element {
   const setLang = useRun((s) => s.setLang);
 
   const activeFile = useActiveFile();
-  const lang = useMemo(() => resolveRunLanguage(languageMode, activeFile), [activeFile?.content, activeFile?.relPath, languageMode]);
+  // Re-resolve on every tab identity/language change as well as on edits. A
+  // tab switch can otherwise retain the previous tab's header icon when both
+  // files currently have the same content or one is still being hydrated.
+  const lang = useMemo(() => resolveRunLanguage(languageMode, activeFile), [activeFileId, activeFile?.content, activeFile?.language, activeFile?.relPath, languageMode]);
   const analysisEngines = useAnalysis((s) => s.engines);
   const analysisEngineId = useAnalysis((s) => s.engineId);
   const analyzeActions = ANALYSIS_ALL_TYPES.map((type) => {
@@ -156,8 +159,8 @@ export function App(): React.JSX.Element {
       setDrawerTab(settings.layout.drawerTab);
       useRuntimes.getState().setActiveRuntime(settings.prefs.defaultRuntime);
       for (const tab of settings.session.tabs) {
-        const read = (await window.api?.readFile({ workspaceId: tab.workspaceId, relPath: tab.relPath })) as { ok: boolean; content?: string } | undefined;
-        const content = read?.ok === true && typeof read.content === 'string' ? read.content : '';
+        const read = await window.api?.readFile({ workspaceId: tab.workspaceId, relPath: tab.relPath });
+        const content = read?.ok === true ? read.content : '';
         const language = tab.relPath.endsWith('.ts') || tab.relPath.endsWith('.tsx') ? 'typescript' : 'javascript';
         openFile({ id: `${tab.workspaceId}:${tab.relPath}`, relPath: tab.relPath, language, content, dirty: false });
       }

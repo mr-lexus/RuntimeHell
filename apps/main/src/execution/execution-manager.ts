@@ -12,7 +12,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ManifestEntry, NvmInfo, RunEvent, RunStartRequest, RunStartResponse, RuntimeId } from '@rh/protocol';
+import type { HistoryRecord, ManifestEntry, NvmInfo, RunEvent, RunStartRequest, RunStartResponse, RuntimeId } from '@rh/protocol';
 import { probeFd3Support } from './fd3-probe.js';
 import { injectCapture } from './result-capture.js';
 import { ProcessRunner, type RunHandle } from './process-runner.js';
@@ -42,18 +42,7 @@ export interface ExecutionManagerDeps {
   /** Event delivery into the renderer. */
   readonly emit: (event: RunEvent) => void;
   /** History recorder (todo 21); injected so tests stay filesystem-free. */
-  readonly recordRun?: (record: {
-    workspaceId: string;
-    runId: string;
-    startedAt: string;
-    finishedAt: string;
-    relPath: string;
-    contentSnapshot: string;
-    status: string;
-    exitCode: number | null;
-    durationMs: number;
-    killedBy: string | null;
-  }) => void;
+  readonly recordRun?: (record: HistoryRecord & { workspaceId: string }) => void;
 }
 
 interface RunnerLike {

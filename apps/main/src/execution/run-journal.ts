@@ -9,6 +9,7 @@
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { z } from 'zod';
 import { cacheRoot } from '../binaries/paths.js';
 
 export function treeKill(pid: number): Promise<void> {
@@ -90,9 +91,29 @@ export interface JournalEntry {
   exited: boolean;
 }
 
+const JournalEntrySchema = z.object({
+  runId: z.string().min(8),
+  pid: z.number().int().positive(),
+  startedAt: z.string().refine((value) => Number.isFinite(Date.parse(value)), 'invalid start time'),
+  exited: z.boolean()
+}).strict();
+
+const MAX_ORPHAN_AGE_MS = 24 * 60 * 60 * 1000;
+
+export function isRecentJournalEntry(entry: JournalEntry, nowMs = Date.now()): boolean {
+  const startedAt = Date.parse(entry.startedAt);
+  const age = nowMs - startedAt;
+  return Number.isFinite(age) && age >= 0 && age <= MAX_ORPHAN_AGE_MS;
+}
+
 export async function readJournal(): Promise<JournalEntry[]> {
   try {
-    return JSON.parse(await fs.readFile(journalPath(), 'utf8')) as JournalEntry[];
+    const raw: unknown = JSON.parse(await fs.readFile(journalPath(), 'utf8'));
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((entry) => {
+      const parsed = JournalEntrySchema.safeParse(entry);
+      return parsed.success ? [parsed.data] : [];
+    });
   } catch {
     return [];
   }
@@ -105,8 +126,12 @@ export async function writeJournal(entries: JournalEntry[]): Promise<void> {
 }
 
 async function writeJournalNow(entries: JournalEntry[]): Promise<void> {
-  await fs.mkdir(cacheRoot(), { recursive: true });
-  await fs.writeFile(journalPath(), JSON.stringify(entries, null, 2), 'utf8');
+  const validated = entries.map((entry) => JournalEntrySchema.parse(entry));
+  const path = journalPath();
+  const tmp = `${path}.tmp`;
+  await fs.mkdir(dirname(path), { recursive: true });
+  await fs.writeFile(tmp, JSON.stringify(validated, null, 2), 'utf8');
+  await fs.rename(tmp, path);
 }
 
 let journalMutation: Promise<void> = Promise.resolve();
@@ -132,7 +157,9 @@ export async function sweepOrphans(): Promise<number> {
   let killed = 0;
   await updateJournal(async (entries) => {
     for (const entry of entries) {
-      if (!entry.exited && (await isAlive(entry.pid))) {
+      // PIDs are reusable. Never signal an old journal entry that may now
+      // identify an unrelated process after a long gap between app launches.
+      if (!entry.exited && isRecentJournalEntry(entry) && (await isAlive(entry.pid))) {
         await treeKill(entry.pid);
         killed++;
       }

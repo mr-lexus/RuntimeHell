@@ -2,21 +2,27 @@
  * ProcessRunner integration tests (plan todo 8 QA): REAL child processes.
  * Uses the current Node executable as the spawned binary.
  */
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ProcessRunner, sweepOrphans } from './process-runner.js';
+import { isRecentJournalEntry } from './run-journal.js';
 
 let dir: string;
 let nodeExe: string;
+let cacheRootBackup: string | undefined;
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'rh-runner-'));
   nodeExe = process.execPath;
+  cacheRootBackup = process.env['RH_CACHE_ROOT'];
+  process.env['RH_CACHE_ROOT'] = join(dir, 'cache');
 });
 
 afterAll(async () => {
+  if (cacheRootBackup === undefined) delete process.env['RH_CACHE_ROOT'];
+  else process.env['RH_CACHE_ROOT'] = cacheRootBackup;
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -110,6 +116,26 @@ describe('ProcessRunner (real processes)', () => {
     expect(killed).toBeGreaterThanOrEqual(0);
     const journal = await readJournalSafe();
     expect(journal.length).toBe(0);
+  });
+
+  it('does not consider stale journal entries safe to kill after PID reuse is possible', () => {
+    const now = Date.now();
+    expect(isRecentJournalEntry({ runId: 'recent-run', pid: 123, startedAt: new Date(now - 1_000).toISOString(), exited: false }, now)).toBe(true);
+    expect(isRecentJournalEntry({ runId: 'stale-run', pid: 123, startedAt: new Date(now - 48 * 60 * 60 * 1_000).toISOString(), exited: false }, now)).toBe(false);
+  });
+
+  it('filters malformed journal records before orphan processing', async () => {
+    const cacheRoot = process.env['RH_CACHE_ROOT'];
+    if (!cacheRoot) throw new Error('test cache root is missing');
+    await mkdir(cacheRoot, { recursive: true });
+    await writeFile(join(cacheRoot, 'run-journal.json'), JSON.stringify([
+      { runId: 'valid-run', pid: 123, startedAt: new Date().toISOString(), exited: true },
+      { runId: 'invalid-run', pid: '123', startedAt: 'yesterday', exited: false }
+    ]), 'utf8');
+
+    await expect(readJournalSafe()).resolves.toEqual([
+      expect.objectContaining({ runId: 'valid-run', pid: 123, exited: true })
+    ]);
   });
 });
 

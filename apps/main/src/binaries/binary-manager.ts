@@ -8,10 +8,14 @@
  */
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
+import { createWriteStream } from 'node:fs';
 import { promises as fs } from 'node:fs';
-import { dirname, isAbsolute, join, basename } from 'node:path';
+import { dirname, isAbsolute, join, basename, relative, resolve } from 'node:path';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { openPromise, type Entry } from 'yauzl';
 import {
   BinaryManifestSchema,
   ManifestEntrySchema,
@@ -51,6 +55,8 @@ export interface InstallRequest {
   stripRoot?: boolean;
   onProgress?: (p: DownloadProgress) => void;
 }
+
+const MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024;
 
 export function emptyManifest(): BinaryManifest {
   return { schemaVersion: 1, entries: [] };
@@ -116,29 +122,102 @@ export async function downloadTo(source: FetchSource, destFile: string, onProgre
   await fs.mkdir(dirname(destFile), { recursive: true });
   const res = await fetch(source.url);
   if (!res.ok || !res.body) throw new Error(`download failed ${res.status} for ${source.url}`);
+  const body = res.body;
   const totalHeader = res.headers.get('content-length');
-  const total = totalHeader ? Number(totalHeader) : null;
+  const parsedTotal = totalHeader === null ? Number.NaN : Number(totalHeader);
+  const total = Number.isFinite(parsedTotal) && parsedTotal >= 0 ? parsedTotal : null;
+  if (total !== null && total > MAX_DOWNLOAD_BYTES) {
+    await body.cancel();
+    throw new Error(`download is too large (${total} bytes; limit ${MAX_DOWNLOAD_BYTES})`);
+  }
   const hash = createHash('sha256');
   let received = 0;
-  const chunks: Buffer[] = [];
-  for await (const chunk of res.body) {
-    const buf = Buffer.from(chunk as Buffer);
-    hash.update(buf);
-    received += buf.length;
-    // Keep the archive in memory: zips here are ≤ ~200MB and extraction needs
-    // random access anyway. Streaming-to-disk variant can come later if needed.
-    chunks.push(buf);
-    onProgress?.({ id: progressId, version, receivedBytes: received, totalBytes: total });
+  const meter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      received += chunk.length;
+      if (received > MAX_DOWNLOAD_BYTES) {
+        callback(new Error(`download exceeded ${MAX_DOWNLOAD_BYTES} byte limit`));
+        return;
+      }
+      hash.update(chunk);
+      onProgress?.({ id: progressId, version, receivedBytes: received, totalBytes: total });
+      callback(null, chunk);
+    }
+  });
+  try {
+    const sourceStream = Readable.from((async function* streamResponseBody() {
+      for await (const chunk of body) yield chunk;
+    })());
+    await pipeline(sourceStream, meter, createWriteStream(destFile));
+  } catch (error) {
+    await fs.rm(destFile, { force: true });
+    throw error;
   }
-  const sha256 = hash.digest('hex');
-  await fs.writeFile(destFile, Buffer.concat(chunks));
-  return sha256;
+  return hash.digest('hex');
 }
 
-async function extractZip(zipFile: string, destDir: string): Promise<void> {
-  const extract = (await import('extract-zip')).default;
+const ZIP_FILE_TYPE_MASK = 0o170000;
+const ZIP_DIRECTORY_TYPE = 0o040000;
+const ZIP_SYMLINK_TYPE = 0o120000;
+const MAX_ZIP_ENTRY_BYTES = 2 * 1024 * 1024 * 1024;
+const MAX_ZIP_TOTAL_BYTES = 4 * 1024 * 1024 * 1024;
+const MAX_TAR_LISTING_BYTES = 16 * 1024 * 1024;
+const ARCHIVE_COMMAND_TIMEOUT_MS = 2 * 60 * 1000;
+
+function zipEntryMode(entry: Entry): number {
+  return (entry.externalFileAttributes >>> 16) & 0xffff;
+}
+
+function safeArchiveEntryPath(destDir: string, fileName: string): string {
+  if (fileName.includes('\0') || fileName.includes('\\') || fileName.startsWith('/') || /^[a-zA-Z]:/.test(fileName)) {
+    throw new Error(`unsafe archive entry path: ${fileName}`);
+  }
+  const segments = fileName.split('/').filter((segment) => segment !== '');
+  if (segments.length === 0 || segments.some((segment) => segment === '.' || segment === '..')) {
+    throw new Error(`unsafe archive entry path: ${fileName}`);
+  }
+  const root = resolve(destDir);
+  const target = resolve(root, ...segments);
+  const fromRoot = relative(root, target);
+  if (fromRoot === '' || fromRoot.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) || fromRoot === '..' || isAbsolute(fromRoot)) {
+    throw new Error(`archive entry escapes destination: ${fileName}`);
+  }
+  return target;
+}
+
+/** Extract a zip without materialising links or allowing entries outside the staging directory. */
+export async function extractZipArchive(zipFile: string, destDir: string): Promise<void> {
   await fs.mkdir(destDir, { recursive: true });
-  await extract(zipFile, { dir: destDir });
+  const archive = await openPromise(zipFile, {
+    autoClose: true,
+    lazyEntries: true,
+    strictFileNames: true,
+    validateEntrySizes: true
+  });
+  let totalBytes = 0;
+  try {
+    for await (const entry of archive.eachEntry()) {
+      const mode = zipEntryMode(entry);
+      const type = mode & ZIP_FILE_TYPE_MASK;
+      if (type === ZIP_SYMLINK_TYPE) throw new Error(`zip symlink entries are not allowed: ${entry.fileName}`);
+      if (entry.uncompressedSize > MAX_ZIP_ENTRY_BYTES) throw new Error(`zip entry is too large: ${entry.fileName}`);
+      totalBytes += entry.uncompressedSize;
+      if (totalBytes > MAX_ZIP_TOTAL_BYTES) throw new Error('zip expands beyond the configured size limit');
+
+      const target = safeArchiveEntryPath(destDir, entry.fileName);
+      if (entry.fileName.endsWith('/') || type === ZIP_DIRECTORY_TYPE) {
+        await fs.mkdir(target, { recursive: true });
+        continue;
+      }
+
+      await fs.mkdir(dirname(target), { recursive: true });
+      const input = await archive.openReadStreamPromise(entry);
+      await pipeline(input, createWriteStream(target, { flags: 'wx', mode: mode & 0o777 || 0o644 }));
+      if (process.platform !== 'win32' && (mode & 0o777) !== 0) await fs.chmod(target, mode & 0o777);
+    }
+  } finally {
+    archive.close();
+  }
 }
 
 const execFileAsync = promisify(execFile);
@@ -153,10 +232,40 @@ function extractionError(archiveFile: string, error: unknown): Error {
   return new Error(`failed to extract ${basename(archiveFile)} with ${tarExecutable()}: ${detail}`);
 }
 
+/** Validate system-tar output before extraction. Only files/directories are allowed. */
+export function validateTarListings(namesOutput: string, verboseOutput: string): void {
+  const names = namesOutput.split(/\r?\n/).filter((name) => name !== '');
+  const verbose = verboseOutput.split(/\r?\n/).filter((line) => line !== '');
+  if (names.length !== verbose.length) throw new Error('tar listing is inconsistent');
+  for (const name of names) safeArchiveEntryPath('.', name.replace(/\/$/, ''));
+  for (const line of verbose) {
+    const entryType = line[0];
+    if (entryType !== '-' && entryType !== 'd') {
+      throw new Error(`tar entry type is not allowed: ${entryType ?? 'unknown'}`);
+    }
+  }
+}
+
+async function validateTarArchive(archiveFile: string, compression: 'z' | 'J'): Promise<void> {
+  const common = {
+    windowsHide: true,
+    timeout: ARCHIVE_COMMAND_TIMEOUT_MS,
+    maxBuffer: MAX_TAR_LISTING_BYTES,
+    encoding: 'utf8' as const
+  };
+  const names = await execFileAsync(tarExecutable(), [`-t${compression}f`, archiveFile], common);
+  const verbose = await execFileAsync(tarExecutable(), [`-tv${compression}f`, archiveFile], common);
+  validateTarListings(names.stdout, verbose.stdout);
+}
+
 async function extractTarGz(archiveFile: string, destDir: string): Promise<void> {
   await fs.mkdir(destDir, { recursive: true });
   try {
-    await execFileAsync(tarExecutable(), ['-xzf', archiveFile, '-C', destDir], { windowsHide: true });
+    await validateTarArchive(archiveFile, 'z');
+    await execFileAsync(tarExecutable(), ['-xzf', archiveFile, '-C', destDir], {
+      windowsHide: true,
+      timeout: ARCHIVE_COMMAND_TIMEOUT_MS
+    });
   } catch (error) {
     throw extractionError(archiveFile, error);
   }
@@ -165,7 +274,11 @@ async function extractTarGz(archiveFile: string, destDir: string): Promise<void>
 async function extractTarXz(archiveFile: string, destDir: string): Promise<void> {
   await fs.mkdir(destDir, { recursive: true });
   try {
-    await execFileAsync(tarExecutable(), ['-xJf', archiveFile, '-C', destDir], { windowsHide: true });
+    await validateTarArchive(archiveFile, 'J');
+    await execFileAsync(tarExecutable(), ['-xJf', archiveFile, '-C', destDir], {
+      windowsHide: true,
+      timeout: ARCHIVE_COMMAND_TIMEOUT_MS
+    });
   } catch (error) {
     throw extractionError(archiveFile, error);
   }
@@ -366,7 +479,7 @@ export async function installArtifact(req: InstallRequest): Promise<ManifestEntr
       await extractTarXz(stageZip, stageDir);
       if (req.stripRoot !== false) await hoistSingleRoot(stageDir);
     } else {
-      await extractZip(stageZip, stageDir);
+      await extractZipArchive(stageZip, stageDir);
       if (req.stripRoot !== false) await hoistSingleRoot(stageDir);
     }
     if (req.executablePath !== undefined) await materializeExecutable(stageDir, req.entry.id, req.executablePath);

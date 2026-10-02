@@ -58,6 +58,33 @@ interface PerformanceState extends PerformanceConfig {
 
 const DEFAULT_MEASUREMENT: PerformanceMeasurement = { samples: 20, warmupRounds: 5, iterationsPerSample: 1_000, timeoutMs: 120_000, gcMode: 'runtime' };
 const RUN_TARGETS_KEY = 'rh.performance.run-targets.v1';
+const PERFORMANCE_CATALOG_TIMEOUT_MS = 35_000;
+let catalogRequestToken = 0;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(message));
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
 
 function loadRunTargets(): PerformanceTargetSelection[] {
   if (typeof localStorage === 'undefined') return [];
@@ -114,9 +141,15 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
 
   refreshCatalog: async () => {
     if (!window.api?.performanceCatalog) return;
-    set({ loadingCatalog: true });
+    const token = ++catalogRequestToken;
+    set((state) => {
+      const errors = { ...state.errors };
+      delete errors.catalog;
+      return { loadingCatalog: true, errors };
+    });
     try {
-      const catalog = await window.api.performanceCatalog();
+      const catalog = await withTimeout(window.api.performanceCatalog(), PERFORMANCE_CATALOG_TIMEOUT_MS, 'runtime probing timed out; check installed runtime executables and retry');
+      if (token !== catalogRequestToken) return;
       let selectedProfiles = { ...get().selectedProfiles };
       const valid = new Map(catalog.targets.map((target) => [performanceTargetKey(target), target]));
       selectedProfiles = Object.fromEntries(Object.entries(selectedProfiles).flatMap(([key, ids]) => {
@@ -153,6 +186,7 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
       persistRunTargets(fallback);
       set({ catalog, loadingCatalog: false, selectedProfiles, runTargets: fallback });
     } catch (error) {
+      if (token !== catalogRequestToken) return;
       set({ loadingCatalog: false, errors: { catalog: error instanceof Error ? error.message : String(error) } });
     }
   },

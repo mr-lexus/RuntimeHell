@@ -4,10 +4,12 @@ import {
   IPC,
   ListFilesRequestSchema,
   ListFilesResponseSchema,
+  type ListFilesResponse,
   PingRequestSchema,
   PingResponseSchema,
   ReadFileRequestSchema,
   ReadFileResponseSchema,
+  type ReadFileResponse,
   RunCancelRequestSchema,
   RunCancelResponseSchema,
   RunEventSchema,
@@ -15,6 +17,7 @@ import {
   RunStartResponseSchema,
   SaveFileRequestSchema,
   SaveFileResponseSchema,
+  type SaveFileResponse,
   BinaryInstallRequestSchema,
   BinaryInstallResponseSchema,
   type BinaryInstallResponse,
@@ -31,10 +34,19 @@ import {
   PkgSearchRequestSchema,
   PkgSearchResponseSchema,
   AnalysisEventSchema,
+  AnalysisCancelRequestSchema,
+  AnalysisCancelResponseSchema,
   AnalysisStartRequestSchema,
   AnalysisStartResponseSchema,
+  EngineCapabilitiesRequestSchema,
+  EngineCapabilitiesResponseSchema,
+  EnginesListResponseSchema,
+  type AnalysisCancelResponse,
   type AnalysisEvent,
+  type AnalysisStartRequest,
   type AnalysisStartResponse,
+  type EngineCapabilities,
+  type EngineDescriptor,
   type BinaryProgressEvent,
   type BinaryRemoveResponse,
   type BinariesListResponse,
@@ -56,10 +68,19 @@ import {
   PerformanceCancelResponseSchema,
   PerformanceEventSchema,
   PerformanceCatalogResponseSchema,
+  CreateWorkspaceRequestSchema,
+  DeleteWorkspaceRequestSchema,
+  DeleteWorkspaceResponseSchema,
+  HistoryListRequestSchema,
+  HistoryListResponseSchema,
+  ListWorkspacesResponseSchema,
+  WorkspaceMetaSchema,
   type PerformanceEvent,
   type PerformanceCatalogResponse,
   type PerformanceStartResponse,
-  type PerformanceCancelResponse
+  type PerformanceCancelResponse,
+  type HistoryListResponse,
+  type WorkspaceMeta
 } from '@rh/protocol';
 import { isLegacyPerformanceContractError, toLegacyPerformanceStartRequest } from './performance-compat.js';
 
@@ -84,13 +105,13 @@ const api = {
     const result = (await ipcRenderer.invoke(IPC.windowState)) as { maximized?: unknown };
     return { maximized: result.maximized === true };
   },
-  saveFile: async (req: { workspaceId: string; relPath: string; content: string }): Promise<unknown> => {
+  saveFile: async (req: { workspaceId: string; relPath: string; content: string }): Promise<SaveFileResponse> => {
     return SaveFileResponseSchema.parse(await ipcRenderer.invoke(IPC.wsSaveFile, SaveFileRequestSchema.parse(req)));
   },
-  readFile: async (req: { workspaceId: string; relPath: string }): Promise<unknown> => {
+  readFile: async (req: { workspaceId: string; relPath: string }): Promise<ReadFileResponse> => {
     return ReadFileResponseSchema.parse(await ipcRenderer.invoke(IPC.wsReadFile, ReadFileRequestSchema.parse(req)));
   },
-  listFiles: async (req: { workspaceId: string }): Promise<unknown> => {
+  listFiles: async (req: { workspaceId: string }): Promise<ListFilesResponse> => {
     return ListFilesResponseSchema.parse(await ipcRenderer.invoke(IPC.wsListFiles, ListFilesRequestSchema.parse(req)));
   },
   // --- execution (todo 11) -------------------------------------------------
@@ -203,27 +224,21 @@ const api = {
     };
   },
   // --- analysis drawer (todo 19) ---------------------------------------------
-  enginesList: async (): Promise<unknown> => {
-    return ipcRenderer.invoke(IPC.enginesList, {});
+  enginesList: async (): Promise<EngineDescriptor[]> => {
+    return EnginesListResponseSchema.parse(await ipcRenderer.invoke(IPC.enginesList, {}));
   },
-  engineCapabilities: async (engineId: string): Promise<unknown> => {
-    return ipcRenderer.invoke(IPC.engineCapabilities, { engineId });
+  engineCapabilities: async (engineId: AnalysisStartRequest['engineId']): Promise<EngineCapabilities | null> => {
+    const request = EngineCapabilitiesRequestSchema.parse({ engineId });
+    return EngineCapabilitiesResponseSchema.parse(await ipcRenderer.invoke(IPC.engineCapabilities, request));
   },
-  analyze: async (req: {
-    requestId: string;
-    engineId: 'v8' | 'd8-debug' | 'spidermonkey' | 'javascriptcore';
-    code: string;
-    analysisTypes: Array<'ast' | 'bytecode' | 'optcode' | 'ir-graph' | 'deopts' | 'gc'>;
-    functionName?: string;
-    timeoutMs?: number;
-    workspaceId?: string;
-  }): Promise<AnalysisStartResponse> => {
+  analyze: async (req: AnalysisStartRequest): Promise<AnalysisStartResponse> => {
     return AnalysisStartResponseSchema.parse(
       await ipcRenderer.invoke(IPC.analysisRequest, AnalysisStartRequestSchema.parse(req))
     );
   },
-  cancelAnalysis: async (requestId: string): Promise<{ ok: boolean }> => {
-    return (await ipcRenderer.invoke(IPC.analysisCancel, { requestId })) as { ok: boolean };
+  cancelAnalysis: async (requestId: string): Promise<AnalysisCancelResponse> => {
+    const request = AnalysisCancelRequestSchema.parse({ requestId });
+    return AnalysisCancelResponseSchema.parse(await ipcRenderer.invoke(IPC.analysisCancel, request));
   },
   onAnalysisEvent: (cb: (event: AnalysisEvent) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
@@ -268,17 +283,20 @@ const api = {
   settingsSet: async (patch: SettingsPatch): Promise<AppSettings> => {
     return AppSettingsSchema.parse(await ipcRenderer.invoke(IPC.settingsSet, SettingsPatchSchema.parse(patch)));
   },
-  listWorkspaces: async (): Promise<unknown> => {
-    return ipcRenderer.invoke(IPC.wsListWorkspaces, {});
+  listWorkspaces: async (): Promise<WorkspaceMeta[]> => {
+    return ListWorkspacesResponseSchema.parse(await ipcRenderer.invoke(IPC.wsListWorkspaces, {}));
   },
-  createWorkspace: async (name?: string): Promise<unknown> => {
-    return ipcRenderer.invoke(IPC.wsCreateWorkspace, name !== undefined ? { name } : {});
+  createWorkspace: async (name?: string): Promise<WorkspaceMeta> => {
+    const request = CreateWorkspaceRequestSchema.parse(name !== undefined ? { name } : {});
+    return WorkspaceMetaSchema.parse(await ipcRenderer.invoke(IPC.wsCreateWorkspace, request));
   },
-  deleteWorkspace: async (workspaceId: string): Promise<unknown> => {
-    return ipcRenderer.invoke(IPC.wsDeleteWorkspace, { workspaceId });
+  deleteWorkspace: async (workspaceId: string): Promise<{ ok: true }> => {
+    const request = DeleteWorkspaceRequestSchema.parse({ workspaceId });
+    return DeleteWorkspaceResponseSchema.parse(await ipcRenderer.invoke(IPC.wsDeleteWorkspace, request));
   },
-  historyList: async (workspaceId: string): Promise<unknown> => {
-    return ipcRenderer.invoke(IPC.historyList, { workspaceId });
+  historyList: async (workspaceId: string): Promise<HistoryListResponse> => {
+    const request = HistoryListRequestSchema.parse({ workspaceId });
+    return HistoryListResponseSchema.parse(await ipcRenderer.invoke(IPC.historyList, request));
   }
 };
 

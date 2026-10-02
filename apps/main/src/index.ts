@@ -1,7 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
-import { BrowserWindow, app, ipcMain } from 'electron';
-import { IPC } from '@rh/protocol';
+import { BrowserWindow, app, ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { EngineCapabilitiesRequestSchema, EngineCapabilitiesResponseSchema, EnginesListResponseSchema, IPC } from '@rh/protocol';
 import { registerBinariesHandlers, registerExecutionHandlers, registerIpcHandlers, registerPackageHandlers, registerAnalysisHandlers, registerPersistenceHandlers, registerPerformanceHandlers } from './ipc/router.js';
 import { appendHistory } from './workspace/history.js';
 import { ExecutionManager } from './execution/execution-manager.js';
@@ -17,6 +17,36 @@ import { DenoBunRuntimeAdapter, NodeRuntimeAdapter, RuntimeRegistry } from './ru
 import { PerformanceManager, RegistryPerformanceTargetResolver } from './performance/performance-manager.js';
 
 const isDev = !app.isPackaged;
+const trustedRendererIds = new Set<number>();
+
+function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
+  const frame = event.senderFrame;
+  const mainFrame = event.sender.mainFrame;
+  if (
+    !trustedRendererIds.has(event.sender.id)
+    || frame === null
+    || frame.processId !== mainFrame.processId
+    || frame.routingId !== mainFrame.routingId
+  ) {
+    throw new Error('rejected IPC request from an untrusted renderer');
+  }
+}
+
+function handleTrusted(
+  channel: string,
+  handler: (event: IpcMainInvokeEvent, payload: unknown) => unknown
+): void {
+  ipcMain.handle(channel, (event, payload: unknown) => {
+    assertTrustedIpcSender(event);
+    return handler(event, payload);
+  });
+}
+
+function sendToTrustedRenderers(channel: string, payload: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (trustedRendererIds.has(win.webContents.id)) win.webContents.send(channel, payload);
+  }
+}
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -38,6 +68,11 @@ function createWindow(): BrowserWindow {
       sandbox: true
     }
   });
+  const webContentsId = win.webContents.id;
+  trustedRendererIds.add(webContentsId);
+  win.on('closed', () => trustedRendererIds.delete(webContentsId));
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event) => event.preventDefault());
 
   win.webContents.on('did-finish-load', () => {
     // Boot marker asserted by QA evidence (todo 1).
@@ -63,68 +98,56 @@ function main(): void {
   }
 
   registerIpcHandlers((channel, handler) => {
-    ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
+    handleTrusted(channel, (_event, payload) => handler(payload));
   });
 
   // The renderer owns the compact titlebar on Windows/Linux; macOS keeps its
   // native traffic-light actions and only uses the renderer for the content.
-  ipcMain.handle(IPC.windowMinimize, (event) => {
+  handleTrusted(IPC.windowMinimize, (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize();
     return { ok: true };
   });
-  ipcMain.handle(IPC.windowToggleMaximize, (event) => {
+  handleTrusted(IPC.windowToggleMaximize, (event) => {
     const target = BrowserWindow.fromWebContents(event.sender);
     if (!target) return { maximized: false };
     if (target.isMaximized()) target.unmaximize();
     else target.maximize();
     return { maximized: target.isMaximized() };
   });
-  ipcMain.handle(IPC.windowClose, (event) => {
+  handleTrusted(IPC.windowClose, (event) => {
     BrowserWindow.fromWebContents(event.sender)?.close();
     return { ok: true };
   });
-  ipcMain.handle(IPC.windowState, (event) => ({ maximized: BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false }));
+  handleTrusted(IPC.windowState, (event) => ({ maximized: BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false }));
   registerPersistenceHandlers((channel, handler) => {
-    ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
+    handleTrusted(channel, (_event, payload) => handler(payload));
   });
 
   // Persistence (todo 21): settings + workspaces + history.
   const execution = new ExecutionManager({
-    emit: (event) => {
-      for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send(IPC.runEvent, event);
-      }
-    },
+    emit: (event) => sendToTrustedRenderers(IPC.runEvent, event),
     recordRun: (record) => {
       void appendHistory(record.workspaceId, record).catch(() => {});
     }
   });
   registerExecutionHandlers((channel, handler) => {
-    ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
+    handleTrusted(channel, (_event, payload) => handler(payload));
   }, execution);
 
   // Runtimes panel (todo 12): list/install/remove with streamed progress.
   const binaries = new BinariesController({
-    emitProgress: (event) => {
-      for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send(IPC.binariesProgress, event);
-      }
-    }
+    emitProgress: (event) => sendToTrustedRenderers(IPC.binariesProgress, event)
   });
   registerBinariesHandlers((channel, handler) => {
-    ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
+    handleTrusted(channel, (_event, payload) => handler(payload));
   }, binaries);
 
   // Packages panel (todo 13): npm ops scoped to the workspace.
   const packages = new PackageService({
-    emit: (event) => {
-      for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send(IPC.packagesEvent, event);
-      }
-    }
+    emit: (event) => sendToTrustedRenderers(IPC.packagesEvent, event)
   });
   registerPackageHandlers((channel, handler) => {
-    ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
+    handleTrusted(channel, (_event, payload) => handler(payload));
   }, packages);
 
   // Analysis drawer (todo 19/23): registry + registered V8 adapter.
@@ -136,29 +159,23 @@ function main(): void {
   engines.registerAdapter(jscAdapter);
   const analysis = new AnalysisManager({
     registry: engines,
-    emit: (event) => {
-      for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send(IPC.analysisEvent, event);
-      }
-    }
+    emit: (event) => sendToTrustedRenderers(IPC.analysisEvent, event)
   });
   const enginesController = new EnginesController({ registry: engines });
   const registrar = (channel: string, handler: (payload: unknown) => Promise<unknown>): void => {
-    ipcMain.handle(channel, (_event, payload: unknown) => handler(payload));
+    handleTrusted(channel, (_event, payload) => handler(payload));
   };
   registerAnalysisHandlers(registrar, analysis);
   const runtimes = new RuntimeRegistry({ adapters: [new NodeRuntimeAdapter(), new DenoBunRuntimeAdapter('deno'), new DenoBunRuntimeAdapter('bun')] });
   const performance = new PerformanceManager({
     targetResolver: new RegistryPerformanceTargetResolver(runtimes),
-    emit: (event) => {
-      for (const win of BrowserWindow.getAllWindows()) win.webContents.send(IPC.performanceEvent, event);
-    }
+    emit: (event) => sendToTrustedRenderers(IPC.performanceEvent, event)
   });
   registerPerformanceHandlers(registrar, performance);
-  registrar(IPC.enginesList, async () => enginesController.list());
+  registrar(IPC.enginesList, async () => EnginesListResponseSchema.parse(await enginesController.list()));
   registrar(IPC.engineCapabilities, async (payload) => {
-    const req = (payload ?? {}) as { engineId?: string };
-    return enginesController.capabilities(req.engineId ?? 'v8');
+    const req = EngineCapabilitiesRequestSchema.parse(payload);
+    return EngineCapabilitiesResponseSchema.parse(await enginesController.capabilities(req.engineId));
   });
 
   app.whenReady().then(() => {

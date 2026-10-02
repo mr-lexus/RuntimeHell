@@ -106,7 +106,9 @@ describe('embedded browser runtime page shim', () => {
     context.window = context;
 
     runInNewContext(buildBrowserScript(`
-      const values = [[], new Map(), new Set(), new Date('2026-01-02T03:04:05.000Z'), /rh/g, new Uint8Array([1]), Promise.resolve(1), function sample() {}];
+      const array = [new Map([['nested', { value: 1 }]])];
+      array.extra = { value: 2 };
+      const values = [array, new Map([['key', { nested: 1 }]]), new Set([{ nested: 2 }]), new Date('2026-01-02T03:04:05.000Z'), /rh/g, new Uint8Array([1, 2]), Promise.resolve(1), function sample() {}];
       values.forEach((value, index) => __rh.report(index, value, index + 1));
     `), context);
 
@@ -122,5 +124,22 @@ describe('embedded browser runtime page shim', () => {
       const value = payloads.find((payload) => payload.kind === 'result' && payload.index === index)?.value;
       expect(value?.children?.some((child) => child.k === '[[Prototype]]'), `prototype for result ${index}`).toBe(true);
     }
+
+    const array = payloads.find((payload) => payload.kind === 'result' && payload.index === 0)?.value;
+    expect(array?.children?.some((child) => child.k === 'extra')).toBe(true);
+    expect(array?.children?.some((child) => child.k === '[[Prototype]]')).toBe(true);
+
+    const map = payloads.find((payload) => payload.kind === 'result' && payload.index === 1)?.value;
+    expect(map?.t).toBe('map');
+    expect(map?.children?.some((child) => child.k === '[0] key')).toBe(true);
+    expect(map?.children?.some((child) => child.k === '[0] value')).toBe(true);
+
+    const set = payloads.find((payload) => payload.kind === 'result' && payload.index === 2)?.value;
+    expect(set?.t).toBe('set');
+    expect(set?.children?.some((child) => child.k === '0')).toBe(true);
+
+    const typedArray = payloads.find((payload) => payload.kind === 'result' && payload.index === 5)?.value;
+    expect(typedArray?.t).toBe('typedarray');
+    expect(typedArray?.children?.find((child) => child.k === '0')?.node.prim).toBe('1');
   });
 });

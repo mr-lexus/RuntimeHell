@@ -12,9 +12,11 @@ import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { PkgEvent, PkgOpResponse, PkgSearchRow } from '@rh/protocol';
+import { z } from 'zod';
 import { workspaceRoot } from '../workspace/files.js';
 import { managedRuntimeDir } from '../runtimes/runtime-resolver.js';
-import { commandLookup, executableName, isWindows, managedRuntimeExecutablePath } from '../platform.js';
+import { lookupCommand } from '../runtimes/runtime-detection.js';
+import { executableName, isWindows, managedRuntimeExecutablePath } from '../platform.js';
 
 export interface PackageServiceDeps {
   readonly emit: (event: PkgEvent) => void;
@@ -35,41 +37,66 @@ export type CliRunner = (
   onLine: (stream: 'stdout' | 'stderr', text: string) => void
 ) => Promise<SpawnedCli>;
 
+const MAX_CLI_CAPTURE_CHARS = 1024 * 1024;
+const MAX_STREAM_LINE_CHARS = 64 * 1024;
+const DependencyMapSchema = z.record(z.string(), z.string());
+
+function appendTail(current: string, text: string): string {
+  const combined = current + text;
+  return combined.length <= MAX_CLI_CAPTURE_CHARS ? combined : combined.slice(-MAX_CLI_CAPTURE_CHARS);
+}
+
 /** Default CLI runner: real child process, line-buffered output. */
 export const nodeCliRunner: CliRunner = (exe, args, cwd, onLine) =>
   new Promise((resolve) => {
     const child = spawn(exe, args, { cwd, windowsHide: true });
     const collected = { stdout: '', stderr: '' };
+    const pending = { stdout: '', stderr: '' };
+    let settled = false;
 
     const makePump =
       (stream: 'stdout' | 'stderr') =>
       (chunk: Buffer): void => {
         const text = chunk.toString('utf8');
-        collected[stream] += text;
-        let pending = text;
-        let nl = pending.indexOf('\n');
-        while (nl !== -1) {
-          const line = pending.slice(0, nl).replace(/\r$/, '');
-          pending = pending.slice(nl + 1);
+        collected[stream] = appendTail(collected[stream], text);
+        pending[stream] += text;
+        let newline = pending[stream].indexOf('\n');
+        while (newline !== -1 || pending[stream].length >= MAX_STREAM_LINE_CHARS) {
+          const splitAt = newline !== -1 && newline < MAX_STREAM_LINE_CHARS ? newline : MAX_STREAM_LINE_CHARS;
+          const line = pending[stream].slice(0, splitAt).replace(/\r$/, '');
+          pending[stream] = pending[stream].slice(splitAt + (splitAt === newline ? 1 : 0));
           onLine(stream, line);
-          nl = pending.indexOf('\n');
+          newline = pending[stream].indexOf('\n');
         }
-        // Trailing partial lines flush at close so lines are never split.
       };
+
+    const finish = (code: number | null, spawnError?: Error): void => {
+      if (settled) return;
+      settled = true;
+      if (spawnError !== undefined) {
+        collected.stderr = appendTail(collected.stderr, spawnError.message);
+        pending.stderr += spawnError.message;
+      }
+      for (const stream of ['stdout', 'stderr'] as const) {
+        if (pending[stream] !== '') onLine(stream, pending[stream].replace(/\r$/, ''));
+      }
+      resolve({ code, stdout: collected.stdout, stderr: collected.stderr });
+    };
 
     const pumpOut = makePump('stdout');
     const pumpErr = makePump('stderr');
     child.stdout?.on('data', pumpOut);
     child.stderr?.on('data', pumpErr);
 
-    child.on('error', (e) => resolve({ code: -1, stdout: collected.stdout, stderr: e.message }));
-    child.on('close', (code) => resolve({ code, stdout: collected.stdout, stderr: collected.stderr }));
+    child.on('error', (error) => finish(-1, error));
+    child.on('close', (code) => finish(code));
   });
 
 /**
  * Resolved npm execution strategy. We prefer running npm-cli.js DIRECTLY with
- * a sibling Node executable (no shell, no quoting hazards); the legacy shell
- * shell path is a last-resort fallback.
+ * a sibling Node executable (no shell, no quoting hazards). A PATH executable
+ * is a POSIX fallback; Windows .cmd shims are rejected if the direct layout
+ * cannot be resolved safely.
  */
 export type NpmResolution =
   | { kind: 'direct'; nodeExe: string; cliJs: string; origin: 'managed' | 'path' }
@@ -104,6 +131,9 @@ export async function resolveNpm(
     if ((await probeFile(nodeExe)) && (await probeFile(cliJs))) {
       return { kind: 'direct', nodeExe, cliJs, origin: 'path' };
     }
+    if (isWindows()) {
+      return { error: 'npm.cmd was found, but its adjacent node.exe/npm-cli.js could not be resolved safely' };
+    }
     return { kind: 'shell', exePath: pathNpmCmd, origin: 'path' };
   }
 
@@ -123,19 +153,7 @@ async function defaultProbe(p: string): Promise<boolean> {
 }
 
 function defaultWhereNpm(): Promise<string | null> {
-  return new Promise((resolve) => {
-    const child = spawn(commandLookup(), ['npm'], isWindows() ? { windowsHide: true } : undefined);
-    let out = '';
-    child.stdout?.on('data', (d) => {
-      out += String(d);
-    });
-    child.on('error', () => resolve(null));
-    child.on('close', (code) => {
-      if (code !== 0) return resolve(null);
-      const first = out.split(/\r?\n/).map((l) => l.trim()).find(Boolean);
-      resolve(first?.trim() ?? null);
-    });
-  });
+  return lookupCommand('npm');
 }
 
 async function ensureWorkspacePackageJson(root: string): Promise<void> {
@@ -152,14 +170,26 @@ async function ensureWorkspacePackageJson(root: string): Promise<void> {
 async function readDependencies(root: string): Promise<Record<string, string>> {
   try {
     const raw = await fs.readFile(join(root, 'package.json'), 'utf8');
-    const parsed = JSON.parse(raw) as { dependencies?: Record<string, string> };
-    return parsed.dependencies ?? {};
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || !('dependencies' in parsed)) return {};
+    const dependencies = DependencyMapSchema.safeParse(parsed.dependencies);
+    return dependencies.success ? dependencies.data : {};
   } catch {
     return {};
   }
 }
 
 const SEARCH_ENDPOINT = 'https://registry.npmjs.org/-/v1/search';
+const RegistrySearchResponseSchema = z.object({
+  objects: z.array(z.object({
+    package: z.object({
+      name: z.string().min(1),
+      version: z.string().min(1),
+      description: z.string().optional()
+    }).passthrough(),
+    score: z.object({ final: z.number().finite() }).passthrough().optional()
+  }).passthrough()).default([])
+}).passthrough();
 
 export class PackageService {
   constructor(private readonly deps: PackageServiceDeps) {}
@@ -202,33 +232,7 @@ export class PackageService {
     if (npm.kind === 'direct') {
       result = await runCli(npm.nodeExe, [npm.cliJs, ...verbArgs], root, sink);
     } else {
-      // Legacy shell fallback on Windows; POSIX can execute npm directly.
-      if (!isWindows()) {
-        result = await runCli(npm.exePath, verbArgs, root, sink);
-      } else {
-        const command = `"${npm.exePath} ${verbArgs.join(' ')}"`;
-        result = await new Promise<SpawnedCli>((resolve) => {
-          const child = spawn('cmd.exe', ['/d', '/s', '/c', command], {
-            cwd: root,
-            windowsHide: true,
-            windowsVerbatimArguments: true
-          });
-          let stderr = '';
-          child.stdout?.on('data', (c: Buffer) => {
-            for (const line of String(c).split('\n')) if (line.trim() !== '') sink('stdout', line.replace(/\r$/, ''));
-          });
-          child.stderr?.on('data', (c: Buffer) => {
-            for (const line of String(c).split('\n')) {
-              const t = line.replace(/\r$/, '');
-              if (t.trim() === '') continue;
-              stderr += `${t}\n`;
-              sink('stderr', t);
-            }
-          });
-          child.on('error', (e) => resolve({ code: -1, stdout: '', stderr: e.message }));
-          child.on('close', (code) => resolve({ code, stdout: '', stderr }));
-        });
-      }
+      result = await runCli(npm.exePath, verbArgs, root, sink);
     }
 
     if (result.code !== 0) {
@@ -277,18 +281,15 @@ export class PackageService {
         signal: AbortSignal.timeout(10_000)
       });
       if (!res.ok) return { error: `registry search failed: ${res.status}` };
-      const body = (await res.json()) as {
-        objects?: { package?: { name?: string; version?: string; description?: string; score?: { final?: number } } }[];
-      };
+      const body = RegistrySearchResponseSchema.parse(await res.json());
       const rows: PkgSearchRow[] = [];
-      for (const obj of body.objects ?? []) {
+      for (const obj of body.objects) {
         const pkg = obj.package;
-        if (pkg?.name === undefined || pkg.version === undefined) continue;
         rows.push({
           name: pkg.name,
           version: pkg.version,
           description: pkg.description ?? '',
-          score: pkg.score?.final ?? 0
+          score: obj.score?.final ?? 0
         });
       }
       return rows;

@@ -4,14 +4,19 @@ import {
   AnalysisResultSchema,
   BinaryManifestSchema,
   EngineCapabilitiesSchema,
+  HistoryListResponseSchema,
   IPC,
+  NpmPackageNameSchema,
+  PkgOpRequestSchema,
   PingRequestSchema,
   PingResponseSchema,
   PerformanceStartRequestSchema,
   RunEventSchema,
   RunRequestSchema,
   RunResultSchema,
-  RuntimeCapabilitiesSchema
+  RuntimeCapabilitiesSchema,
+  RelPathSchema,
+  WorkspaceMetaSchema
 } from './index.js';
 
 const sha = 'a'.repeat(64);
@@ -79,6 +84,35 @@ describe('run contract', () => {
     expect(() =>
       RunResultSchema.parse({ runId: 'r1', status: 'nope', exitCode: 0, durationMs: 1, reports: [] })
     ).toThrow();
+  });
+});
+
+describe('workspace contract', () => {
+  it('accepts safe relative paths without rejecting benign double dots inside a filename', () => {
+    expect(RelPathSchema.parse('notes/version..draft.ts')).toBe('notes/version..draft.ts');
+    expect(() => RelPathSchema.parse('../escape.ts')).toThrow();
+    expect(() => RelPathSchema.parse('safe/../escape.ts')).toThrow();
+    expect(() => RelPathSchema.parse('C:\\escape.ts')).toThrow();
+  });
+
+  it('validates persisted workspace and history records', () => {
+    const workspace = {
+      id: 'default', name: 'Default', createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: '2026-01-01T00:00:00.000Z'
+    };
+    expect(WorkspaceMetaSchema.parse(workspace)).toEqual(workspace);
+    expect(() => WorkspaceMetaSchema.parse({ ...workspace, id: '../bad' })).toThrow();
+    expect(() => HistoryListResponseSchema.parse({ ok: true, records: [{ runId: 'broken' }] })).toThrow();
+  });
+});
+
+describe('package operation contract', () => {
+  it('accepts bare package names and rejects command-like specs', () => {
+    expect(NpmPackageNameSchema.parse('lodash')).toBe('lodash');
+    expect(NpmPackageNameSchema.parse('@types/node')).toBe('@types/node');
+    expect(() => NpmPackageNameSchema.parse('lodash & calc.exe')).toThrow();
+    expect(() => NpmPackageNameSchema.parse('https://example.test/package.tgz')).toThrow();
+    expect(PkgOpRequestSchema.safeParse({ workspaceId: 'default', name: 'lodash', versionRange: '^4.17.0 || ^5.0.0' }).success).toBe(true);
+    expect(PkgOpRequestSchema.safeParse({ workspaceId: 'default', name: 'lodash', versionRange: 'file:../../outside' }).success).toBe(false);
   });
 });
 

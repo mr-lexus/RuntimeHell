@@ -177,8 +177,43 @@ function typeTag(v: SerializedValue): string | null {
 
 const CELL_BORDER = '1px solid rgba(255,255,255,0.06)';
 
-function TableView({ shape, depth }: { shape: TableShape; depth: number }): React.JSX.Element {
+function NestedValue({ value }: { value: SerializedValue }): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const expandable = isExpandable(value);
+  if (!expandable) return <span style={{ color: colorOf(value) }}>{inlineText(value)}</span>;
+
+  return (
+    <span>
+      <button
+        type="button"
+        onClick={(event) => { event.stopPropagation(); setOpen((current) => !current); }}
+        style={{ color: colorOf(value), background: 'transparent', border: 0, padding: 0, cursor: 'pointer', font: 'inherit', textAlign: 'left' }}
+        aria-expanded={open}
+      >
+        {open ? '⌄' : '›'} {open ? (typeTag(value) ?? previewText(value)) : previewText(value)}
+      </button>
+      {open && (
+        <div style={{ margin: '3px 0 2px 8px', paddingLeft: 8, borderLeft: `1px solid ${C.border}` }}>
+          <Tree node={value} />
+        </div>
+      )}
+    </span>
+  );
+}
+
+function PrototypeDisclosure({ source }: { source: SerializedValue | undefined }): React.JSX.Element | null {
+  const prototype = source?.children?.find((child) => child.k === '[[Prototype]]')?.node;
+  if (!prototype) return null;
+  return (
+    <div style={{ margin: '4px 0 0 8px', paddingLeft: 8, borderLeft: `1px solid ${C.protoBorder}` }}>
+      <TreeChild k="[[Prototype]]" node={prototype} inMap={false} />
+    </div>
+  );
+}
+
+function TableView({ shape, depth, source }: { shape: TableShape; depth: number; source?: SerializedValue }): React.JSX.Element {
   const [collapsed, setCollapsed] = useState(depth > 0);
+  const hasRowPrototypes = shape.rowSources?.some((row) => row.children?.some((child) => child.k === '[[Prototype]]')) ?? false;
   if (collapsed) {
     return (
       <div
@@ -198,6 +233,7 @@ function TableView({ shape, depth }: { shape: TableShape; depth: number }): Reac
             {shape.headers.map((h) => (
               <th key={h} style={{ background: C.tblHead, color: C.key, padding: '3px 8px', textAlign: 'left', fontWeight: 600, position: 'sticky', top: 0, borderBottom: `1px solid ${C.border}`, borderRight: CELL_BORDER, whiteSpace: 'nowrap' }}>{h}</th>
             ))}
+            {hasRowPrototypes && <th style={{ background: C.tblHead, color: C.proto, padding: '3px 8px', textAlign: 'left', fontWeight: 600, position: 'sticky', top: 0, borderBottom: `1px solid ${C.border}`, borderRight: CELL_BORDER, whiteSpace: 'nowrap' }}>[[Prototype]]</th>}
           </tr>
         </thead>
         <tbody>
@@ -209,14 +245,20 @@ function TableView({ shape, depth }: { shape: TableShape; depth: number }): Reac
                 const val = cell?.node;
                 return (
                   <td key={h} style={{ padding: '2px 8px', color: val ? colorOf(val) : C.dim, borderBottom: CELL_BORDER, borderRight: CELL_BORDER, wordBreak: 'break-word', maxWidth: 240 }}>
-                    {val ? inlineText(val) : <span style={{ opacity: 0.3 }}>—</span>}
+                    {val ? <NestedValue value={val} /> : <span style={{ opacity: 0.3 }}>—</span>}
                   </td>
                 );
               })}
+              {hasRowPrototypes && (
+                <td style={{ padding: '2px 8px', borderBottom: CELL_BORDER, borderRight: CELL_BORDER, minWidth: 150 }}>
+                  <PrototypeDisclosure source={shape.rowSources?.[ri]} />
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
       </table>
+      <PrototypeDisclosure source={source} />
     </div>
   );
 }
@@ -268,7 +310,7 @@ function TreeChild({ k, node, inMap }: { k: string; node: SerializedValue; inMap
       {open && (
         <div style={{ borderLeft: `1px solid ${proto ? C.protoBorder : C.border}`, marginLeft: 6, paddingLeft: 14 }}>
           {tbl
-            ? <TableView shape={tbl} depth={1} />
+            ? <TableView shape={tbl} source={node} depth={1} />
             : kids.map((ck, ci) => <TreeChild key={`${ck.k}-${ci}`} k={ck.k} node={ck.node} inMap={node.t === 'map'} />)}
           {node.truncated && <div style={{ color: C.warn, fontSize: 10 }}>…truncated</div>}
         </div>
@@ -406,7 +448,7 @@ function OutputRow({ out, ln, canExpand, expanded, onToggle, lineHeight }: {
           }}
         >
           {table
-            ? <TableView shape={table} depth={0} />
+            ? <TableView shape={table} source={detailValues[0]} depth={0} />
             : detailValues.map((value, index) => (
               <div key={index} style={{ marginTop: detailValues.length > 1 && index > 0 ? 6 : 0 }}>
                 {detailValues.length > 1 && (

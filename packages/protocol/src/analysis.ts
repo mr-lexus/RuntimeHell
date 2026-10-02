@@ -4,6 +4,9 @@ import { RuntimeIdSchema } from './run.js';
 export const EngineIdSchema = z.enum(['v8', 'spidermonkey', 'javascriptcore', 'quickjs']);
 export type EngineId = z.infer<typeof EngineIdSchema>;
 
+export const AnalysisEngineIdSchema = z.enum(['v8', 'd8-debug', 'spidermonkey', 'javascriptcore']);
+export type AnalysisEngineId = z.infer<typeof AnalysisEngineIdSchema>;
+
 export const AnalysisTypeSchema = z.enum(['ast', 'bytecode', 'optcode', 'ir-graph', 'deopts', 'gc']);
 export type AnalysisType = z.infer<typeof AnalysisTypeSchema>;
 
@@ -35,6 +38,19 @@ export const EngineCapabilitiesSchema = z
   })
   .strict();
 export type EngineCapabilities = z.infer<typeof EngineCapabilitiesSchema>;
+
+export const EngineDescriptorSchema = z.object({
+  id: AnalysisEngineIdSchema,
+  version: z.string().nullable(),
+  binaryPath: z.string().nullable(),
+  capabilities: EngineCapabilitiesSchema.nullable(),
+  reason: z.string().nullable()
+}).strict();
+export type EngineDescriptor = z.infer<typeof EngineDescriptorSchema>;
+
+export const EnginesListResponseSchema = z.array(EngineDescriptorSchema);
+export const EngineCapabilitiesRequestSchema = z.object({ engineId: AnalysisEngineIdSchema }).strict();
+export const EngineCapabilitiesResponseSchema = EngineCapabilitiesSchema.nullable();
 
 export const AnalysisRequestSchema = z
   .object({
@@ -113,7 +129,7 @@ export interface NormalizedIrGraph {
 export const AnalysisStartRequestSchema = z
   .object({
     requestId: z.string().min(8),
-    engineId: z.enum(['v8', 'd8-debug', 'spidermonkey', 'javascriptcore']),
+    engineId: AnalysisEngineIdSchema,
     code: z.string(),
     analysisTypes: z.array(AnalysisTypeSchema).min(1),
     functionName: z.string().optional(),
@@ -146,3 +162,7 @@ export const AnalysisStartResponseSchema = z
   .object({ accepted: z.literal(true), requestId: z.string().min(8) })
   .strict();
 export type AnalysisStartResponse = z.infer<typeof AnalysisStartResponseSchema>;
+
+export const AnalysisCancelRequestSchema = z.object({ requestId: z.string().min(8) }).strict();
+export const AnalysisCancelResponseSchema = z.object({ ok: z.boolean() }).strict();
+export type AnalysisCancelResponse = z.infer<typeof AnalysisCancelResponseSchema>;

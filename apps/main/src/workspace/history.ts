@@ -4,20 +4,10 @@
  */
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
+import { HistoryRecordSchema, type HistoryRecord } from '@rh/protocol';
 import { workspaceRoot } from './files.js';
 
-export interface HistoryRecord {
-  readonly runId: string;
-  readonly startedAt: string;
-  readonly finishedAt: string;
-  readonly relPath: string;
-  /** Request snapshot: full content for small scratchpads, capped here. */
-  readonly contentSnapshot: string;
-  readonly status: string;
-  readonly exitCode: number | null;
-  readonly durationMs: number;
-  readonly killedBy: string | null;
-}
+export type { HistoryRecord } from '@rh/protocol';
 
 const MAX_RECORDS = 100;
 const MAX_SNAPSHOT_CHARS = 20_000;
@@ -27,13 +17,13 @@ function historyPath(workspaceId: string): string {
 }
 
 export async function appendHistory(workspaceId: string, record: HistoryRecord): Promise<void> {
-  const capped: HistoryRecord = {
+  const capped = HistoryRecordSchema.parse({
     ...record,
     contentSnapshot:
       record.contentSnapshot.length > MAX_SNAPSHOT_CHARS
         ? record.contentSnapshot.slice(0, MAX_SNAPSHOT_CHARS)
         : record.contentSnapshot
-  };
+  });
   const records = await readHistory(workspaceId);
   records.push(capped);
   const trimmed = records.slice(Math.max(0, records.length - MAX_RECORDS));
@@ -52,8 +42,8 @@ export async function readHistory(workspaceId: string): Promise<HistoryRecord[]>
   for (const line of text.split('\n')) {
     if (line.trim() === '') continue;
     try {
-      const parsed = JSON.parse(line) as HistoryRecord;
-      if (typeof parsed.runId === 'string' && typeof parsed.finishedAt === 'string') out.push(parsed);
+      const parsed = HistoryRecordSchema.safeParse(JSON.parse(line));
+      if (parsed.success) out.push(parsed.data);
     } catch {
       /* corrupt line skipped — history is best-effort */
     }

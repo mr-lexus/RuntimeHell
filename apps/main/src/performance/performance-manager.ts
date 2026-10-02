@@ -4,9 +4,11 @@ import { arch, cpus, platform } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { build, type BuildFailure } from 'esbuild';
+import { z } from 'zod';
 import {
   PerformanceCatalogResponseSchema,
   PerformanceEventSchema,
+  PerformanceRawSampleSchema,
   PerformanceRunResultSchema,
   type PerformanceCancelResponse,
   type PerformanceCase,
@@ -39,6 +41,56 @@ import { mainAssetPath } from '../asset-paths.js';
 const require = createRequire(__filename);
 const MAX_BODY_LENGTH = 200_000;
 const PERF_PREFIX = '__RH_PERF__';
+const PERFORMANCE_CATALOG_TIMEOUT_MS = 30_000;
+const MAX_PERFORMANCE_OUTPUT_LINE_CHARS = 8 * 1024 * 1024;
+const MAX_PERFORMANCE_STDERR_CHARS = 100_000;
+
+export interface BoundedLineAccumulator {
+  push(chunk: string): void;
+  flush(): void;
+}
+
+/** Frames newline-delimited child output without retaining an unbounded line. */
+export function createBoundedLineAccumulator(
+  onLine: (line: string) => void,
+  maxLineChars = MAX_PERFORMANCE_OUTPUT_LINE_CHARS
+): BoundedLineAccumulator {
+  let pending = '';
+  let discardingOversizedLine = false;
+  return {
+    push(chunk) {
+      pending += chunk;
+      while (pending !== '') {
+        const newline = pending.indexOf('\n');
+        if (discardingOversizedLine) {
+          if (newline === -1) { pending = ''; return; }
+          pending = pending.slice(newline + 1);
+          discardingOversizedLine = false;
+          continue;
+        }
+        if (newline !== -1) {
+          if (newline > maxLineChars) {
+            pending = pending.slice(newline + 1);
+            continue;
+          }
+          onLine(pending.slice(0, newline));
+          pending = pending.slice(newline + 1);
+          continue;
+        }
+        if (pending.length > maxLineChars) {
+          pending = '';
+          discardingOversizedLine = true;
+        }
+        return;
+      }
+    },
+    flush() {
+      if (!discardingOversizedLine && pending.trim() !== '') onLine(pending);
+      pending = '';
+      discardingOversizedLine = false;
+    }
+  };
+}
 
 interface ResolvedProfile {
   readonly ref: PerformanceProfileRef;
@@ -136,11 +188,18 @@ export class RegistryPerformanceTargetResolver implements PerformanceTargetResol
       })());
     };
 
-    for (const id of this.runtimes.ids()) {
+    const runtimeRows = await Promise.all(this.runtimes.ids().map(async (id) => {
       const runtime = this.runtimes.get(id as 'node' | 'deno' | 'bun');
-      if (runtime === null) continue;
-      const system = await runtime.resolveExecutable('system').catch(() => null);
-      const installedVersions = await runtime.installedVersions().catch(() => []);
+      if (runtime === null) return null;
+      const [system, installedVersions] = await Promise.all([
+        runtime.resolveExecutable('system').catch(() => null),
+        runtime.installedVersions().catch(() => [])
+      ]);
+      return { id, system, installedVersions };
+    }));
+    for (const row of runtimeRows) {
+      if (row === null) continue;
+      const { id, system, installedVersions } = row;
       if (system !== null) add({ source: 'runtime', id, version: 'system', provenance: 'system' });
       for (const version of installedVersions) {
         add({ source: 'runtime', id, version, provenance: 'managed' });
@@ -314,6 +373,32 @@ function targetLabel(ref: PerformanceTargetRef, resolvedVersion?: string): strin
 }
 
 interface ActivePerformanceRun { readonly requestId: string; handle: RunHandle | null; cancelled: boolean }
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error(message));
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
 export interface PerformanceManagerDeps {
   readonly targetResolver: PerformanceTargetResolver;
   readonly emit: (event: PerformanceEvent) => void;
@@ -323,11 +408,15 @@ export interface PerformanceManagerDeps {
   readonly randomSeed?: () => number;
 }
 
-interface ChildSampleMessage { type: 'sample'; sample: PerformanceRawSample }
-interface ChildSampleStartMessage { type: 'sample-start'; caseId: string; round: number }
-interface ChildWarmupMessage { type: 'warmup'; round: number; caseId: string; completed: number }
-interface ChildResultMessage { type: 'result'; result: PerformanceRunResult }
-type ChildMessage = ChildSampleMessage | ChildSampleStartMessage | ChildWarmupMessage | ChildResultMessage;
+const ChildMessageSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('sample'), sample: PerformanceRawSampleSchema }).strict(),
+  z.object({ type: z.literal('sample-start'), caseId: z.string(), round: z.number().int().nonnegative() }).strict(),
+  z.object({ type: z.literal('warmup'), round: z.number().int().nonnegative(), caseId: z.string(), completed: z.number().int().nonnegative() }).strict(),
+  z.object({ type: z.literal('result'), result: PerformanceRunResultSchema }).strict()
+]);
+type ChildMessage = z.infer<typeof ChildMessageSchema>;
+type ChildSampleStartMessage = Extract<ChildMessage, { type: 'sample-start' }>;
+type ChildWarmupMessage = Extract<ChildMessage, { type: 'warmup' }>;
 class PerformanceExecutionError extends Error {
   constructor(message: string, readonly partialResults: PerformanceCaseResult[]) { super(message); }
 }
@@ -343,7 +432,9 @@ export class PerformanceManager {
     this.externalBrowserRunner = deps.createExternalBrowserRunner?.() ?? new ExternalBrowserRuntime();
   }
 
-  catalog(): Promise<PerformanceCatalogResponse> { return this.deps.targetResolver.catalog(); }
+  catalog(): Promise<PerformanceCatalogResponse> {
+    return withTimeout(this.deps.targetResolver.catalog(), PERFORMANCE_CATALOG_TIMEOUT_MS, 'performance catalog probing timed out; check installed runtime executables');
+  }
 
   async start(req: PerformanceStartRequest): Promise<PerformanceStartResponse> {
     if (this.active.size > 0) throw new Error('a Performance Lab experiment is already active');
@@ -452,10 +543,10 @@ export class PerformanceManager {
     this.send({ type: 'progress', requestId: req.requestId, groupId, phase: 'preparing', completed: progressBase + 1, total: totalUnits, message: `prepared ${target.runtimeId} ${target.runtimeVersion} / ${profile.ref.label ?? profile.ref.id}` });
 
     const stderr: string[] = [];
+    let stderrChars = 0;
     const samples = new Map<string, PerformanceRawSample[]>();
     let finalResult: PerformanceRunResult | null = null;
     let measurementDone = 0;
-    let pending = '';
     const acceptLine = (line: string): void => {
       const trimmed = line.trim();
       if (!trimmed.startsWith(PERF_PREFIX)) return;
@@ -477,17 +568,18 @@ export class PerformanceManager {
         }
       );
     };
-    const parseOutput = (chunk: string): void => {
-      pending += chunk;
-      let newline = pending.indexOf('\n');
-      while (newline !== -1) { acceptLine(pending.slice(0, newline)); pending = pending.slice(newline + 1); newline = pending.indexOf('\n'); }
-    };
+    const output = createBoundedLineAccumulator(acceptLine);
     const runner = launchKind(target) === 'embedded-browser' ? this.browserRunner : launchKind(target) === 'external-browser' ? this.externalBrowserRunner : this.runner;
     const off = runner.onEvent((event) => {
       if (active.handle?.runId !== event.runId) return;
-      if (event.type === 'stdout') parseOutput(event.data);
-      else if (event.type === 'console') parseOutput(`${event.text}\n`);
-      else if (event.type === 'stderr' && stderr.join('').length < 100_000) stderr.push(event.data);
+      if (event.type === 'stdout') output.push(event.data);
+      else if (event.type === 'console') output.push(`${event.text}\n`);
+      else if (event.type === 'stderr' && stderrChars < MAX_PERFORMANCE_STDERR_CHARS) {
+        const remaining = MAX_PERFORMANCE_STDERR_CHARS - stderrChars;
+        const captured = event.data.slice(0, remaining);
+        stderr.push(captured);
+        stderrChars += captured.length;
+      }
     });
     try {
       const handle = runner.run({
@@ -500,7 +592,7 @@ export class PerformanceManager {
       active.handle = handle;
       if (active.cancelled) await handle.cancel();
       const processResult = await handle.result;
-      if (pending.trim() !== '') acceptLine(pending);
+      output.flush();
       if (active.cancelled || processResult.status === 'cancelled') throw new Error('benchmark group cancelled');
       if (processResult.status === 'timeout') throw new Error(`benchmark group timed out after ${req.measurement.timeoutMs} ms`);
       if (processResult.status !== 'completed' || processResult.exitCode !== 0) {
@@ -521,7 +613,7 @@ export class PerformanceManager {
 
   private acceptChildMessage(raw: string, samples: Map<string, PerformanceRawSample[]>, onResult: (result: PerformanceRunResult) => void, onSample: (sample: PerformanceRawSample) => void, onSampleStart: (sample: ChildSampleStartMessage) => void, onWarmup: (warmup: ChildWarmupMessage) => void): void {
     try {
-      const parsed = JSON.parse(raw) as ChildMessage;
+      const parsed = ChildMessageSchema.parse(JSON.parse(raw));
       if (parsed.type === 'sample') { const own = samples.get(parsed.sample.caseId) ?? []; own.push(parsed.sample); samples.set(parsed.sample.caseId, own); onSample(parsed.sample); }
       else if (parsed.type === 'sample-start') onSampleStart(parsed);
       else if (parsed.type === 'warmup') onWarmup(parsed);

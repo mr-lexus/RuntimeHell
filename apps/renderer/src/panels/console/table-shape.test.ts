@@ -18,6 +18,22 @@ describe('detectTable', () => {
     expect(detectTable(value)).toMatchObject({ headers: ['name', 'age'], rows: expect.any(Array) });
   });
 
+  it('keeps record sources so each table row can expose its prototype', () => {
+    const prototype: SerializedValue = { t: 'object', label: 'Record', children: [] };
+    const value: SerializedValue = {
+      t: 'array',
+      children: [{
+        k: '0',
+        node: {
+          t: 'object',
+          children: [{ k: 'name', node: string('Ada') }, { k: '[[Prototype]]', node: prototype }]
+        }
+      }]
+    };
+    const shape = detectTable(value);
+    expect(shape?.rowSources?.[0]?.children?.find((child) => child.k === '[[Prototype]]')?.node.label).toBe('Record');
+  });
+
   it('renders object input as key/value rows', () => {
     const shape = detectTable({ t: 'object', children: [{ k: 'a', node: number('1') }, { k: 'b', node: number('2') }] });
     expect(shape?.headers).toEqual(['key', 'value']);

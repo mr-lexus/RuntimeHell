@@ -24,7 +24,16 @@ import {
   listBunVersions,
   listDenoVersions
 } from '../runtimes/deno-bun.js';
-import { buildTxikiInstall, installStandalone, listTxikiVersions } from './standalone-downloader.js';
+import {
+  buildChakraInstall,
+  buildGraalJsInstall,
+  buildHermesInstall,
+  buildModdableXsInstall,
+  buildQuickJsInstall,
+  buildTxikiInstall,
+  installStandalone,
+  listTxikiVersions
+} from './standalone-downloader.js';
 import {
   detectNvmNode,
   detectSystemBrowser,
@@ -186,7 +195,6 @@ export class BinariesController {
           if (hostPlatform() !== 'win64' || hostArch() !== 'x64') {
             throw new Error(`${id} managed download currently targets Windows x64; import a local build instead`);
           }
-          const { buildChakraInstall, buildGraalJsInstall, buildHermesInstall, buildModdableXsInstall, buildQuickJsInstall } = await import('./standalone-downloader.js');
           const built = id === 'quickjs'
             ? await buildQuickJsInstall()
             : id === 'graaljs'

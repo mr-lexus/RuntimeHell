@@ -135,6 +135,7 @@ export class ProcessRunner {
     let cancelled: 'user' | 'timeout' | null = null;
     let settled = false;
     let childRef: ReturnType<typeof spawn> | null = null;
+    let timeoutTimer: NodeJS.Timeout | null = null;
 
     const stdoutPump = this.makePump(runId, 'stdout');
     const stderrPump = this.makePump(runId, 'stderr');
@@ -187,6 +188,10 @@ export class ProcessRunner {
     const finish = (status: RunResult['status'], code: number | null, signal: string | null): void => {
       if (settled) return;
       settled = true;
+      if (timeoutTimer !== null) {
+        clearTimeout(timeoutTimer);
+        timeoutTimer = null;
+      }
       stderrRouter.flush();
       fd3Router?.flush();
       stdoutPump.flush();
@@ -272,7 +277,7 @@ export class ProcessRunner {
       });
 
       // Timeout watchdog.
-      setTimeout(() => {
+      timeoutTimer = setTimeout(() => {
         if (settled || cancelled !== null) return;
         cancelled = 'timeout';
         if (handle.pid !== null) void treeKill(handle.pid);

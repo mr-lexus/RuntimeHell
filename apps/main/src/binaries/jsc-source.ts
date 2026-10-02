@@ -29,8 +29,8 @@ interface BuildsResponse {
   }[];
 }
 
-async function jsonGet(url: string): Promise<unknown> {
-  const res = await fetch(url, { headers: { 'User-Agent': 'RuntimeHell' } });
+async function jsonGet(url: string, fetchImpl: typeof fetch): Promise<unknown> {
+  const res = await fetchImpl(url, { headers: { 'User-Agent': 'RuntimeHell' } });
   if (!res.ok) throw new Error(`GET ${url} failed: ${res.status}`);
   return (await res.json()) as unknown;
 }
@@ -39,7 +39,7 @@ async function jsonGet(url: string): Promise<unknown> {
 export async function findWinCairoReleaseBuilder(
   fetchImpl: typeof fetch = fetch
 ): Promise<{ builderid: number; name: string } | null> {
-  const data = (await jsonGet(BUILDBOT_BUILDERS)) as BuilderListResponse;
+  const data = (await jsonGet(BUILDBOT_BUILDERS, fetchImpl)) as BuilderListResponse;
   const builders = data.builders ?? [];
   // Preferred: the WKL release build (full tree → ships jsc.exe).
   const preferred = builders.find((b) => /wincairo/i.test(b.name) && /wkl-release-build/i.test(b.name));
@@ -69,14 +69,14 @@ export async function resolveLatestJscRevisions(fetchImpl: typeof fetch = fetch)
   const builder = await findWinCairoReleaseBuilder(fetchImpl);
   if (!builder) throw new Error('wincairo release builder not found on build.webkit.org');
   const url = `${BUILDBOT_BUILDS}?builderid=${builder.builderid}&order=-number&limit=10&complete=true&property=got_revision`;
-  const data = (await jsonGet(url)) as BuildsResponse;
+  const data = (await jsonGet(url, fetchImpl)) as BuildsResponse;
 
   const out: JscSource[] = [];
   for (const build of data.builds ?? []) {
     const hash = extractGotRevision(build);
     if (hash === null) continue;
     try {
-      const commitRes = await fetch(`https://api.github.com/repos/WebKit/WebKit/commits/${hash}`, {
+      const commitRes = await fetchImpl(`https://api.github.com/repos/WebKit/WebKit/commits/${hash}`, {
         headers: { 'User-Agent': 'RuntimeHell' }
       });
       if (!commitRes.ok) continue;

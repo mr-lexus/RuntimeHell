@@ -9,19 +9,32 @@
  */
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import type { RunEvent, RunResult, SerializedValue } from '@rh/protocol';
+import { SerializedValueSchema, type RunEvent, type RunResult, type SerializedValue } from '@rh/protocol';
+import { z } from 'zod';
 import type { RunHandle, RunOptions } from '../../execution/process-runner.js';
 
 const MARKER = '__RH_BROWSER__';
 const PAGE_HTML = '<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>';
 
-type BrowserConsoleLevel = 'log' | 'error' | 'warn' | 'info' | 'debug' | 'table' | 'dir' | 'trace';
-
-type BrowserPayload =
-  | { kind: 'result'; index: number; phase: 'immediate' | 'fulfilled' | 'rejected'; value: SerializedValue; line?: number }
-  | { kind: 'console'; line: number; level: BrowserConsoleLevel; text: string; args: SerializedValue[] }
-  | { kind: 'error'; message: string }
-  | { kind: 'complete' };
+const BrowserPayloadSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('result'),
+    index: z.number().int().nonnegative(),
+    phase: z.enum(['immediate', 'fulfilled', 'rejected']),
+    value: SerializedValueSchema,
+    line: z.number().int().nonnegative().optional()
+  }).strict(),
+  z.object({
+    kind: z.literal('console'),
+    line: z.number().int().nonnegative(),
+    level: z.enum(['log', 'error', 'warn', 'info', 'debug', 'table', 'dir', 'trace']),
+    text: z.string(),
+    args: z.array(SerializedValueSchema)
+  }).strict(),
+  z.object({ kind: z.literal('error'), message: z.string() }).strict(),
+  z.object({ kind: z.literal('complete') }).strict()
+]);
+type BrowserPayload = z.infer<typeof BrowserPayloadSchema>;
 
 interface BrowserSession {
   readonly runId: string;
@@ -74,6 +87,10 @@ export function buildBrowserScript(source: string): string {
       if (typeof value === 'object') return JSON.stringify(value);
       return String(value);
     } catch (_) { return String(value); }
+  }
+  function isArrayIndexKey(key) {
+    const index = Number(key);
+    return key !== '' && Number.isInteger(index) && index >= 0 && index < 4294967295 && String(index) === key;
   }
   function appendPrototypeChain(target, value, depth, ancestors, state) {
     let current = value;
@@ -183,8 +200,42 @@ export function buildBrowserScript(source: string): string {
       return node;
     }
     if (ArrayBuffer.isView(value)) {
-      const node = { t: 'typedarray', label: value.constructor?.name || 'TypedArray', size: value.length ?? value.byteLength ?? 0, children: [] };
+      const length = typeof value.length === 'number' ? value.length : value.byteLength ?? 0;
+      const node = { t: 'typedarray', label: value.constructor?.name || 'TypedArray', size: length, children: [] };
       ancestors.push(value);
+      const show = Math.min(length, 50);
+      for (let index = 0; index < show && state.nodes < 5000; index++) {
+        node.children.push({ k: String(index), node: serialize(value[index], depth + 1, ancestors, state) });
+      }
+      if (show < length || node.children.length < show) node.truncated = true;
+      if (includePrototype !== false) appendPrototypeChain(node, value, depth, ancestors, state);
+      ancestors.pop();
+      return node;
+    }
+    if (value instanceof Map) {
+      const node = { t: 'map', size: value.size, children: [] };
+      ancestors.push(value);
+      let index = 0;
+      for (const [mapKey, mapValue] of value) {
+        if (state.nodes >= 5000) { node.truncated = true; break; }
+        node.children.push({ k: '[' + index + '] key', node: serialize(mapKey, depth + 1, ancestors, state) });
+        if (state.nodes >= 5000) { node.truncated = true; break; }
+        node.children.push({ k: '[' + index + '] value', node: serialize(mapValue, depth + 1, ancestors, state) });
+        index++;
+      }
+      if (includePrototype !== false) appendPrototypeChain(node, value, depth, ancestors, state);
+      ancestors.pop();
+      return node;
+    }
+    if (value instanceof Set) {
+      const node = { t: 'set', size: value.size, children: [] };
+      ancestors.push(value);
+      let index = 0;
+      for (const setValue of value) {
+        if (state.nodes >= 5000) { node.truncated = true; break; }
+        node.children.push({ k: String(index), node: serialize(setValue, depth + 1, ancestors, state) });
+        index++;
+      }
       if (includePrototype !== false) appendPrototypeChain(node, value, depth, ancestors, state);
       ancestors.pop();
       return node;
@@ -193,6 +244,17 @@ export function buildBrowserScript(source: string): string {
       const node = { t: 'array', size: value.length, children: [] };
       ancestors.push(value);
       for (let i = 0; i < value.length && state.nodes < 5000; i++) node.children.push({ k: String(i), node: serialize(value[i], depth + 1, ancestors, state) });
+      let arrayKeys = [];
+      try { arrayKeys = Object.keys(value); } catch (_) {}
+      for (const key of arrayKeys) {
+        if (isArrayIndexKey(key) || state.nodes >= 5000) {
+          if (state.nodes >= 5000) node.truncated = true;
+          continue;
+        }
+        let child;
+        try { child = value[key]; } catch (_) { child = '<threw>'; }
+        node.children.push({ k: key, node: serialize(child, depth + 1, ancestors, state) });
+      }
       if (includePrototype !== false) appendPrototypeChain(node, value, depth, ancestors, state);
       ancestors.pop();
       if (node.children.length < value.length) node.truncated = true;
@@ -339,6 +401,7 @@ export class EmbeddedBrowserRuntime implements BrowserRuntimeRunner {
         webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
       });
       session.window = win;
+      win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       win.webContents.on('will-navigate', (event) => event.preventDefault());
       win.webContents.on('console-message', (event, _level, legacyMessage) => {
         const currentMessage = (event as unknown as { message?: unknown }).message;
@@ -371,8 +434,11 @@ export class EmbeddedBrowserRuntime implements BrowserRuntimeRunner {
 
   private handleConsoleMessage(session: BrowserSession, message: string): void {
     if (session.settled || !message.startsWith(MARKER)) return;
-    let payload: BrowserPayload;
-    try { payload = JSON.parse(message.slice(MARKER.length)) as BrowserPayload; } catch { return; }
+    let raw: unknown;
+    try { raw = JSON.parse(message.slice(MARKER.length)); } catch { return; }
+    const parsed = BrowserPayloadSchema.safeParse(raw);
+    if (!parsed.success) return;
+    const payload: BrowserPayload = parsed.data;
     switch (payload.kind) {
       case 'result':
         session.reports.set(payload.index, payload.value);

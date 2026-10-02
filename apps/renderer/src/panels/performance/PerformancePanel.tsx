@@ -203,6 +203,7 @@ export function PerformancePanel({ activeFile, selection }: PerformancePanelProp
         </section>
 
         {state.loadingCatalog && <div className="rh-loading-state"><BlockLoader label="probing installed runtimes and engine flags" /><BarLoader width={20} /></div>}
+        {!state.loadingCatalog && state.errors.catalog && <div className="rh-loading-state is-error" role="alert"><span>{state.errors.catalog}</span><Button onClick={() => { void state.refreshCatalog(); }}>retry</Button></div>}
         {!state.loadingCatalog && (state.catalog?.targets.length ?? 0) === 0 && <EmptyState title="No benchmark targets" detail="Install a runtime in the Runtimes tool." />}
       </div>
     </InstrumentFrame>

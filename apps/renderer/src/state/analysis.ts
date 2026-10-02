@@ -4,7 +4,7 @@
  * fed by EnginesController via the preload bridge.
  */
 import { create } from 'zustand';
-import type { AnalysisEvent, AnalysisResult, AnalysisStartRequest, AnalysisType, EngineCapabilities } from '@rh/protocol';
+import type { AnalysisEngineId, AnalysisEvent, AnalysisResult, AnalysisType, EngineDescriptor } from '@rh/protocol';
 import { buildAnalysisSnippet } from '../editor/wrapping';
 import type { SelectionInfo } from '../editor/selection-service';
 
@@ -16,15 +16,8 @@ export interface TypeState {
   result: AnalysisResult | null;
 }
 
-export interface EngineChoice {
-  id: string;
-  version: string | null;
-  binaryPath: string | null;
-  capabilities: EngineCapabilities | null;
-  reason: string | null;
-}
-
-export type AnalysisEngineId = AnalysisStartRequest['engineId'];
+export type EngineChoice = EngineDescriptor;
+export type { AnalysisEngineId } from '@rh/protocol';
 
 const ALL_TYPES: AnalysisType[] = ['ast', 'bytecode', 'optcode', 'ir-graph', 'deopts', 'gc'];
 
@@ -92,7 +85,7 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
   refreshEngines: async () => {
     if (!window.api?.enginesList) return;
     try {
-      const engines = (await window.api.enginesList()) as unknown as EngineChoice[];
+      const engines = await window.api.enginesList();
       // The main-process registry is the source of truth. It includes every
       // engine with an Analytics adapter (V8, SpiderMonkey, JSC, ...), so do
       // not keep a renderer-side allow-list that silently hides new engines.
@@ -108,7 +101,7 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
         available[0];
       set({
         engines: available,
-        ...(preferred !== undefined ? { engineId: preferred.id as AnalysisEngineId } : {})
+        ...(preferred !== undefined ? { engineId: preferred.id } : {})
       });
     } catch (error) {
       // A missing local engine must not turn an optional analysis probe into

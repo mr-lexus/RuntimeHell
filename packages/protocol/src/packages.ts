@@ -5,14 +5,32 @@
  * structured error with setup guidance.
  */
 import { z } from 'zod';
+import { WorkspaceIdSchema } from './workspace.js';
+
+const PACKAGE_SEGMENT_RE = /^(?![._])[a-zA-Z0-9][a-zA-Z0-9._~-]*$/;
+
+export const NpmPackageNameSchema = z.string().min(1).max(214).refine((name) => {
+  if (name.startsWith('@')) {
+    const [scope, packageName, ...rest] = name.slice(1).split('/');
+    return rest.length === 0
+      && scope !== undefined
+      && packageName !== undefined
+      && PACKAGE_SEGMENT_RE.test(scope)
+      && PACKAGE_SEGMENT_RE.test(packageName);
+  }
+  return !name.includes('/') && PACKAGE_SEGMENT_RE.test(name);
+}, 'expected a bare npm package name');
+
+export const NpmVersionRangeSchema = z.string().min(1).max(128)
+  .regex(/^[a-zA-Z0-9*^~<>=| .+_-]+$/, 'expected an npm semver range or dist-tag');
 
 export const PkgOpRequestSchema = z
   .object({
-    workspaceId: z.string().min(1),
+    workspaceId: WorkspaceIdSchema,
     /** Bare package name (install/uninstall). */
-    name: z.string().min(1),
+    name: NpmPackageNameSchema,
     /** Optional range for installs ('latest' default). */
-    versionRange: z.string().min(1).optional(),
+    versionRange: NpmVersionRangeSchema.optional(),
     /** Renderer's selected MANAGED node version — drives D7 npm resolution. */
     managedNodeVersion: z.string().min(1).optional(),
     /** Whether npm lifecycle scripts are disabled for this operation. */
@@ -21,7 +39,7 @@ export const PkgOpRequestSchema = z
   .strict();
 export type PkgOpRequest = z.infer<typeof PkgOpRequestSchema>;
 
-export const PkgListRequestSchema = z.object({ workspaceId: z.string().min(1) }).strict();
+export const PkgListRequestSchema = z.object({ workspaceId: WorkspaceIdSchema }).strict();
 export type PkgListRequest = z.infer<typeof PkgListRequestSchema>;
 
 /** Verbatim npm CLI output lines streamed to the panel log area. */

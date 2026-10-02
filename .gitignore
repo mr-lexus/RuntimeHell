@@ -3,6 +3,7 @@ out/
 dist/
 dist-release/
 *.log
+turbo-*.cfg
 .DS_Store
 .rhbuild/
 # local caches/workspaces live outside the repo by design (native OS user dirs)

@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { PerformanceManager, RegistryPerformanceTargetResolver, comparePairedSamples, performanceLaunchArgs, type ResolvedPerformanceTarget } from './performance-manager.js';
+import { PerformanceManager, RegistryPerformanceTargetResolver, comparePairedSamples, createBoundedLineAccumulator, performanceLaunchArgs, type ResolvedPerformanceTarget } from './performance-manager.js';
 import type { ManifestEntry, PerformanceEvent, PerformanceRawSample } from '@rh/protocol';
 import { RuntimeRegistry } from '../runtimes/runtime-adapter.js';
 import { detectSystemBrowser, detectSystemRuntime, type BrowserId } from '../runtimes/runtime-detection.js';
@@ -28,7 +28,41 @@ describe('Performance Lab comparison', () => {
   });
 });
 
+describe('Performance child output framing', () => {
+  it('joins split lines, drops oversized lines, and resumes at the next newline', () => {
+    const lines: string[] = [];
+    const output = createBoundedLineAccumulator((line) => lines.push(line), 8);
+
+    output.push('first\nsec');
+    output.push('ond\n123456789');
+    output.push('ignored\nlast');
+    output.flush();
+
+    expect(lines).toEqual(['first', 'second', 'last']);
+  });
+});
+
 describe('Performance optimizer catalog', () => {
+  it('fails a hung catalog probe instead of leaving callers waiting forever', async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = new PerformanceManager({
+        targetResolver: {
+          resolve: async () => null,
+          catalog: () => new Promise(() => {}),
+          resolveProfile: async () => null
+        },
+        emit: () => {}
+      });
+      const pending = manager.catalog();
+      const failure = expect(pending).rejects.toThrow('performance catalog probing timed out');
+      await vi.advanceTimersByTimeAsync(30_000);
+      await failure;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('offers distinct JavaScriptCore tiers for Bun and resolves their environment overrides', async () => {
     const runtimes = new RuntimeRegistry({ adapters: [{
       id: 'bun',

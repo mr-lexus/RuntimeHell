@@ -169,9 +169,12 @@ interface TabRenameState {
 }
 
 export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
-  const selectedLanguage = languageLabel(props.lang);
   const languageMode = useRun((state) => state.lang);
-  const editorLanguage = props.lang === 'js' ? 'javascript' : 'typescript';
+  // Automatic displays the language resolved for the active file; explicit
+  // modes remain stable even when the user changes tabs.
+  const displayLanguage = languageMode === 'auto' ? props.lang : languageMode;
+  const selectedLanguage = languageLabel(displayLanguage);
+  const editorLanguage = displayLanguage === 'js' ? 'javascript' : 'typescript';
   const [selection, setSelection] = useState<SelectionInfo | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
@@ -373,7 +376,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
           <Button variant="primary" className="rh-titlebar-run" onClick={props.onRun} disabled={!props.activeFile || props.phase !== 'idle'} aria-label={props.phase === 'idle' ? 'Run source (Ctrl+Enter)' : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'} title={props.phase === 'idle' ? 'Run source (Ctrl+Enter)' : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'}><span className="rh-action-marker" aria-hidden="true">{props.phase === 'idle' ? '▶' : <BlockLoader />}</span></Button>
           <div ref={languageMenuRef} className="rh-titlebar-language-picker">
             <button type="button" className="rh-titlebar-language-trigger" aria-label={`Language: ${selectedLanguage}${languageMode === 'auto' ? ' (Automatic)' : ''}`} title={`Language: ${selectedLanguage}${languageMode === 'auto' ? ' (Automatic)' : ''}`} aria-haspopup="menu" aria-expanded={languageMenuOpen} onClick={() => setLanguageMenuOpen((open) => !open)}>
-              <span className="rh-language-icon" aria-hidden="true">{props.lang === 'js' ? '\u{e781}' : '\u{e628}'}</span>
+              <span className="rh-language-icon" aria-hidden="true">{displayLanguage === 'js' ? '\u{e781}' : '\u{e628}'}</span>
             </button>
             {languageMenuOpen && <div className="rh-titlebar-language-menu" role="menu" aria-label="Select language">
               {(['auto', 'js', 'ts'] as const).map((item) => <button key={item} type="button" role="menuitemradio" className={`rh-titlebar-language-option ${languageMode === item ? 'is-selected' : ''}`} aria-checked={languageMode === item} onClick={() => { props.onSetLang(item); setLanguageMenuOpen(false); }}>
@@ -467,6 +470,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
           <footer className="rh-statusbar">
             <StatusIndicator status={statusKind} label={props.phase === 'idle' ? (props.lastExit ? `exit ${props.lastExit.code ?? '—'} · ${props.lastExit.durationMs}ms` : 'ready') : props.phase} />
             <span className="rh-status-source" title={props.activeFile?.relPath ?? 'No source open'}>source {props.activeFile?.relPath ?? '—'}</span>
+            {props.status !== 'ready' && <span className="rh-status-message" role="status" title={props.status}>{props.status}</span>}
             <span className="rh-status-separator">/</span>
             <button className="rh-status-action" onClick={() => { props.onSetDrawerTab('runtimes'); props.onSetDrawerOpen(true); }} aria-label="Open runtime selector">runtime {activeRuntimeLabel.toUpperCase()} {props.runtimeVersion ? `v${props.runtimeVersion}` : 'version —'}</button>
             <button className={`rh-status-action ${props.autoRun ? 'is-active' : ''}`} onClick={() => props.onSetAutoRun(!props.autoRun)} aria-pressed={props.autoRun}>auto-run {props.autoRun ? 'on' : 'off'}</button>
@@ -479,7 +483,12 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
       {props.paletteOpen && <CommandPalette commands={props.commands} onClose={props.onClosePalette} />}
       {tabContextMenu && contextFile && <div className="rh-tab-context-menu" style={{ left: tabContextMenu.x, top: tabContextMenu.y }} role="menu" aria-label={`Actions for ${contextFile.relPath}`} onMouseDown={(event) => event.stopPropagation()}>
         <div className="rh-tab-context-heading"><span className="rh-tab-context-index">{String(props.files.findIndex((file) => file.id === contextFile.id) + 1).padStart(2, '0')}</span><span title={contextFile.relPath}>{contextFile.relPath}</span></div>
-        <button type="button" role="menuitem" onClick={() => { props.onSetActive(contextFile.id); props.onSaveFile(contextFile); setTabContextMenu(null); }}>Save file <kbd>Ctrl+S</kbd></button>
+        <button type="button" role="menuitem" onClick={() => {
+          const file = props.files.find((item) => item.id === contextFile.id) ?? contextFile;
+          props.onSetActive(file.id);
+          props.onSaveFile(file);
+          setTabContextMenu(null);
+        }}>Save file <kbd>Ctrl+S</kbd></button>
         <button type="button" role="menuitem" onClick={() => { const copy = navigator.clipboard?.writeText(contextFile.relPath); if (copy) void copy.catch(() => undefined); setTabContextMenu(null); }}>Copy path</button>
         <button type="button" role="menuitem" onClick={() => beginRename(contextFile)}>Rename…</button>
         <div className="rh-tab-context-separator" />

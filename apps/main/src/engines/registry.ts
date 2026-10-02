@@ -5,7 +5,7 @@
  * themselves; the registry NEVER contains per-engine flag strings beyond the
  * probe module.
  */
-import type { EngineCapabilities, EngineId } from '@rh/protocol';
+import type { AnalysisEngineId, EngineCapabilities, EngineDescriptor } from '@rh/protocol';
 import { readManifest } from '../binaries/binary-manager.js';
 import { join } from 'node:path';
 import { executableName } from '../platform.js';
@@ -13,14 +13,7 @@ import { hashBinary, probeV8Binary, realExecutor, type ExecuteBinary } from './p
 import type { AnalysisEvent, AnalysisStartRequest } from '@rh/protocol';
 import type { EngineAdapter } from './engine-adapter.js';
 
-export interface EngineDescription {
-  readonly id: EngineId | 'd8-debug';
-  readonly version: string | null;
-  readonly binaryPath: string | null;
-  /** Null until probed (or when no binary is installed). */
-  readonly capabilities: EngineCapabilities | null;
-  readonly reason: string | null;
-}
+export type EngineDescription = EngineDescriptor;
 
 const ENGINE_BINARY_NAME: Record<string, string> = {
   v8: executableName('d8'),
@@ -29,7 +22,11 @@ const ENGINE_BINARY_NAME: Record<string, string> = {
   javascriptcore: executableName('jsc')
 };
 /** Registry ids map to manifest entry ids; 'd8-debug' IS its own entry id. */
-const KNOWN_IDS: (EngineId | 'd8-debug')[] = ['v8', 'd8-debug', 'spidermonkey', 'javascriptcore'];
+const KNOWN_IDS = ['v8', 'd8-debug', 'spidermonkey', 'javascriptcore'] as const satisfies readonly AnalysisEngineId[];
+
+function isKnownEngineId(id: string): id is AnalysisEngineId {
+  return KNOWN_IDS.some((knownId) => knownId === id);
+}
 
 export interface EngineRegistryDeps {
   readonly execute?: ExecuteBinary;
@@ -48,11 +45,11 @@ export class EngineRegistry {
   }
 
   /** Latest installed version per engine id from the manifest. */
-  async installedEngines(): Promise<{ id: string; version: string; binaryPath: string }[]> {
+  async installedEngines(): Promise<{ id: AnalysisEngineId; version: string; binaryPath: string }[]> {
     const manifest = await readManifest();
-    const byId = new Map<string, { version: string; installedPath: string }>();
+    const byId = new Map<AnalysisEngineId, { version: string; installedPath: string }>();
     for (const entry of manifest.entries) {
-      if (entry.kind !== 'engine' || !KNOWN_IDS.includes(entry.id as never)) continue;
+      if (entry.kind !== 'engine' || !isKnownEngineId(entry.id)) continue;
       if (!entry.installedPath) continue;
       const prev = byId.get(entry.id);
       if (prev === undefined || compareVersions(entry.version, prev.version) > 0) {
@@ -79,7 +76,7 @@ export class EngineRegistry {
     return caps;
   }
 
-  async describe(id: EngineId | 'd8-debug'): Promise<EngineDescription> {
+  async describe(id: AnalysisEngineId): Promise<EngineDescription> {
     const engines = await this.installedEngines();
     const match = engines.find((e) => e.id === id);
     if (!match) {
@@ -119,7 +116,7 @@ export class EngineRegistry {
     this.adapters.set(adapter.id, adapter);
   }
 
-  getAdapter(id: EngineId | 'd8-debug'): EngineAdapter | null {
+  getAdapter(id: AnalysisEngineId): EngineAdapter | null {
     return this.adapters.get(id) ?? null;
   }
 

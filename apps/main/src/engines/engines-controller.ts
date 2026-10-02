@@ -2,7 +2,7 @@
  * EnginesController (plan todo 19): read-only surface for the drawer's
  * engine picker and capability-aware action gating.
  */
-import type { EngineCapabilities, EngineId } from '@rh/protocol';
+import type { AnalysisEngineId, EngineCapabilities, EngineDescriptor } from '@rh/protocol';
 import type { EngineRegistry } from './registry.js';
 
 export interface EnginesControllerDeps {
@@ -12,14 +12,12 @@ export interface EnginesControllerDeps {
 export class EnginesController {
   constructor(private readonly deps: EnginesControllerDeps) {}
 
-  async list(): Promise<
-    { id: string; version: string | null; binaryPath: string | null; capabilities: EngineCapabilities | null; reason: string | null }[]
-  > {
+  async list(): Promise<EngineDescriptor[]> {
     return this.deps.registry.list();
   }
 
-  async capabilities(engineId: string): Promise<EngineCapabilities | null> {
-    const description = await this.deps.registry.describe(engineId as EngineId | 'd8-debug');
+  async capabilities(engineId: AnalysisEngineId): Promise<EngineCapabilities | null> {
+    const description = await this.deps.registry.describe(engineId);
     return description.capabilities;
   }
 }

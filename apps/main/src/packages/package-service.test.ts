@@ -3,12 +3,12 @@
  * Pure logic with an injected CliRunner — no network, no real npm.
  * Real-CLI coverage lives in package-service.net.test.ts (RH_NET_TESTS=1).
  */
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PkgEvent } from '@rh/protocol';
-import { PackageService, resolveNpm, type CliRunner, type SpawnedCli } from './package-service.js';
+import { nodeCliRunner, PackageService, resolveNpm, type CliRunner, type SpawnedCli } from './package-service.js';
 import { managedRuntimeDir } from '../runtimes/runtime-resolver.js';
 import { executableName, managedRuntimeExecutablePath } from '../platform.js';
 
@@ -25,11 +25,32 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   if (homeBackup !== undefined) process.env['USERPROFILE'] = homeBackup;
   else delete process.env['USERPROFILE'];
   if (posixHomeBackup !== undefined) process.env['HOME'] = posixHomeBackup;
   else delete process.env['HOME'];
   await rm(sandbox, { recursive: true, force: true });
+});
+
+describe('PackageService registry search', () => {
+  it('validates the registry response and reads the top-level score', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      objects: [{ package: { name: 'zod', version: '4.0.0', description: 'schema validation' }, score: { final: 0.97 } }]
+    }), { status: 200 })));
+
+    const service = new PackageService({ emit: () => {} });
+    await expect(service.search('zod', 1)).resolves.toEqual([
+      { name: 'zod', version: '4.0.0', description: 'schema validation', score: 0.97 }
+    ]);
+  });
+
+  it('turns malformed registry data into a structured error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ objects: [{ package: { name: 42 } }] }), { status: 200 })));
+
+    const service = new PackageService({ emit: () => {} });
+    expect(await service.search('zod', 1)).toHaveProperty('error');
+  });
 });
 
 describe('resolveNpm (D7 order)', () => {
@@ -56,10 +77,14 @@ describe('resolveNpm (D7 order)', () => {
     expect(result.nodeExe).toBe(join(sandbox, executableName('node')));
   });
 
-  it('degrades to shell fallback when only the .cmd shim exists', async () => {
+  it('refuses an unsafe Windows .cmd fallback when the direct npm layout is unavailable', async () => {
     const result = await resolveNpm(null, async () => false, async () => join(sandbox, 'weird', 'npm.cmd'));
-    if (!('kind' in result)) throw new Error('expected shell resolution');
-    expect(result.kind).toBe('shell');
+    if (process.platform === 'win32') {
+      expect('error' in result && result.error).toContain('could not be resolved safely');
+    } else {
+      if (!('kind' in result)) throw new Error('expected executable resolution');
+      expect(result.kind).toBe('shell');
+    }
   });
 
   it('returns structured guidance when neither source resolves', async () => {
@@ -67,6 +92,38 @@ describe('resolveNpm (D7 order)', () => {
     if (!('error' in result)) throw new Error('expected error variant');
     expect(result.error).toContain('npm not found');
     expect(result.error).toContain('Runtimes panel');
+  });
+});
+
+describe('nodeCliRunner output framing', () => {
+  it('joins split chunks and flushes a final line without a newline', async () => {
+    const lines: { stream: 'stdout' | 'stderr'; text: string }[] = [];
+    const script = [
+      "process.stdout.write('hel')",
+      "setTimeout(() => process.stdout.write('lo\\ntrail'), 10)",
+      "setTimeout(() => process.stderr.write('err'), 20)"
+    ].join(';');
+
+    const result = await nodeCliRunner(process.execPath, ['-e', script], sandbox, (stream, text) => lines.push({ stream, text }));
+
+    expect(result.code).toBe(0);
+    expect(lines).toEqual([
+      { stream: 'stdout', text: 'hello' },
+      { stream: 'stdout', text: 'trail' },
+      { stream: 'stderr', text: 'err' }
+    ]);
+  });
+
+  it('splits pathological lines and bounds captured output', async () => {
+    const lines: string[] = [];
+    const script = "process.stdout.write('x'.repeat(1_200_000))";
+
+    const result = await nodeCliRunner(process.execPath, ['-e', script], sandbox, (_stream, text) => lines.push(text));
+
+    expect(result.code).toBe(0);
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.every((line) => line.length <= 64 * 1024)).toBe(true);
+    expect(result.stdout.length).toBeLessThanOrEqual(1024 * 1024);
   });
 });
 
@@ -181,5 +238,14 @@ describe('PackageService ops (fake CliRunner)', () => {
     const service = new PackageService({ emit });
     const deps = await service.list('default');
     expect(deps).toEqual({});
+  });
+
+  it('ignores malformed dependency values from package.json', async () => {
+    const root = join(sandbox, 'RuntimeHell', 'workspaces', 'default');
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, 'package.json'), JSON.stringify({ dependencies: { lodash: 42 } }), 'utf8');
+
+    const service = new PackageService({ emit });
+    await expect(service.list('default')).resolves.toEqual({});
   });
 });

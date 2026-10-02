@@ -26,13 +26,20 @@ export const realExecutor: ExecuteBinary = (exePath, args, opts) =>
     const child = spawn(exePath, args, { windowsHide: true, ...(opts?.cwd !== undefined ? { cwd: opts.cwd } : {}) });
     let out = '';
     let err = '';
+    let settled = false;
+    const finish = (result: { code: number | null; stdout: string; stderr: string }): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
     const timer = setTimeout(() => {
       try {
         child.kill();
       } catch {
         /* already gone */
       }
-      resolve({ code: null, stdout: out, stderr: err });
+      finish({ code: null, stdout: out, stderr: err });
     }, 8000);
     timer.unref?.();
     child.stdout?.on('data', (c: Buffer) => {
@@ -42,12 +49,10 @@ export const realExecutor: ExecuteBinary = (exePath, args, opts) =>
       err += c.toString('utf8');
     });
     child.on('error', (e) => {
-      clearTimeout(timer);
-      resolve({ code: -1, stdout: out, stderr: e.message });
+      finish({ code: -1, stdout: out, stderr: e.message });
     });
     child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout: out, stderr: err });
+      finish({ code, stdout: out, stderr: err });
     });
   });
 

@@ -226,14 +226,6 @@ export class V8EngineAdapter {
 // per-type sequencing, TS strip, and cancel-aware isolation.
 // ---------------------------------------------------------------------------
 
-interface EngineDescriptionShape {
-  id: string;
-  version: string | null;
-  binaryPath: string | null;
-  capabilities: EngineCapabilities | null;
-  reason: string | null;
-}
-
 /** Registry-facing V8 adapter (id 'v8' | 'd8-debug'). */
 export class V8EngineAdapterV0 implements EngineAdapter {
   readonly id: 'v8' | 'd8-debug';
@@ -245,8 +237,8 @@ export class V8EngineAdapterV0 implements EngineAdapter {
     this.id = id;
   }
 
-  describe(): Promise<EngineDescriptionShape> {
-    return this.registry.describe(this.id) as Promise<EngineDescriptionShape>;
+  describe(): Promise<EngineDescription> {
+    return this.registry.describe(this.id);
   }
 
   async analyze(

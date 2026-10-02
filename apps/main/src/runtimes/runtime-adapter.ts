@@ -12,6 +12,7 @@ import { detectSystemNode } from './node/node-runtime.js';
 import { detectNvmNode, detectSystemRuntime } from './runtime-detection.js';
 import { installedNodeVersions, resolveRuntimeChoice } from './runtime-resolver.js';
 import { managedRuntimeExecutablePath, executableName } from '../platform.js';
+import { readManifest } from '../binaries/binary-manager.js';
 
 export interface ResolvedRuntime {
   readonly exePath: string;
@@ -49,9 +50,7 @@ export class NodeRuntimeAdapter implements RuntimeAdapter {
   }
 
   private readEntries(): Promise<ManifestEntry[]> {
-    return import('../binaries/binary-manager.js')
-      .then((m) => m.readManifest())
-      .then((manifest) => manifest.entries);
+    return readManifest().then((manifest) => manifest.entries);
   }
 }
 
@@ -121,9 +120,7 @@ export class DenoBunRuntimeAdapter implements RuntimeAdapter {
   }
 
   private readEntries(): Promise<ManifestEntry[]> {
-    return import('../binaries/binary-manager.js')
-      .then((m) => m.readManifest())
-      .then((manifest) => manifest.entries);
+    return readManifest().then((manifest) => manifest.entries);
   }
 }
 

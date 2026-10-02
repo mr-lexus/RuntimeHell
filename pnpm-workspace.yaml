@@ -2,18 +2,20 @@ packages:
   - 'apps/*'
   - 'packages/*'
 
-onlyBuiltDependencies:
-  - esbuild
-  - electron
-  - electron-winstaller
-  - esbuild-register
-
-# Local dev tool building its own bundled engines/runtimes: allow trusted build scripts
-dangerouslyAllowAllBuilds: true
+allowBuilds:
+  esbuild: true
+  electron: true
+  electron-winstaller: true
+  esbuild-register: true
 
 # Don't auto-run install before every package script (fails CI-less runs on warnings)
 verifyDepsBeforeRun: false
 
-
-allowBuilds:
-  esbuild: set this to true or false
+overrides:
+  'brace-expansion@<2': 1.1.21
+  'brace-expansion@>=2 <3': 2.1.7
+  'brace-expansion@>=4': 5.0.12
+  dompurify: ^3.4.16
+  fast-uri: 3.1.8
+  'undici@>=6 <7': 6.29.0
+  'undici@>=7': 7.30.0

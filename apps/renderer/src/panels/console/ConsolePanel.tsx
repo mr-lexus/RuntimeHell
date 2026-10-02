@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRun, type InlineConsoleEntry } from '../../state/run';
 import { useUi } from '../../state/ui';
-import type { SerializedValue } from '@rh/protocol';
+import type { HistoryRecord, SerializedValue } from '@rh/protocol';
 import { detectConsoleTable, detectTable, type TableShape } from './table-shape';
 import { BlockLoader } from '../../ui/primitives';
 
@@ -159,7 +159,42 @@ const BOOTSTRAP_ECHO_RE = /^L(\d+): /;
 
 const CELL_BORDER = '1px solid rgba(255,255,255,0.06)';
 
-function TableView({ shape }: { shape: TableShape }): React.JSX.Element {
+function NestedValue({ value }: { value: SerializedValue }): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const expandable = isExpandable(value);
+  if (!expandable) return <span style={{ color: colorOf(value) }}>{inlineText(value)}</span>;
+
+  return (
+    <span>
+      <button
+        type="button"
+        onClick={(event) => { event.stopPropagation(); setOpen((current) => !current); }}
+        style={{ color: colorOf(value), background: 'transparent', border: 0, padding: 0, cursor: 'pointer', font: 'inherit', textAlign: 'left' }}
+        aria-expanded={open}
+      >
+        {open ? '⌄' : '›'} {open ? (typeTag(value) ?? previewText(value)) : previewText(value)}
+      </button>
+      {open && (
+        <div style={{ margin: '3px 0 2px 8px', paddingLeft: 8, borderLeft: `1px solid ${C.border}` }}>
+          <Tree node={value} />
+        </div>
+      )}
+    </span>
+  );
+}
+
+function PrototypeDisclosure({ source }: { source: SerializedValue | undefined }): React.JSX.Element | null {
+  const prototype = source?.children?.find((child) => child.k === '[[Prototype]]')?.node;
+  if (!prototype) return null;
+  return (
+    <div style={{ margin: '4px 0 0 8px', paddingLeft: 8, borderLeft: `1px solid ${C.protoBorder}` }}>
+      <TreeChild k="[[Prototype]]" node={prototype} inMap={false} />
+    </div>
+  );
+}
+
+function TableView({ shape, source }: { shape: TableShape; source?: SerializedValue }): React.JSX.Element {
+  const hasRowPrototypes = shape.rowSources?.some((row) => row.children?.some((child) => child.k === '[[Prototype]]')) ?? false;
   return (
     <div style={{ overflow: 'auto', maxHeight: 320, borderRadius: 6, border: `1px solid ${C.border}`, margin: '4px 0 4px 22px' }}>
       <table style={{ borderCollapse: 'collapse', fontSize: 11, fontFamily: "'JetBrainsMono Nerd Font Mono', 'Cascadia Mono', Consolas, monospace" }}>
@@ -169,6 +204,7 @@ function TableView({ shape }: { shape: TableShape }): React.JSX.Element {
             {shape.headers.map((h) => (
               <th key={h} style={{ background: C.tblHead, color: C.key, padding: '3px 8px', textAlign: 'left', fontWeight: 600, position: 'sticky', top: 0, borderBottom: `1px solid ${C.border}`, borderRight: CELL_BORDER, whiteSpace: 'nowrap' }}>{h}</th>
             ))}
+            {hasRowPrototypes && <th style={{ background: C.tblHead, color: C.proto, padding: '3px 8px', textAlign: 'left', fontWeight: 600, position: 'sticky', top: 0, borderBottom: `1px solid ${C.border}`, borderRight: CELL_BORDER, whiteSpace: 'nowrap' }}>[[Prototype]]</th>}
           </tr>
         </thead>
         <tbody>
@@ -180,14 +216,20 @@ function TableView({ shape }: { shape: TableShape }): React.JSX.Element {
                 const val = cell?.node;
                 return (
                   <td key={h} style={{ padding: '2px 8px', color: val ? colorOf(val) : C.dim, borderBottom: CELL_BORDER, borderRight: CELL_BORDER, wordBreak: 'break-word', maxWidth: 240 }}>
-                    {val ? inlineText(val) : <span style={{ opacity: 0.3 }}>—</span>}
+                    {val ? <NestedValue value={val} /> : <span style={{ opacity: 0.3 }}>—</span>}
                   </td>
                 );
               })}
+              {hasRowPrototypes && (
+                <td style={{ padding: '2px 8px', borderBottom: CELL_BORDER, borderRight: CELL_BORDER, minWidth: 150 }}>
+                  <PrototypeDisclosure source={shape.rowSources?.[ri]} />
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
       </table>
+      <PrototypeDisclosure source={source} />
     </div>
   );
 }
@@ -238,7 +280,7 @@ function TreeChild({ k, node, inMap }: { k: string; node: SerializedValue; inMap
       {open && (
         <div style={{ borderLeft: `1px solid ${proto ? C.protoBorder : C.border}`, marginLeft: 6, paddingLeft: 14 }}>
           {tbl
-            ? <TableView shape={tbl} />
+            ? <TableView shape={tbl} source={node} />
             : kids.map((ck, ci) => <TreeChild key={`${ck.k}-${ci}`} k={ck.k} node={ck.node} inMap={node.t === 'map'} />)}
           {node.truncated && <div style={{ color: C.warn, fontSize: 10 }}>…truncated</div>}
         </div>
@@ -399,7 +441,7 @@ function ConsoleEntryRow({
       {expanded && values.length > 0 && (
         <div style={{ padding: '4px 8px 8px 20px', borderRadius: '0 0 2px 2px' }}>
           {table
-            ? <TableView shape={table} />
+            ? <TableView shape={table} source={values[0]} />
             : <ConsoleArgsTree values={values} />}
         </div>
       )}
@@ -408,14 +450,6 @@ function ConsoleEntryRow({
 }
 
 /* ── main console panel ──────────────────────────────────────────────── */
-
-interface HistoryRow {
-  runId: string;
-  finishedAt: string;
-  status: string;
-  durationMs: number;
-  killedBy: string | null;
-}
 
 /**
  * Chrome DevTools-like console panel.
@@ -448,7 +482,7 @@ export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
   const visibleResultByLine = isCurrentSource ? resultByLine : {};
   const visibleNotice = isCurrentSource ? notice : null;
   const bottomRef = useRef<HTMLDivElement | null>(null);
-  const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
 
@@ -461,9 +495,7 @@ export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
     setHistoryLoading(true);
     void (async () => {
       try {
-        const response = (await window.api?.historyList('default')) as
-          | { ok: boolean; records: HistoryRow[] }
-          | undefined;
+        const response = await window.api?.historyList('default');
         if (!cancelled && response?.ok === true) setHistory(response.records.slice().reverse());
       } finally {
         if (!cancelled) setHistoryLoading(false);
@@ -526,12 +558,9 @@ export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
             <div
               key={h.runId}
               onClick={() => {
-                const rec = h as unknown as { contentSnapshot?: string; relPath?: string };
-                if (typeof rec.contentSnapshot === 'string' && typeof rec.relPath === 'string') {
-                  const id = `default:${rec.relPath}`;
-                  useUi.getState().openFile({ id, relPath: rec.relPath, language: rec.relPath.endsWith('.ts') ? 'typescript' : 'javascript', content: rec.contentSnapshot, dirty: false });
-                  useUi.getState().setActive(id);
-                }
+                const id = `default:${h.relPath}`;
+                useUi.getState().openFile({ id, relPath: h.relPath, language: h.relPath.endsWith('.ts') ? 'typescript' : 'javascript', content: h.contentSnapshot, dirty: false });
+                useUi.getState().setActive(id);
               }}
               title="Click to restore snapshot"
               style={{ fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", fontSize: 11, color: 'var(--text-dim)', cursor: 'pointer', padding: '2px 4px', borderRadius: 0 }}
@@ -539,7 +568,7 @@ export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
               onMouseLeave={(e) => ((e.currentTarget.style.background = 'transparent'), (e.currentTarget.style.color = 'var(--text-dim)'))}
             >
               {new Date(h.finishedAt).toLocaleTimeString()} · {h.status} · {h.durationMs}ms
-              {h.killedBy !== null ? ` · ${h.killedBy}` : ''} · {(h as unknown as { relPath?: string }).relPath ?? ''} — restore
+              {h.killedBy !== null ? ` · ${h.killedBy}` : ''} · {h.relPath} — restore
             </div>
           ))}
         </div>

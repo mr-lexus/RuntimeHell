@@ -30,16 +30,27 @@ export function parseRuntimeVersionOutput(id: string, output: string): string | 
   return null;
 }
 
-function lookupCommand(command: string): Promise<string | null> {
+export function lookupCommand(command: string): Promise<string | null> {
   return new Promise((resolve) => {
     const child = spawn(commandLookup(), [command], spawnOptions());
     let output = '';
+    let settled = false;
+    const finish = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch { /* already gone */ }
+      finish(null);
+    }, 3_000);
     child.stdout?.on('data', (chunk) => { output += String(chunk); });
-    child.on('error', () => resolve(null));
+    child.on('error', () => finish(null));
     child.on('close', (code) => {
-      if (code !== 0) return resolve(null);
+      if (code !== 0) return finish(null);
       const first = output.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
-      resolve(first ?? null);
+      finish(first ?? null);
     });
   });
 }
@@ -66,12 +77,21 @@ async function readVersion(exePath: string, id: string): Promise<string | null> 
     let output = '';
     child.stdout?.on('data', (chunk) => { output += String(chunk); });
     child.stderr?.on('data', (chunk) => { output += String(chunk); });
-    const timer = setTimeout(() => { child.kill(); resolve(null); }, 5000);
-    child.on('error', () => { clearTimeout(timer); resolve(null); });
-    child.on('close', (code) => {
+    let settled = false;
+    const finish = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      if (code !== 0 && !output) return resolve(null);
-      resolve(parseRuntimeVersionOutput(id, output));
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch { /* already gone */ }
+      finish(null);
+    }, 5000);
+    child.on('error', () => finish(null));
+    child.on('close', (code) => {
+      if (code !== 0 && !output) return finish(null);
+      finish(parseRuntimeVersionOutput(id, output));
     });
   });
 }
@@ -96,11 +116,20 @@ function readWindowsProductVersion(exePath: string): Promise<string | null> {
     });
     let output = '';
     child.stdout?.on('data', (chunk) => { output += String(chunk); });
-    const timer = setTimeout(() => { child.kill(); resolve(null); }, 5000);
-    child.on('error', () => { clearTimeout(timer); resolve(null); });
-    child.on('close', (code) => {
+    let settled = false;
+    const finish = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      resolve(code === 0 ? parseRuntimeVersionOutput('browser', output) : null);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch { /* already gone */ }
+      finish(null);
+    }, 5000);
+    child.on('error', () => finish(null));
+    child.on('close', (code) => {
+      finish(code === 0 ? parseRuntimeVersionOutput('browser', output) : null);
     });
   });
 }

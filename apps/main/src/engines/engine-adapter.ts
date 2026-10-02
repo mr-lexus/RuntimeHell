@@ -3,15 +3,9 @@
  * implementation. SpiderMonkey/JSC adapters (todos 24/25) register here;
  * AnalysisManager dispatches through the registry — never concrete classes.
  */
-import type { AnalysisEvent, AnalysisStartRequest, AnalysisType, EngineCapabilities, EngineId } from '@rh/protocol';
+import type { AnalysisEngineId, AnalysisEvent, AnalysisStartRequest, AnalysisType, EngineDescriptor } from '@rh/protocol';
 
-export interface EngineDescription {
-  readonly id: string;
-  readonly version: string | null;
-  readonly binaryPath: string | null;
-  readonly capabilities: EngineCapabilities | null;
-  readonly reason: string | null;
-}
+export type EngineDescription = EngineDescriptor;
 
 /** Per-request services the manager hands to every adapter. */
 export interface AnalysisContext {
@@ -28,7 +22,7 @@ export interface AnalysisContext {
  * MUST emit a terminal 'done' event.
  */
 export interface EngineAdapter {
-  readonly id: EngineId | 'd8-debug';
+  readonly id: AnalysisEngineId;
   describe(): Promise<EngineDescription>;
   analyze(
     req: AnalysisStartRequest & { binaryPath: string },

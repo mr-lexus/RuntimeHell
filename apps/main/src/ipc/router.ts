@@ -3,20 +3,33 @@
  * Kept free of electron imports so they are unit-testable under vitest.
  */
 import {
+  AnalysisCancelRequestSchema,
+  AnalysisCancelResponseSchema,
   AnalysisStartRequestSchema,
   PerformanceCancelRequestSchema,
   PerformanceStartRequestSchema,
   BinaryInstallRequestSchema,
   BinaryRemoveRequestSchema,
   BinariesListRequestSchema,
+  CreateWorkspaceRequestSchema,
+  DeleteWorkspaceRequestSchema,
+  DeleteWorkspaceResponseSchema,
+  HistoryListRequestSchema,
+  HistoryListResponseSchema,
   IPC,
+  ListFilesRequestSchema,
+  ListWorkspacesResponseSchema,
   PkgListRequestSchema,
   PkgOpRequestSchema,
   PkgSearchRequestSchema,
+  PingRequestSchema,
   PingResponseSchema,
+  ReadFileRequestSchema,
   RunCancelRequestSchema,
   RunStartRequestSchema,
+  SaveFileRequestSchema,
   SettingsPatchSchema,
+  WorkspaceMetaSchema,
   type PingResponse
 } from '@rh/protocol';
 import { listFiles, readFile, saveFile } from '../workspace/files.js';
@@ -36,11 +49,11 @@ type Register = (channel: string, handler: (payload: unknown) => Promise<unknown
  * index.ts simply awaits this.
  */
 export async function handlePing(payload: unknown): Promise<PingResponse> {
-  const req = (payload ?? {}) as { sentAt?: number };
+  const req = PingRequestSchema.parse(payload);
   return PingResponseSchema.parse({
     pong: true,
     receivedAt: Date.now(),
-    ...(typeof req.sentAt === 'number' ? { echoSentAt: req.sentAt } : {})
+    echoSentAt: req.sentAt
   });
 }
 
@@ -105,9 +118,8 @@ export function registerAnalysisHandlers(register: Register, manager: AnalysisMa
     return { accepted: true as const, requestId: req.requestId };
   });
   register(IPC.analysisCancel, async (payload) => {
-    const req = (payload ?? {}) as { requestId?: string };
-    if (typeof req.requestId !== 'string') throw new Error('requestId required');
-    return { ok: await manager.cancel(req.requestId) };
+    const req = AnalysisCancelRequestSchema.parse(payload);
+    return AnalysisCancelResponseSchema.parse({ ok: await manager.cancel(req.requestId) });
   });
 }
 
@@ -126,30 +138,28 @@ export function registerPerformanceHandlers(register: Register, manager: Perform
 
 /** Workspace/settings/history handlers (todo 21). */
 export function registerPersistenceHandlers(register: Register): void {
-  register(IPC.wsListWorkspaces, async () => listWorkspaces());
+  register(IPC.wsListWorkspaces, async () => ListWorkspacesResponseSchema.parse(await listWorkspaces()));
   register(IPC.wsCreateWorkspace, async (payload) => {
-    const req = (payload ?? {}) as { id?: string; name?: string };
-    return createWorkspace(typeof req.id === 'string' && req.id !== '' ? req.id : undefined, req.name);
+    const req = CreateWorkspaceRequestSchema.parse(payload ?? {});
+    return WorkspaceMetaSchema.parse(await createWorkspace(req.id, req.name));
   });
   register(IPC.wsDeleteWorkspace, async (payload) => {
-    const req = (payload ?? {}) as { workspaceId?: string };
-    if (typeof req.workspaceId !== 'string') throw new Error('workspaceId required');
+    const req = DeleteWorkspaceRequestSchema.parse(payload);
     await deleteWorkspace(req.workspaceId);
-    return { ok: true as const };
+    return DeleteWorkspaceResponseSchema.parse({ ok: true });
   });
   register(IPC.settingsGet, async () => (await loadSettings()).settings);
   register(IPC.settingsSet, async (payload) => updateSettings(SettingsPatchSchema.parse(payload ?? {})));
   register(IPC.historyList, async (payload) => {
-    const req = (payload ?? {}) as { workspaceId?: string };
-    if (typeof req.workspaceId !== 'string') throw new Error('workspaceId required');
-    return { ok: true as const, records: await readHistory(req.workspaceId) };
+    const req = HistoryListRequestSchema.parse(payload);
+    return HistoryListResponseSchema.parse({ ok: true, records: await readHistory(req.workspaceId) });
   });
 }
 
 /** Wire all main-process IPC handlers onto a registrar (real or fake). */
 export function registerIpcHandlers(register: Register): void {
   register(IPC.ping, handlePing);
-  register(IPC.wsSaveFile, (p) => saveFile(p as never));
-  register(IPC.wsReadFile, (p) => readFile(p as never));
-  register(IPC.wsListFiles, (p) => listFiles(p as never));
+  register(IPC.wsSaveFile, async (payload) => saveFile(SaveFileRequestSchema.parse(payload)));
+  register(IPC.wsReadFile, async (payload) => readFile(ReadFileRequestSchema.parse(payload)));
+  register(IPC.wsListFiles, async (payload) => listFiles(ListFilesRequestSchema.parse(payload)));
 }

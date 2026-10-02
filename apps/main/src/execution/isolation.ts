@@ -7,6 +7,7 @@
  * engine process mid-analysis.
  */
 import type { AnalysisContext } from '../engines/engine-adapter.js';
+import { ProcessRunner } from './process-runner.js';
 
 export interface IsolatedRunOptions {
   exePath: string;
@@ -29,7 +30,6 @@ export type IsolatedRun = (options: IsolatedRunOptions) => Promise<IsolatedRunRe
 
 export function trackedProcessIsolation(ctx: AnalysisContext, requestId: string): IsolatedRun {
   return async (options) => {
-    const { ProcessRunner } = await import('../execution/process-runner.js');
     const runner = new ProcessRunner();
     const out: string[] = [];
     const err: string[] = [];

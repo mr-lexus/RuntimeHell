@@ -16,6 +16,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dependencies:
+    name: Dependency health
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v3
+        with:
+          runtime: node@24
+          cache: true
+          install: false
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        env:
+          ELECTRON_SKIP_NOTHING: '1'
+      - name: Peer dependencies and vulnerability audit
+        run: pnpm deps:check
+
   compatibility:
     name: ${{ matrix.os }} compatibility
     runs-on: ${{ matrix.os }}
@@ -36,12 +53,12 @@ jobs:
             smoke: xvfb-run -a node scripts/e2e-compatibility.mjs
             tests: xvfb-run -a pnpm test
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v3
         with:
-          node-version: 24
-          cache: pnpm
+          runtime: node@24
+          cache: true
+          install: false
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
         env:

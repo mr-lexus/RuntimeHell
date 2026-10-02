@@ -3,6 +3,8 @@ import type { SerializedValue } from '@rh/protocol';
 export interface TableShape {
   headers: string[];
   rows: { k: string; node: SerializedValue }[][];
+  /** Original record nodes, used by the renderer for per-row prototype inspection. */
+  rowSources?: SerializedValue[];
 }
 
 const visibleChildren = (node: SerializedValue): { k: string; node: SerializedValue }[] =>
@@ -26,7 +28,7 @@ function rowsFromCollection(children: { k: string; node: SerializedValue }[]): T
       }
     }
     return headers.length > 0
-      ? { headers, rows: collectionRows.map((row) => visibleChildren(row.node)) }
+      ? { headers, rows: collectionRows.map((row) => visibleChildren(row.node)), rowSources: collectionRows.map((row) => row.node) }
       : null;
   }
 
@@ -78,6 +80,7 @@ export function detectTable(value: SerializedValue): TableShape | null {
         { k: 'key', node: stringValue(row.k) },
         ...visibleChildren(row.node),
       ]),
+      rowSources: nested.rowSources,
     };
   }
 

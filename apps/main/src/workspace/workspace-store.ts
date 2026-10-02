@@ -6,14 +6,8 @@
 import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
+import { WorkspaceMetaSchema, type WorkspaceMeta } from '@rh/protocol';
 import { workspacesDir, workspaceRoot } from './files.js';
-
-export interface WorkspaceMeta {
-  readonly id: string;
-  readonly name: string;
-  readonly createdAt: string;
-  readonly lastOpenedAt: string;
-}
 
 const ID_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -35,7 +29,7 @@ export async function createWorkspace(requestedId?: string, name?: string): Prom
   const root = workspaceRoot(id); // validates
   await fs.mkdir(root, { recursive: true });
   const now = new Date().toISOString();
-  const meta: WorkspaceMeta = { id, name: name ?? id, createdAt: now, lastOpenedAt: now };
+  const meta = WorkspaceMetaSchema.parse({ id, name: name ?? id, createdAt: now, lastOpenedAt: now });
   await fs.writeFile(metaPath(root), JSON.stringify(meta, null, 2), 'utf8');
   return meta;
 }
@@ -51,8 +45,8 @@ export async function listWorkspaces(): Promise<WorkspaceMeta[]> {
   for (const id of ids) {
     try {
       const raw = await fs.readFile(join(workspacesDir(), id, 'meta.json'), 'utf8');
-      const meta = JSON.parse(raw) as WorkspaceMeta;
-      if (typeof meta.id === 'string') metas.push(meta);
+      const meta = WorkspaceMetaSchema.safeParse(JSON.parse(raw));
+      if (meta.success) metas.push(meta.data);
     } catch {
       /* directory without meta (e.g. stray) — skipped */
     }
@@ -65,11 +59,12 @@ export async function touchWorkspace(id: string): Promise<void> {
   const path = metaPath(root);
   let meta: WorkspaceMeta;
   try {
-    meta = { ...(JSON.parse(await fs.readFile(path, 'utf8')) as WorkspaceMeta), lastOpenedAt: new Date().toISOString() };
+    const stored = WorkspaceMetaSchema.parse(JSON.parse(await fs.readFile(path, 'utf8')));
+    meta = { ...stored, lastOpenedAt: new Date().toISOString() };
   } catch {
     meta = { id, name: id, createdAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString() };
   }
-  await fs.writeFile(path, JSON.stringify(meta, null, 2), 'utf8');
+  await fs.writeFile(path, JSON.stringify(WorkspaceMetaSchema.parse(meta), null, 2), 'utf8');
 }
 
 export async function deleteWorkspace(id: string): Promise<void> {
