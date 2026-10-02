@@ -15,6 +15,7 @@ import { SpiderMonkeyAdapter } from './engines/spidermonkey/sm-adapter.js';
 import { JavaScriptCoreAdapter } from './engines/javascriptcore/jsc-adapter.js';
 import { DenoBunRuntimeAdapter, NodeRuntimeAdapter, RuntimeRegistry } from './runtimes/runtime-adapter.js';
 import { PerformanceManager, RegistryPerformanceTargetResolver } from './performance/performance-manager.js';
+import { shouldQuitAfterAllWindowsClosed } from './app-lifecycle.js';
 
 const isDev = !app.isPackaged;
 const trustedRendererIds = new Set<number>();
@@ -89,6 +90,17 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
+function focusOrCreatePrimaryWindow(): void {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win) {
+    createWindow();
+    return;
+  }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
 function main(): void {
   // Single instance lock (full hardening lands in todo 31).
   const gotLock = app.requestSingleInstanceLock();
@@ -96,6 +108,9 @@ function main(): void {
     app.quit();
     return;
   }
+  app.on('second-instance', () => {
+    if (app.isReady()) focusOrCreatePrimaryWindow();
+  });
 
   registerIpcHandlers((channel, handler) => {
     handleTrusted(channel, (_event, payload) => handler(payload));
@@ -182,12 +197,12 @@ function main(): void {
     console.log('[boot] electron ready');
     createWindow();
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      focusOrCreatePrimaryWindow();
     });
   });
 
   app.on('window-all-closed', () => {
-    app.quit();
+    if (shouldQuitAfterAllWindowsClosed()) app.quit();
   });
 }
 

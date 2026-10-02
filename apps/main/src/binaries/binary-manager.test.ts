@@ -1,11 +1,15 @@
 import { createHash } from 'node:crypto';
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { access, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { downloadTo, extractZipArchive, validateTarListings } from './binary-manager.js';
+import { downloadTo, extractZipArchive, installArtifact, validateTarListings } from './binary-manager.js';
+import { hostArch, hostPlatform } from '../platform.js';
 
 let sandbox = '';
+const execFileAsync = promisify(execFile);
 
 function emptyZip(fileName: string, unixMode = 0o100644): Buffer {
   const name = Buffer.from(fileName, 'utf8');
@@ -82,6 +86,41 @@ describe('safe tar extraction preflight', () => {
       'runtime-link\n',
       'lrwxrwxrwx user/group 0 2026-01-01 00:00 runtime-link -> /tmp/outside\n'
     )).toThrow(/type is not allowed/i);
+  });
+
+  it.skipIf(process.platform === 'win32')('installs a real POSIX Node tar.gz and restores executable mode', async () => {
+    const payload = join(sandbox, 'payload', 'runtime', 'bin');
+    const archive = join(sandbox, 'node.tar.gz');
+    const executable = join(payload, 'node');
+    await mkdir(payload, { recursive: true });
+    await writeFile(executable, '#!/bin/sh\necho runtimehell\n', 'utf8');
+    await chmod(executable, 0o755);
+    await execFileAsync(process.platform === 'darwin' ? '/usr/bin/tar' : 'tar', [
+      '-czf', archive, '-C', join(sandbox, 'payload'), 'runtime'
+    ]);
+    const bytes = await readFile(archive);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const originalFetch = globalThis.fetch;
+    const originalCache = process.env['RH_CACHE_ROOT'];
+    globalThis.fetch = async () => new Response(bytes);
+    process.env['RH_CACHE_ROOT'] = join(sandbox, 'cache');
+    try {
+      const installed = await installArtifact({
+        entry: {
+          kind: 'runtime', id: 'node', platform: hostPlatform(), arch: hostArch(), version: 'test-posix',
+          url: 'https://example.test/node.tar.gz', sha256, license: 'MIT', source: 'official-dist', customBuildRequired: false
+        },
+        source: { url: 'https://example.test/node.tar.gz', sha256 },
+        archive: 'tar.gz'
+      });
+      const installedExecutable = join(installed.installedPath ?? '', 'bin', 'node');
+      expect(await readFile(installedExecutable, 'utf8')).toContain('runtimehell');
+      expect((await stat(installedExecutable)).mode & 0o111).not.toBe(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCache === undefined) delete process.env['RH_CACHE_ROOT'];
+      else process.env['RH_CACHE_ROOT'] = originalCache;
+    }
   });
 });
 

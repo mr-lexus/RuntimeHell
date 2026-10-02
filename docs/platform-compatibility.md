@@ -14,6 +14,12 @@ RuntimeHell is developed on Windows, so the alpha release includes an explicit c
 
 The native compatibility layer keeps secrets out of child environments while preserving the minimum `PATH`, home, temporary-directory, and locale values needed by runtimes. Managed executable names and archive extraction are selected from the host platform instead of being hardcoded to Windows.
 
+On macOS, closing the last window keeps the application active in the Dock and
+activating it creates a new window, following the native application lifecycle.
+Path comparisons remain case-sensitive on POSIX so case-sensitive APFS volumes
+and nvm directories are handled correctly. User-facing shortcuts display the
+native `Cmd` modifier on macOS.
+
 Packaged child-process helpers (`bootstrap.cjs`, the fd3 probe, and the
 performance harness) are unpacked beside `app.asar`, because external Node
 processes cannot load Electron's virtual asar paths. POSIX local imports are
@@ -28,4 +34,4 @@ Engine downloads are intentionally conservative. V8 canary artifacts are enabled
 
 ## CI/release gates
 
-Every pull request and push to `main` runs lint, full typecheck, tests, a production build, and the native Electron smoke test on Windows, macOS, and Linux. Pushing an alpha tag matching `package.json` (for example `v0.1.0-alpha.0`) runs the same validation, packages all release targets, and creates a draft GitHub prerelease. Release artifacts are unsigned in this alpha; macOS packages are not notarized.
+Every pull request and push to `main` runs lint, full typecheck, tests, a production build, and the native Electron smoke test on Windows, macOS, and Linux. Pushing an alpha tag matching `package.json` (for example `v0.1.0-alpha.7`) repeats the native smoke on each packaging runner, packages all release targets, and creates a GitHub prerelease. Release artifacts are unsigned in this alpha; macOS packages are not notarized.

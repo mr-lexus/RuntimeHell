@@ -5,6 +5,7 @@ import { useRun } from '../../state/run';
 import { usePackages } from '../../state/packages';
 import { BarLoader, BlockLoader } from '../../ui/primitives';
 import type { RuntimeCatalogEntry } from './runtime-catalog';
+import { localExecutablePlaceholder } from '../../platform-ui';
 
 const MONO = "'JetBrainsMono Nerd Font Mono', 'Cascadia Mono', Consolas, monospace";
 const HOVER_BG = 'var(--bg-hover)';
@@ -546,7 +547,7 @@ function CatalogCard({
                 <input
                   value={sourcePath}
                   onChange={(event) => setSourcePath(event.target.value)}
-                  placeholder="C:\\path\\to\\exe-or-folder"
+                  placeholder={localExecutablePlaceholder()}
                   aria-label={`${entry.name} local path`}
                   style={{ ...BTN, width: 'min(360px, 42vw)', minWidth: 220, boxSizing: 'border-box' }}
                   disabled={busy}
@@ -572,7 +573,7 @@ function CatalogCard({
           </div>
           <div className="rh-runtime-note">
             {imported === undefined
-              ? 'No managed build is bundled for this entry. Select an existing Windows file or folder; it is copied under RuntimeHell cache.'
+              ? 'No managed build is bundled for this entry. Select an existing executable or folder; it is copied under the RuntimeHell cache.'
               : 'Stored in the RuntimeHell cache. This catalog entry has no execution adapter yet.'}
           </div>
             </>

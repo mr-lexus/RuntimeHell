@@ -55,18 +55,22 @@ jobs:
             os: windows-latest
             target: win
             arch: x64
+            smoke: node scripts/e2e-compatibility.mjs
           - name: linux-x64
             os: ubuntu-latest
             target: linux
             arch: x64
+            smoke: xvfb-run -a node scripts/e2e-compatibility.mjs
           - name: macos-x64
             os: macos-15-intel
             target: mac
             arch: x64
+            smoke: node scripts/e2e-compatibility.mjs
           - name: macos-arm64
             os: macos-14
             target: mac
             arch: arm64
+            smoke: node scripts/e2e-compatibility.mjs
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/setup@v3
@@ -80,6 +84,8 @@ jobs:
           ELECTRON_SKIP_NOTHING: '1'
       - name: Build application
         run: pnpm build
+      - name: Native compatibility smoke
+        run: ${{ matrix.smoke }}
       - name: Package installer
         run: pnpm exec electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
         env:

@@ -4,6 +4,7 @@ import { useUi } from '../../state/ui';
 import type { HistoryRecord, SerializedValue } from '@rh/protocol';
 import { detectConsoleTable, detectTable, type TableShape } from './table-shape';
 import { BlockLoader } from '../../ui/primitives';
+import { primaryShortcut } from '../../platform-ui';
 
 /* ── colour palette ──────────────────────────────────────────────────── */
 
@@ -616,7 +617,7 @@ export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
         {!hasStructured && filteredLines.length === 0 && (
           <div style={{ padding: 16, color: C.dim, fontSize: 12, fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", textAlign: 'center', marginTop: 8 }}>
             <div style={{ fontSize: 20, marginBottom: 6, opacity: 0.3 }}>◇</div>
-            No output yet — run the file (Ctrl+Enter)
+            No output yet — run the file ({primaryShortcut('Enter')})
           </div>
         )}
 

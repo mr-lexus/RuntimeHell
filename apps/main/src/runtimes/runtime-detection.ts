@@ -4,7 +4,7 @@ import { access, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir, platform as osPlatform } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import type { NvmInfo, NvmVersionInfo, SystemRuntimeInfo } from '@rh/protocol';
-import { commandLookup, executableName, isWindows } from '../platform.js';
+import { commandLookup, executableName, isWindows, normalizePathForComparison } from '../platform.js';
 
 export interface DetectedRuntime extends SystemRuntimeInfo {}
 export type RuntimeId = 'node' | 'deno' | 'bun';
@@ -204,15 +204,16 @@ function dirnameSafe(path: string): string {
   return index > 0 ? path.slice(0, index) : path;
 }
 
-export function parseNvmVersions(root: string, names: string[], activeTarget: string | null): NvmVersionInfo[] {
+export function parseNvmVersions(root: string, names: string[], activeTarget: string | null, host: NodeJS.Platform = osPlatform()): NvmVersionInfo[] {
   const rows = names
     .filter((name) => /^v\d+\.\d+\.\d+$/.test(name))
     .map((name) => {
       const version = name.slice(1);
-      const exePath = isWindows() ? join(root, name, executableName('node')) : join(root, name, 'bin', executableName('node'));
-      const normalizedTarget = activeTarget ? activeTarget.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase() : null;
-      const normalizedVersion = join(root, name).replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
-      const normalizedExeDir = dirnameSafe(exePath).replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+      const nodeExecutable = host === 'win32' ? 'node.exe' : 'node';
+      const exePath = host === 'win32' ? join(root, name, nodeExecutable) : join(root, name, 'bin', nodeExecutable);
+      const normalizedTarget = activeTarget ? normalizePathForComparison(activeTarget, host) : null;
+      const normalizedVersion = normalizePathForComparison(join(root, name), host);
+      const normalizedExeDir = normalizePathForComparison(dirnameSafe(exePath), host);
       const active = normalizedTarget !== null && (normalizedTarget === normalizedVersion || normalizedTarget === normalizedExeDir);
       return { version, exePath, active };
     });

@@ -1,5 +1,7 @@
 import { arch as osArch, homedir, platform as osPlatform } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promises as fs } from 'node:fs';
 import type { Arch, Platform } from '@rh/protocol';
 
 /** Runtime platform identifiers used by the managed binary manifest. */
@@ -48,6 +50,43 @@ export function pathListSeparator(): string {
 
 export function commandLookup(): string {
   return isWindows() ? 'where.exe' : 'which';
+}
+
+/**
+ * Normalize a filesystem path for equality checks without assuming that all
+ * hosts are case-insensitive. macOS can use a case-sensitive APFS volume, so
+ * only Windows paths are folded to lower case.
+ */
+export function normalizePathForComparison(value: string, host = osPlatform()): string {
+  let normalized = value;
+  if (/^file:/i.test(normalized)) {
+    try {
+      if (host === 'win32') normalized = fileURLToPath(normalized);
+      else {
+        const url = new URL(normalized);
+        if (url.hostname !== '' && url.hostname !== 'localhost') return value;
+        normalized = decodeURIComponent(url.pathname);
+      }
+    } catch { /* compare the original value */ }
+  }
+  normalized = normalized.replace(/\\/g, '/');
+  if (normalized !== '/' && !/^[a-zA-Z]:\/$/.test(normalized)) normalized = normalized.replace(/\/+$/, '');
+  return host === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+/** Compare paths after resolving aliases such as macOS `/var` → `/private/var`. */
+export async function sameFilesystemPath(left: string, right: string): Promise<boolean> {
+  if (normalizePathForComparison(left) === normalizePathForComparison(right)) return true;
+  const canonical = async (value: string): Promise<string> => {
+    try {
+      const path = /^file:/i.test(value) ? new URL(value) : value;
+      return normalizePathForComparison(await fs.realpath(path));
+    } catch {
+      return normalizePathForComparison(value);
+    }
+  };
+  const [canonicalLeft, canonicalRight] = await Promise.all([canonical(left), canonical(right)]);
+  return canonicalLeft === canonicalRight;
 }
 
 export function userConfigDir(): string {

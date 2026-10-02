@@ -8,6 +8,8 @@ import { build, transform, type BuildFailure, type TransformFailure } from 'esbu
 import { dirname, join } from 'node:path';
 import { promises as fs } from 'node:fs';
 import { originalPositionFor, TraceMap, type TraceMap as TraceMapType } from '@jridgewell/trace-mapping';
+import { sameFilesystemPath } from '../platform.js';
+import { formatNodeStackFrame, parseNodeStackFrame } from '../execution/node-stack-frame.js';
 
 export interface TranspileSuccess {
   ok: true;
@@ -192,38 +194,23 @@ export async function mapFrame(
  * to the authored .ts positions. Unmappable frames pass through untouched.
  */
 export async function remapStack(stack: string, mapPath: string, generatedFile: string): Promise<string> {
-  const norm = (p: string): string => p.replace(/\\/g, '/').toLowerCase();
-  // macOS exposes /var as a symlink to /private/var. A child process may
-  // report the canonical path even though the parent retained /var, so
-  // compare both normalized and real paths.
-  const canonical = async (p: string): Promise<string> => {
-    try { return await fs.realpath(p); } catch { return p; }
-  };
-  const target = norm(generatedFile);
-  const canonicalTarget = norm(await canonical(generatedFile));
   const out: string[] = [];
 
   for (const line of stack.split('\n')) {
     // Frame shape: "    at fn (PATH:L:C)" or "    at PATH:L:C".
-    const frameMatch = /^\s*at\s+(?:(.*?)\s+\()?(.*):(\d+):(\d+)\)?\s*$/.exec(line);
-    if (!frameMatch) {
+    const frame = parseNodeStackFrame(line);
+    if (!frame) {
       out.push(line);
       continue;
     }
-    const genLine = Number(frameMatch[3]);
-    const genCol = Number(frameMatch[4]);
-    const rawPath = frameMatch[2] ?? '';
-    const rawNorm = norm(rawPath);
-    const samePath = rawNorm === target || rawNorm === canonicalTarget || norm(await canonical(rawPath)) === canonicalTarget;
-    if (!samePath) {
+    if (!(await sameFilesystemPath(frame.file, generatedFile))) {
       out.push(line);
       continue;
     }
     try {
-      const mapped = await mapFrame(mapPath, genLine, genCol);
+      const mapped = await mapFrame(mapPath, frame.line, frame.column);
       if (mapped.originalLine !== null) {
-        const fn = frameMatch[1] ? `${frameMatch[1]} (` : '';
-        out.push(`    at ${fn}${rawPath}:${mapped.originalLine}:${mapped.originalColumn})`);
+        out.push(formatNodeStackFrame(frame, mapped.originalSource ?? frame.file, mapped.originalLine, mapped.originalColumn));
         continue;
       }
     } catch {

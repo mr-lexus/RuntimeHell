@@ -2,7 +2,7 @@
  * StackLineRemapper integration tests (plan todo 11): REAL esbuild-generated
  * sourcemaps, authored positions restored from generated .cjs frames.
  */
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { transform } from 'esbuild';
@@ -19,7 +19,7 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-async function buildFixture(source: string): Promise<{ entryPath: string; mapPath: string }> {
+async function buildFixture(source: string, fixtureDir = dir): Promise<{ entryPath: string; mapPath: string }> {
   const result = await transform(source, {
     loader: 'ts',
     format: 'cjs',
@@ -27,7 +27,8 @@ async function buildFixture(source: string): Promise<{ entryPath: string; mapPat
     sourcemap: true,
     sourcefile: 'entry.ts'
   });
-  const entryPath = join(dir, 'entry.cjs');
+  await mkdir(fixtureDir, { recursive: true });
+  const entryPath = join(fixtureDir, 'entry.cjs');
   const mapPath = `${entryPath}.map`;
   await writeFile(entryPath, result.code, 'utf8');
   await writeFile(mapPath, result.map ?? '', 'utf8');
@@ -71,6 +72,20 @@ describe('StackLineRemapper', () => {
     // The callback receives the raw line; newline termination is the host's
     // concern (the manager re-appends it when emitting protocol events).
     expect(collected).toEqual(['plain error text', '    at other (C:\\elsewhere\\other.cjs:1:1)']);
+  });
+
+  it('remaps parenthesized and bare frames whose file path contains spaces', async () => {
+    const { entryPath, mapPath } = await buildFixture('throw new Error("x");\n', join(dir, 'Case Sensitive Project'));
+    const collected: string[] = [];
+    const remapper = new StackLineRemapper(mapPath, entryPath, (line) => collected.push(line));
+
+    remapper.push(`    at boom (${entryPath}:1:7)\n`);
+    remapper.push(`    at ${entryPath}:1:7\n`);
+    await remapper.settle();
+
+    expect(collected).toHaveLength(2);
+    expect(collected.every((line) => line.includes('entry.ts:'))).toBe(true);
+    expect(collected[1]).not.toMatch(/\)$/);
   });
 
   it('preserves arrival order across async mapping', async () => {

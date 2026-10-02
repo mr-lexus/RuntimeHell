@@ -13,6 +13,7 @@ import { BlockLoader, Button, InstrumentFrame, KeyboardHint, StatusIndicator } f
 import { CommandPalette, type PaletteCommand } from './CommandPalette';
 import { SettingsView } from './SettingsView';
 import type { AtaStatus } from '../editor/ata';
+import { primaryShortcut } from '../platform-ui';
 import type { SelectionInfo } from '../editor/selection-service';
 import type { AnalyzeType, EditorScrollController } from '../editor/CodeEditor';
 import type { VimMode } from '../editor/vim-mode';
@@ -373,7 +374,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
         <div className="rh-brand"><img className="rh-brand-logo" src={APP_LOGO_URL} alt="" /><span>RuntimeHell</span></div>
         <div className="rh-titlebar-actions">
           <div className="rh-titlebar-editor-controls" aria-label="Editor controls">
-          <Button variant="primary" className="rh-titlebar-run" onClick={props.onRun} disabled={!props.activeFile || props.phase !== 'idle'} aria-label={props.phase === 'idle' ? 'Run source (Ctrl+Enter)' : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'} title={props.phase === 'idle' ? 'Run source (Ctrl+Enter)' : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'}><span className="rh-action-marker" aria-hidden="true">{props.phase === 'idle' ? '▶' : <BlockLoader />}</span></Button>
+          <Button variant="primary" className="rh-titlebar-run" onClick={props.onRun} disabled={!props.activeFile || props.phase !== 'idle'} aria-label={props.phase === 'idle' ? `Run source (${primaryShortcut('Enter')})` : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'} title={props.phase === 'idle' ? `Run source (${primaryShortcut('Enter')})` : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'}><span className="rh-action-marker" aria-hidden="true">{props.phase === 'idle' ? '▶' : <BlockLoader />}</span></Button>
           <div ref={languageMenuRef} className="rh-titlebar-language-picker">
             <button type="button" className="rh-titlebar-language-trigger" aria-label={`Language: ${selectedLanguage}${languageMode === 'auto' ? ' (Automatic)' : ''}`} title={`Language: ${selectedLanguage}${languageMode === 'auto' ? ' (Automatic)' : ''}`} aria-haspopup="menu" aria-expanded={languageMenuOpen} onClick={() => setLanguageMenuOpen((open) => !open)}>
               <span className="rh-language-icon" aria-hidden="true">{displayLanguage === 'js' ? '\u{e781}' : '\u{e628}'}</span>
@@ -388,7 +389,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
           </div>
           <Button className="rh-titlebar-output" variant={props.showOutputColumn ? 'active' : 'ghost'} onClick={() => props.onSetOutputColumn(!props.showOutputColumn)} aria-pressed={props.showOutputColumn} aria-label={props.showOutputColumn ? 'Hide line output panel' : 'Show line output panel'} title={props.showOutputColumn ? 'Hide line output panel' : 'Show line output panel'}><svg className="rh-titlebar-output-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2.25 12c2.5-4 5.75-6 9.75-6s7.25 2 9.75 6c-2.5 4-5.75 6-9.75 6s-7.25-2-9.75-6Z" /><circle cx="12" cy="12" r="2.5" />{!props.showOutputColumn && <path d="m4 4 16 16" />}</svg></Button>
         </div>
-          <button className={`rh-top-settings ${props.settingsViewActive ? 'is-active' : ''}`} onClick={() => props.settingsViewActive ? props.onSetWorkspaceView('editor') : props.onOpenSettings()} aria-label={props.settingsViewActive ? 'Return to workspace' : 'Settings'} title={props.settingsViewActive ? 'Return to workspace' : 'Settings (Ctrl+,)'}><span className="rh-top-settings-icon" aria-hidden="true">{props.settingsViewActive ? '\u{f02dc}' : '\u{f0493}'}</span></button>
+          <button className={`rh-top-settings ${props.settingsViewActive ? 'is-active' : ''}`} onClick={() => props.settingsViewActive ? props.onSetWorkspaceView('editor') : props.onOpenSettings()} aria-label={props.settingsViewActive ? 'Return to workspace' : 'Settings'} title={props.settingsViewActive ? 'Return to workspace' : `Settings (${primaryShortcut(',')})`}><span className="rh-top-settings-icon" aria-hidden="true">{props.settingsViewActive ? '\u{f02dc}' : '\u{f0493}'}</span></button>
         </div>
         {!isMac && <div className="rh-window-controls" aria-label="Window controls">
           <button className="rh-window-control" aria-label="Minimize" title="Minimize" onClick={() => { if (typeof window.api?.windowMinimize === 'function') void window.api.windowMinimize(); }}><span className="rh-window-glyph rh-window-glyph-minimize" aria-hidden="true" /></button>
@@ -488,7 +489,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
           props.onSetActive(file.id);
           props.onSaveFile(file);
           setTabContextMenu(null);
-        }}>Save file <kbd>Ctrl+S</kbd></button>
+        }}>Save file <kbd>{primaryShortcut('S')}</kbd></button>
         <button type="button" role="menuitem" onClick={() => { const copy = navigator.clipboard?.writeText(contextFile.relPath); if (copy) void copy.catch(() => undefined); setTabContextMenu(null); }}>Copy path</button>
         <button type="button" role="menuitem" onClick={() => beginRename(contextFile)}>Rename…</button>
         <div className="rh-tab-context-separator" />

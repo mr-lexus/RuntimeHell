@@ -1,15 +1,8 @@
 ﻿import { useEffect, useRef, useState } from 'react';
-import { exposeMonacoForTests, setRhTheme, type RhTheme } from './editor/monaco-setup';
+import { exposeMonacoForTests, setRhTheme } from './editor/monaco-setup';
 import { useMemo } from 'react';
-import { CodeEditor } from './editor/CodeEditor';
 import { createAtaController, getAtaStatus, onAtaStatus, type AtaStatus } from './editor/ata';
 import { typescriptDefaults } from './editor/monaco-setup';
-import { AnalysisPanel } from './panels/analysis/AnalysisPanel';
-import { ConsolePanel } from './panels/console/ConsolePanel';
-import { LineOutputColumn, LINE_HEIGHT_PX } from './panels/console/LineOutputColumn';
-import { InspectorPanel } from './panels/inspector/InspectorPanel';
-import { RuntimesPanel } from './panels/runtimes/RuntimesPanel';
-import { PackagesPanel } from './panels/packages/PackagesPanel';
 import { emitRunRequested, getActiveFile, onRunRequested, useActiveFile, useUi, type DrawerTab, type OpenFile } from './state/ui';
 import type { SelectionInfo } from './editor/selection-service';
 import { resolveRunLanguage, useRun } from './state/run';
@@ -22,6 +15,7 @@ import type { PaletteCommand } from './ui/CommandPalette';
 import { WorkbenchShell } from './ui/WorkbenchShell';
 import type { SettingsPatch } from '@rh/protocol';
 import { ANALYSIS_DEMO_CODE } from './panels/analysis/analysis-demo';
+import { primaryShortcut } from './platform-ui';
 
 const WORKSPACE_ID = 'default';
 
@@ -114,7 +108,6 @@ export function App(): React.JSX.Element {
     return { type, label: `Analyze ▸ ${type}`, supported };
   });
   const [status, setStatus] = useState<string>('ready');
-  const splitRef = useRef<HTMLDivElement | null>(null);
   const lastSelectionRef = useRef<SelectionInfo | null>(null);
 
   // Analysis is explicit: changing the source or engine clears stale results
@@ -349,39 +342,11 @@ export function App(): React.JSX.Element {
       id,
       relPath: `untitled-${n}.ts`,
       language: 'typescript',
-      content: `// untitled-${n}.ts — Ctrl+Enter runs\nconsole.log('hello from tab ${n}');\n`,
+      content: `// untitled-${n}.ts — ${primaryShortcut('Enter')} runs\nconsole.log('hello from tab ${n}');\n`,
       dirty: false
     });
   };
 
-  const startDrag = (e: React.MouseEvent): void => {
-    e.preventDefault();
-    const container = splitRef.current;
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    const move = (ev: MouseEvent): void => {
-      const ratio = 1 - (ev.clientY - rect.top) / rect.height;
-      setDrawerRatio(Math.min(0.85, Math.max(0.08, ratio)));
-    };
-    const up = (): void => {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
-    };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
-  };
-
-  const badge = [
-    phase === 'idle' ? (runtimeVersion !== null ? `${lastRuntimeId ?? 'node'} v${runtimeVersion}` : 'ready') : phase,
-    lastExit !== null
-      ? `exit ${lastExit.code ?? '—'} · ${lastExit.durationMs}ms${lastExit.killedBy !== null ? ` · ${lastExit.killedBy}` : ''}`
-      : null
-  ]
-    .filter(Boolean)
-    .join(' · ');
-
-  const theme: RhTheme = resolvedTheme === 'light' ? 'rh-light' : 'rh-dark';
-  const setTheme = (next: RhTheme): void => { void patchSettings({ appearance: { theme: next === 'rh-light' ? 'light' : 'dark' } }); };
   const applySettingsPatch = (patch: SettingsPatch): void => {
     void patchSettings(patch);
     if (patch.prefs?.timeoutMs !== undefined) useRun.getState().setTimeoutMs(patch.prefs.timeoutMs);
@@ -403,12 +368,12 @@ export function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, []);
   const commands: readonly PaletteCommand[] = [
-    { id: 'run', label: 'Run current file', category: 'Execution', shortcut: 'Ctrl+Enter', enabled: Boolean(activeFile) && phase === 'idle', run: () => emitRunRequested() },
+    { id: 'run', label: 'Run current file', category: 'Execution', shortcut: primaryShortcut('Enter'), enabled: Boolean(activeFile) && phase === 'idle', run: () => emitRunRequested() },
     { id: 'cancel', label: 'Cancel active run', category: 'Execution', enabled: phase !== 'idle', run: () => void requestCancel() },
-    { id: 'save', label: 'Save current file', category: 'File', shortcut: 'Ctrl+S', enabled: Boolean(activeFile), run: () => { if (activeFile) onSave(activeFile.content); } },
-    { id: 'new-tab', label: 'New untitled tab', category: 'File', shortcut: 'Ctrl+N', run: createTab },
+    { id: 'save', label: 'Save current file', category: 'File', shortcut: primaryShortcut('S'), enabled: Boolean(activeFile), run: () => { if (activeFile) onSave(activeFile.content); } },
+    { id: 'new-tab', label: 'New untitled tab', category: 'File', shortcut: primaryShortcut('N'), run: createTab },
     ...DRAWER_TABS.map((tab) => ({ id: `tool-${tab}`, label: `Focus ${tab}`, category: 'View', run: () => { setDrawerTab(tab); setDrawerOpen(true); } })),
-    { id: 'settings', label: 'Open Settings', category: 'View', shortcut: 'Ctrl+,', run: () => setWorkspaceView('settings') },
+    { id: 'settings', label: 'Open Settings', category: 'View', shortcut: primaryShortcut(','), run: () => setWorkspaceView('settings') },
     { id: 'vim-mode', label: appSettings.editor.vimMode ? 'Disable Vim mode' : 'Enable Vim mode', category: 'Editor', keywords: 'vim neovim modal normal insert', run: () => applySettingsPatch({ editor: { vimMode: !appSettings.editor.vimMode } }) },
     { id: 'theme-dark', label: 'Use dark theme', category: 'Appearance', run: () => applySettingsPatch({ appearance: { theme: 'dark' } }) },
     { id: 'theme-light', label: 'Use light theme', category: 'Appearance', run: () => applySettingsPatch({ appearance: { theme: 'light' } }) },
@@ -420,223 +385,4 @@ export function App(): React.JSX.Element {
   ];
 
   return <WorkbenchShell settings={appSettings} files={files} activeFileId={activeFileId} activeFile={activeFile} drawerTab={drawerTab} drawerRatio={drawerRatio} drawerOpen={drawerOpen} showOutputColumn={showOutputColumn} phase={phase} runtimeVersion={runtimeVersion} lastRuntimeId={lastRuntimeId} activeRuntime={activeRuntime} lastExit={lastExit} autoRun={autoRun} lang={lang} ataStatus={ataStatus} status={status} lineCount={lineCount} scrollTop={scrollTop} inlineByLine={inlineByLine} resultByLine={resultByLine} analyzeActions={analyzeActions} paletteOpen={paletteOpen} settingsViewActive={workspaceView === 'settings'} commands={commands} onClosePalette={() => setPaletteOpen(false)} onOpenSettings={() => setWorkspaceView('settings')} onSetWorkspaceView={setWorkspaceView} onSetActive={setActive} onCloseFile={closeFile} onMoveFile={moveFile} onRenameFile={renameFile} onCreateTab={createTab} onRun={() => emitRunRequested()} onSave={onSave} onSaveFile={(file) => saveFile(file)} onChange={(value) => { if (activeFile) { updateContent(activeFile.id, value); scheduleAutoRun(); scheduleAta(value); } }} onFormatError={(message) => setStatus(`format error: ${message}`)} onSelectionChanged={(info) => { lastSelectionRef.current = info; }} onScrollTop={setScrollTop} onLineCount={setLineCount} onAnalyze={(type, code, info) => { useAnalysis.getState().requestFromSelection(info ?? null, code || activeFile?.content || '', [type], false, lang); setDrawerTab('analysis'); setDrawerOpen(true); }} onLoadAnalysisDemo={loadAnalysisDemo} onSetDrawerTab={(tab) => { setDrawerTab(tab); if (tab !== 'performance') applySettingsPatch({ layout: { drawerTab: tab } }); }} onSetDrawerOpen={(open) => { setDrawerOpen(open); applySettingsPatch({ layout: { drawerOpen: open } }); }} onSetDrawerRatio={(ratio) => { setDrawerRatio(ratio); applySettingsPatch({ layout: { drawerRatio: ratio } }); }} onSetAutoRun={(value) => applySettingsPatch({ prefs: { autorun: value } })} onCancel={() => void requestCancel()} onSetLang={setLang} onSetOutputColumn={(value) => applySettingsPatch({ editor: { inlineInspector: value } })} onPatchSettings={applySettingsPatch} onResetAppearance={() => void resetAppearance()} onResetEditor={() => void resetEditor()} onResetAll={() => void resetAllSettings()} />;
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontSize: 13, background: 'var(--bg-app)', color: 'var(--text)' }}>
-      {/* tab bar */}
-      <div style={{ display: 'flex', gap: 2, alignItems: 'center', background: 'var(--bg-bar)', padding: '4px 6px' }}>
-        <button
-          onClick={() => {
-            emitRunRequested();
-          }}
-          style={{ background: 'var(--accent)', color: '#fff', border: 'none', padding: '4px 12px', cursor: 'pointer', marginRight: 8 }}
-        >
-          ▶ Run (Ctrl+Enter)
-        </button>
-        <select
-          value={theme}
-          onChange={(e) => setTheme(e.target.value as RhTheme)}
-          style={{ background: 'var(--bg-panel)', color: 'var(--text)', border: '1px solid var(--border)', fontSize: 11, padding: '3px 6px', marginRight: 4 }}
-        >
-          <option value="rh-dark">🌙 dark</option>
-          <option value="rh-light">☀️ light</option>
-        </select>
-        <button
-          onClick={() => setShowOutputColumn((v) => !v)}
-          title="Toggle inspector tree in inline panel"
-          style={{
-            background: showOutputColumn ? 'var(--bg-chip)' : 'transparent',
-            color: showOutputColumn ? 'var(--text)' : 'var(--text-dim)',
-            border: '1px solid var(--border)',
-            padding: '3px 8px',
-            cursor: 'pointer',
-            fontSize: 11,
-            marginRight: 8
-          }}
-        >
-          🔍 output {showOutputColumn ? 'on' : 'off'}
-        </button>
-        <span
-          title="Force JS passthrough (Node 22+ strips types) or TS transpile via esbuild"
-          style={{
-            display: 'inline-flex',
-            border: '1px solid var(--border)',
-            borderRadius: 3,
-            overflow: 'hidden',
-            marginRight: 8,
-            fontSize: 11
-          }}
-        >
-          {(['js', 'ts'] as const).map((opt) => {
-            const active = lang === opt;
-            return (
-              <button
-                key={opt}
-                onClick={() => setLang(opt)}
-                aria-pressed={active}
-                style={{
-                  background: active ? 'var(--result)' : 'transparent',
-                  color: active ? 'var(--bg-app)' : 'var(--text-dim)',
-                  border: 'none',
-                  padding: '3px 8px',
-                  cursor: 'pointer',
-                  fontWeight: active ? 600 : 400,
-                  fontSize: 11,
-                  letterSpacing: 0.5
-                }}
-              >
-                {opt.toUpperCase()}
-              </button>
-            );
-          })}
-        </span>
-        {files.map((f) => (
-          <span
-            key={f.id}
-            onClick={() => setActive(f.id)}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              background: f.id === activeFileId ? 'var(--bg-chip)' : 'transparent',
-              color: 'var(--text)',
-              padding: '4px 6px 4px 10px',
-              cursor: 'pointer',
-              borderRadius: 3,
-              userSelect: 'none'
-            }}
-          >
-            {f.relPath}
-            {f.dirty ? ' •' : ''}
-            <button
-              title="Close tab"
-              onClick={(e) => {
-                e.stopPropagation();
-                closeFile(f.id);
-              }}
-              style={{ background: 'transparent', color: 'var(--text-dim)', border: 'none', cursor: 'pointer', fontSize: 11, lineHeight: 1, padding: '0 2px' }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--err)')}
-              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-dim)')}
-            >
-              ✕
-            </button>
-          </span>
-        ))}
-        <button
-          title="New tab"
-          onClick={createTab}
-          style={{ background: 'transparent', color: 'var(--text-dim)', border: '1px dashed var(--border)', borderRadius: 3, cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '2px 8px', marginLeft: 2 }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text)')}
-          onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-dim)')}
-        >
-          +
-        </button>
-        <span style={{ marginLeft: 'auto', color: 'var(--text-dim)', alignSelf: 'center', display: 'flex', gap: 10 }}>
-          {ataStatus === 'loading' && <span>types…</span>}
-          {ataStatus === 'ready' && <span style={{ color: 'var(--ok)' }}>types ready</span>}
-          {ataStatus === 'offline' && <span style={{ color: 'var(--warn)' }}>types unavailable (offline)</span>}
-          {badge || status}
-        </span>
-      </div>
-
-      {/* editor / drawer split */}
-      <div ref={splitRef} style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <div style={{ flex: `${1 - drawerRatio} 1 0`, minHeight: 0, display: 'flex' }}>
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-            {activeFile ? (
-              <CodeEditor
-                path={activeFile!.relPath}
-                value={activeFile!.content}
-                language={activeFile!.language}
-                onChange={(v) => {
-                  updateContent(activeFile!.id, v);
-                  scheduleAutoRun();
-                  scheduleAta(v);
-                }}
-                onSave={onSave}
-                onRun={() => emitRunRequested()}
-                onFormatError={(m) => setStatus(`format error: ${m}`)}
-                onSelectionChanged={(info) => {
-                  lastSelectionRef.current = info;
-                }}
-                onScrollTop={setScrollTop}
-                onLineCount={setLineCount}
-                analyzeActions={analyzeActions}
-                inlineOutputs={inlineByLine}
-                inlineResults={resultByLine}
-                onAnalyze={(type, _code, info) => {
-                  const lang = activeFile?.language === 'typescript' ? 'ts' : 'js';
-                  useAnalysis.getState().requestFromSelection(info ?? null, activeFile?.content ?? '', [type], false, lang);
-                  setDrawerTab('analysis');
-                }}
-              />
-            ) : (
-              <div style={{ color: 'var(--text-dim)', padding: 20 }}>No file open</div>
-            )}
-          </div>
-          {activeFile && (
-            <LineOutputColumn
-              fileId={activeFileId}
-              lineCount={lineCount}
-              scrollTop={scrollTop}
-              allowExpand
-            />
-          )}
-        </div>
-        <div onMouseDown={startDrag} style={{ height: 4, cursor: 'row-resize', background: 'var(--border)' }} />
-        <div style={{ flex: `${drawerRatio} 1 0`, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ display: 'flex', gap: 2, background: 'var(--bg-bar)', padding: '3px 6px', alignItems: 'center' }}>
-            {DRAWER_TABS.map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setDrawerTab(tab)}
-                style={{
-                  background: tab === drawerTab ? 'var(--bg-chip)' : 'transparent',
-                  color: 'var(--text)',
-                  border: 'none',
-                  padding: '3px 10px',
-                  cursor: 'pointer'
-                }}
-              >
-                {tab}
-              </button>
-            ))}
-            <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-              <label style={{ color: 'var(--text-dim)', fontSize: 11, display: 'flex', gap: 4, alignItems: 'center' }}>
-                <input className="rh-native-checkbox" type="checkbox" checked={autoRun} onChange={(e) => setAutoRun(e.target.checked)} /> auto-run
-              </label>
-              <button
-                onClick={() => void requestCancel()}
-                disabled={phase === 'idle'}
-                style={{
-                  background: phase === 'cancelling' ? '#5a1d1d' : 'var(--bg-hover)',
-                  color: phase === 'idle' ? 'var(--text-faint)' : 'var(--err)',
-                  border: 'none',
-                  padding: '2px 10px',
-                  cursor: phase === 'idle' ? 'default' : 'pointer',
-                  fontSize: 11
-                }}
-              >
-                Cancel
-              </button>
-            </span>
-          </div>
-          <div style={{ flex: 1, overflow: 'auto', padding: 8, color: 'var(--text)', minHeight: 0 }}>
-            {drawerTab === 'console' && <ConsolePanel />}
-            {drawerTab === 'inspector' && <InspectorPanel />}
-            {drawerTab === 'analysis' && (
-              <AnalysisPanel
-                code={activeFile?.content ?? ''}
-                selection={lastSelectionRef.current}
-                lang={activeFile?.language === 'typescript' ? 'ts' : 'js'}
-                onLoadDemo={loadAnalysisDemo}
-              />
-            )}
-            {drawerTab === 'packages' && <PackagesPanel />}
-            {drawerTab === 'runtimes' && <RuntimesPanel />}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 }

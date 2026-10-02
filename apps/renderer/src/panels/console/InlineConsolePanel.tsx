@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useRun } from '../../state/run';
 import type { SerializedValue } from '@rh/protocol';
+import { primaryShortcut } from '../../platform-ui';
 
 function formatValue(v: { t: string; prim?: string; label?: string }): string {
   if (v.t === 'string') return JSON.stringify(v.prim ?? '');
@@ -60,7 +61,7 @@ export function InlineConsolePanel({ inspector = false }: { inspector?: boolean 
   if (allLines.length === 0) {
     return (
       <div style={{ padding: 12, color: 'var(--text-dim)', fontSize: 12, fontFamily: "'JetBrainsMono Nerd Font Mono', monospace" }}>
-        {phase === 'running' ? 'running…' : 'No output yet — run the file (Ctrl+Enter)'}
+        {phase === 'running' ? 'running…' : `No output yet — run the file (${primaryShortcut('Enter')})`}
       </div>
     );
   }

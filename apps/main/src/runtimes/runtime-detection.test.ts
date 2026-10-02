@@ -34,8 +34,13 @@ describe('parseNvmVersions', () => {
   });
 
   it('matches the active target case- and separator-insensitively (Windows paths)', () => {
-    const rows = parseNvmVersions('C:/nvm', ['v20.11.0'], 'c:/NVM/V20.11.0');
+    const rows = parseNvmVersions('C:/nvm', ['v20.11.0'], 'c:/NVM/V20.11.0', 'win32');
     expect(rows[0]?.active).toBe(true);
+  });
+
+  it('preserves case when matching nvm targets on POSIX hosts', () => {
+    const rows = parseNvmVersions('/Users/Dev/.nvm/versions/node', ['v20.11.0'], '/users/dev/.nvm/versions/node/v20.11.0', 'darwin');
+    expect(rows[0]?.active).toBe(false);
   });
 
   it('returns [] when no version dirs exist', () => {
