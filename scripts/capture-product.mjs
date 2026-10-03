@@ -59,16 +59,16 @@ try {
     '// Two approaches. Measure the trade-off.',
     '// A · Array.reduce',
     'function sumWithReduce() {',
-    'const values = Array.from({ length: 1000 }, (_, i) => i);',
-    'return values.reduce((sum, value) => sum + value, 0);',
+    '  const values = Array.from({ length: 1000 }, (_, i) => i);',
+    '  return values.reduce((sum, value) => sum + value, 0);',
     '}',
     '',
     '// B · for…of',
     'function sumWithLoop() {',
-    'const values = Array.from({ length: 1000 }, (_, i) => i);',
-    'let total = 0;',
-    'for (const value of values) total += value;',
-    'return total;',
+    '  const values = Array.from({ length: 1000 }, (_, i) => i);',
+    '  let total = 0;',
+    '  for (const value of values) total += value;',
+    '  return total;',
     '}',
     '',
     '// Each selection is an independent benchmark case.',
@@ -85,7 +85,7 @@ try {
   await page.evaluate(() => window.__rh_editor.setSelection(4, 1, 5, 70));
   await panel.getByRole('button', { name: 'Add selection', exact: true }).click();
   await panel.getByRole('textbox', { name: 'Case 1 label' }).fill('Array.reduce');
-  await page.evaluate(() => window.__rh_editor.setSelection(10, 1, 13, 14));
+  await page.evaluate(() => window.__rh_editor.setSelection(10, 1, 13, 80));
   await panel.getByRole('button', { name: 'Add selection', exact: true }).click();
   await panel.getByRole('textbox', { name: 'Case 2 label' }).fill('for…of');
   await page.getByRole('button', { name: 'Measurement settings' }).click();
