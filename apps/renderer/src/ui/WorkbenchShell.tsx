@@ -16,7 +16,8 @@ import type { AtaStatus } from '../editor/ata';
 import { primaryShortcut } from '../platform-ui';
 import type { SelectionInfo } from '../editor/selection-service';
 import type { AnalyzeType, EditorScrollController } from '../editor/CodeEditor';
-import type { VimMode } from '../editor/vim-mode';
+import type { LazyVimAction, VimMode } from '../editor/vim-mode';
+import { getLazyVimHelpGroups } from '../editor/lazyvim-keymaps';
 import { usePerformance } from '../state/performance';
 import { useRun, type RunLang } from '../state/run';
 import { APP_LOGO_URL } from '../branding';
@@ -82,6 +83,7 @@ export interface WorkbenchShellProps {
   paletteOpen: boolean;
   settingsViewActive: boolean;
   commands: readonly PaletteCommand[];
+  onOpenPalette: () => void;
   onClosePalette: () => void;
   onOpenSettings: () => void;
   onSetWorkspaceView: (view: 'editor' | 'settings') => void;
@@ -142,21 +144,7 @@ function PerformanceHeaderControls({ files }: { files: readonly FileLike[] }): R
   </div>;
 }
 
-const VIM_HELP_ITEMS: readonly { keys: string; action: string }[] = [
-  { keys: 'h j k l', action: 'move left / down / up / right' },
-  { keys: 'w b e', action: 'word motions (next / previous / end)' },
-  { keys: '0 ^ $', action: 'line start / first non-blank / line end' },
-  { keys: 'i a I A', action: 'insert before / after / line start / line end' },
-  { keys: 'o O', action: 'open line below / above' },
-  { keys: 'v V', action: 'visual / visual line mode' },
-  { keys: 'd y c', action: 'delete / yank / change (with motions)' },
-  { keys: 'p P', action: 'paste after / before cursor' },
-  { keys: 'u Ctrl+R', action: 'undo / redo' },
-  { keys: 'x', action: 'delete character' },
-  { keys: 'G', action: 'go to line (with count)' },
-  { keys: ':', action: 'command line (try :help)' },
-  { keys: 'Esc Ctrl+[', action: 'back to normal mode' }
-];
+const VIM_HELP_GROUPS = getLazyVimHelpGroups();
 
 interface TabContextMenuState {
   fileId: string;
@@ -186,7 +174,8 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
   const [tabScrollState, setTabScrollState] = useState({ left: false, right: false });
   const [vimMode, setVimMode] = useState<VimMode>('normal');
   const [vimHelpOpen, setVimHelpOpen] = useState(false);
-  const [vimCommandLine, setVimCommandLine] = useState('');
+  const previousActiveFileId = useRef<string | null>(null);
+  const lastActiveFileId = useRef<string | null>(props.activeFileId);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const languageMenuRef = useRef<HTMLDivElement | null>(null);
   const tabsRef = useRef<HTMLDivElement | null>(null);
@@ -196,6 +185,8 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
   // previous file's analysis selection into the newly selected tab.
   useEffect(() => {
     setSelection(null);
+    if (lastActiveFileId.current !== null && lastActiveFileId.current !== props.activeFileId) previousActiveFileId.current = lastActiveFileId.current;
+    lastActiveFileId.current = props.activeFileId;
   }, [props.activeFileId]);
   useEffect(() => {
     let live = true;
@@ -320,13 +311,17 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
         return;
       }
       if (key === 'w' || key === 'f4') {
+        // Ctrl+W belongs to Vim (operator/window prefix). LazyVim users close
+        // buffers with <leader>bd; keep the platform tab-close shortcut only
+        // outside Vim mode or when macOS sends the distinct Command modifier.
+        if (props.settings.editor.vimMode && event.ctrlKey && !event.metaKey) return;
         event.preventDefault();
         props.onCloseFile(activeFile.id);
       }
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [props.files, props.activeFileId, props.onCloseFile, props.onMoveFile, props.onSetActive]);
+  }, [props.files, props.activeFileId, props.onCloseFile, props.onMoveFile, props.onSetActive, props.settings.editor.vimMode]);
   const statusKind = props.phase !== 'idle' ? 'running' : props.lastExit?.code === 0 ? 'ready' : props.lastExit?.code !== null && props.lastExit !== null ? 'error' : 'idle';
   const activeRuntimeLabel = props.activeRuntime ?? props.lastRuntimeId ?? 'node';
   const selectTab = (tab: DrawerTab): void => {
@@ -367,6 +362,42 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
   };
   const scrollTabs = (amount: number): void => {
     tabsRef.current?.scrollBy({ left: amount, behavior: 'smooth' });
+  };
+  const selectRelativeFile = (direction: -1 | 1): void => {
+    const activeIndex = props.files.findIndex((file) => file.id === props.activeFileId);
+    if (activeIndex < 0 || props.files.length < 2) return;
+    const target = props.files[(activeIndex + direction + props.files.length) % props.files.length];
+    if (target) props.onSetActive(target.id);
+  };
+  const handleVimAction = (action: LazyVimAction): void => {
+    const activeId = props.activeFileId;
+    switch (action) {
+      case 'buffer.previous': case 'tab.previous': selectRelativeFile(-1); return;
+      case 'buffer.next': case 'tab.next': selectRelativeFile(1); return;
+      case 'buffer.alternate': {
+        const previous = props.files.find((file) => file.id === previousActiveFileId.current);
+        if (previous) props.onSetActive(previous.id);
+        return;
+      }
+      case 'buffer.delete': case 'tab.close': if (activeId) props.onCloseFile(activeId); return;
+      case 'buffer.deleteOthers': case 'tab.closeOthers': if (activeId) closeOtherTabs(activeId); return;
+      case 'buffer.deleteInvisible': return;
+      case 'file.new': case 'tab.new': props.onCreateTab(); return;
+      case 'file.save': if (props.activeFile) props.onSave(props.activeFile.content); return;
+      case 'file.find': props.onOpenPalette(); return;
+      case 'ui.toggleWrap': props.onPatchSettings({ editor: { wordWrap: props.settings.editor.wordWrap === 'off' ? 'on' : 'off' } }); return;
+      case 'ui.toggleRelativeNumbers': props.onPatchSettings({ editor: { lineNumbers: props.settings.editor.lineNumbers === 'relative' ? 'on' : 'relative' } }); return;
+      case 'ui.toggleLineNumbers': props.onPatchSettings({ editor: { lineNumbers: props.settings.editor.lineNumbers === 'off' ? 'on' : 'off' } }); return;
+      case 'ui.toggleTheme': props.onPatchSettings({ appearance: { theme: theme === 'light' ? 'dark' : 'light' } }); return;
+      case 'ui.toggleSmoothScrolling': props.onPatchSettings({ editor: { smoothScrolling: !props.settings.editor.smoothScrolling } }); return;
+      case 'window.grow': props.onSetDrawerRatio(Math.max(.08, props.drawerRatio - .03)); return;
+      case 'window.shrink': props.onSetDrawerRatio(Math.min(.85, props.drawerRatio + .03)); return;
+      case 'tab.first': if (props.files[0]) props.onSetActive(props.files[0].id); return;
+      case 'tab.last': { const last = props.files.at(-1); if (last) props.onSetActive(last.id); return; }
+      case 'app.quit': if (typeof window.api?.windowClose === 'function') void window.api.windowClose(); return;
+      case 'app.help': setVimHelpOpen(true); return;
+      default: return;
+    }
   };
   return (
     <div className={`rh-app${isMac ? ' is-mac' : ''}`}>
@@ -454,7 +485,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
                 {tabScrollState.right && <button type="button" className="rh-tab-scroll-control" onClick={() => scrollTabs(220)} aria-label="Scroll tabs right" title="Scroll tabs right">›</button>}
               </div>
               <div className="rh-editor-region">
-                <div className="rh-editor-host">{props.activeFile ? <CodeEditor key={props.activeFile.id} path={props.activeFile.relPath} value={props.activeFile.content} language={editorLanguage} theme={theme === 'light' ? 'rh-light' : 'rh-dark'} fontSize={editorFontSize} editorSettings={props.settings.editor} vimMode={props.settings.editor.vimMode} onVimModeChange={setVimMode} onVimHelp={() => setVimHelpOpen(true)} onVimCommandChange={setVimCommandLine} onChange={props.onChange} onSave={props.onSave} onRun={props.onRun} onFormatError={props.onFormatError} onSelectionChanged={(info) => { setSelection(info); props.onSelectionChanged(info); }} onScrollTop={props.onScrollTop} scrollController={editorScrollController.current} onLineCount={props.onLineCount} analyzeActions={props.analyzeActions} inlineOutputs={props.inlineByLine} inlineResults={props.resultByLine} onAnalyze={props.onAnalyze} /> : <div className="rh-empty-state"><div className="rh-empty-mark">◇</div><strong>No source open</strong><span>Open or create a source slot to begin.</span></div>}</div>
+                <div className="rh-editor-host">{props.activeFile ? <CodeEditor key={props.activeFile.id} path={props.activeFile.relPath} value={props.activeFile.content} language={editorLanguage} theme={theme === 'light' ? 'rh-light' : 'rh-dark'} fontSize={editorFontSize} editorSettings={props.settings.editor} vimMode={props.settings.editor.vimMode} onVimModeChange={setVimMode} onVimHelp={() => setVimHelpOpen(true)} onVimAction={handleVimAction} onChange={props.onChange} onSave={props.onSave} onRun={props.onRun} onFormatError={props.onFormatError} onSelectionChanged={(info) => { setSelection(info); props.onSelectionChanged(info); }} onScrollTop={props.onScrollTop} scrollController={editorScrollController.current} onLineCount={props.onLineCount} analyzeActions={props.analyzeActions} inlineOutputs={props.inlineByLine} inlineResults={props.resultByLine} onAnalyze={props.onAnalyze} /> : <div className="rh-empty-state"><div className="rh-empty-mark">◇</div><strong>No source open</strong><span>Open or create a source slot to begin.</span></div>}</div>
                 {props.activeFile && props.showOutputColumn && <div className="rh-inline-output"><LineOutputColumn fileId={props.activeFile.id} lineCount={props.lineCount} scrollTop={props.scrollTop} lineHeight={editorLineHeight} allowExpand scrollController={editorScrollController.current} /></div>}
               </div>
             </InstrumentFrame>
@@ -476,7 +507,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
             <button className="rh-status-action" onClick={() => { props.onSetDrawerTab('runtimes'); props.onSetDrawerOpen(true); }} aria-label="Open runtime selector">runtime {activeRuntimeLabel.toUpperCase()} {props.runtimeVersion ? `v${props.runtimeVersion}` : 'version —'}</button>
             <button className={`rh-status-action ${props.autoRun ? 'is-active' : ''}`} onClick={() => props.onSetAutoRun(!props.autoRun)} aria-pressed={props.autoRun}>auto-run {props.autoRun ? 'on' : 'off'}</button>
             <span className="rh-status-types">types {props.ataStatus === 'loading' ? <><BlockLoader /> loading</> : props.ataStatus === 'ready' ? 'ready' : 'offline'}</span>
-            {props.settings.editor.vimMode && <span className="rh-status-vim" title="Vim mode">-- {vimMode.toUpperCase()} --{vimCommandLine !== '' ? ` :${vimCommandLine}` : ''}</span>}
+            {props.settings.editor.vimMode && <span className="rh-status-vim" title="LazyVim mode">-- {vimMode.toUpperCase()} --</span>}
             <span className="rh-statusbar-right"><span>engine {props.lastRuntimeId ? props.lastRuntimeId.toUpperCase() : '—'}</span></span>
           </footer>
         </main>
@@ -505,11 +536,16 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
       {vimHelpOpen && <div className="rh-vim-help-backdrop" onClick={() => setVimHelpOpen(false)} role="presentation">
         <div className="rh-vim-help" role="dialog" aria-label="Vim keybindings" onClick={(event) => event.stopPropagation()}>
           <header className="rh-vim-help-heading">
-            <div><div className="rh-eyebrow">EDITOR / MODAL LAYER</div><h2>Vim keybindings</h2></div>
+            <div><div className="rh-eyebrow">EDITOR / LAZYVIM PROFILE</div><h2>LazyVim keybindings</h2></div>
             <Button onClick={() => setVimHelpOpen(false)}>close</Button>
           </header>
           <div className="rh-vim-help-body">
-            {VIM_HELP_ITEMS.map((item) => <div key={item.keys} className="rh-vim-help-item"><kbd>{item.keys}</kbd><span>{item.action}</span></div>)}
+            {VIM_HELP_GROUPS.map((group) => <section key={group.title} className="rh-vim-help-group">
+              <h3>{group.title}</h3>
+              {group.items.map((item) => <div key={`${group.title}-${item.keys}`} className={`rh-vim-help-item${item.unavailableReason ? ' is-unavailable' : ''}`} title={item.unavailableReason}>
+                <kbd>{item.keys}</kbd><span>{item.action}{item.unavailableReason ? ' — unavailable' : ''}</span>
+              </div>)}
+            </section>)}
           </div>
         </div>
       </div>}

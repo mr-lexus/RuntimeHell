@@ -23,6 +23,11 @@ function copyMainAssetsPlugin() {
 }
 
 const protocolAlias = resolve(process.cwd(), 'packages/protocol/src/index.ts');
+// monaco-vim's package exports prefer its UMD browser build, which leaves a
+// CommonJS `require(monaco-editor/...)` in Vite output. Pin the package's ESM
+// entry so packaged Electron renderers never depend on a bare runtime import.
+const monacoVimAlias = resolve(process.cwd(), 'apps/renderer/node_modules/monaco-vim/dist/index.mjs');
+const monacoEditorEsmRoot = resolve(process.cwd(), 'apps/renderer/node_modules/monaco-editor/esm/vs/editor');
 
 export default defineConfig({
   main: {
@@ -55,7 +60,12 @@ export default defineConfig({
       strictPort: true,
     },
     resolve: {
-      alias: { '@rh/protocol': protocolAlias },
+      alias: {
+        '@rh/protocol': protocolAlias,
+        'monaco-vim': monacoVimAlias,
+        'monaco-editor/esm/vs/editor/editor.api': resolve(monacoEditorEsmRoot, 'editor.api.js'),
+        'monaco-editor/esm/vs/editor/common/commands/shiftCommand': resolve(monacoEditorEsmRoot, 'common/commands/shiftCommand.js')
+      },
       dedupe: ['react', 'react-dom'],
     },
     optimizeDeps: {

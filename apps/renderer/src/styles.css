@@ -588,23 +588,30 @@ button { border-radius: 0; }
 .rh-tab-rename-popover input:focus-visible { outline: none; border-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
 .rh-tab-rename-popover > div { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
 .rh-vim-help-backdrop { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: color-mix(in srgb, var(--bg-app) 78%, transparent); }
-.rh-vim-help { width: min(560px, calc(100vw - 32px)); max-height: min(70vh, 560px); overflow: hidden; color: var(--text); background: var(--bg-panel); border: 1px solid var(--frame-strong); box-shadow: 10px 10px 0 color-mix(in srgb, var(--bg-app) 55%, transparent); }
+.rh-vim-help { width: min(900px, calc(100vw - 32px)); max-height: min(82vh, 720px); overflow: hidden; color: var(--text); background: var(--bg-panel); border: 1px solid var(--frame-strong); box-shadow: 10px 10px 0 color-mix(in srgb, var(--bg-app) 55%, transparent); }
 .rh-vim-help-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--frame-normal); }
 .rh-vim-help-heading h2 { margin: 0; font-size: 14px; letter-spacing: .04em; }
-.rh-vim-help-body { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 18px; padding: 12px 16px; overflow-y: auto; max-height: calc(min(70vh, 560px) - 62px); }
+.rh-vim-help-body { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 14px 20px; padding: 14px 16px 18px; overflow-y: auto; max-height: calc(min(82vh, 720px) - 62px); }
+.rh-vim-help-group { display: grid; gap: 2px; break-inside: avoid; }
+.rh-vim-help-group h3 { margin: 0 0 5px; color: var(--text); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
 .rh-vim-help-item { display: flex; align-items: baseline; gap: 10px; min-height: 24px; font-size: 10px; }
 .rh-vim-help-item kbd { flex: 0 0 auto; color: var(--accent); border: 1px solid var(--frame-weak); padding: 1px 5px; font: inherit; font-size: 9px; letter-spacing: .03em; }
 .rh-vim-help-item span { color: var(--text-secondary); }
+.rh-vim-help-item.is-unavailable { opacity: .58; }
 .rh-vim-statusline { position: relative; display: flex; align-items: center; gap: 8px; flex: 0 0 auto; min-height: 22px; padding: 0 8px; color: var(--text-dim); background: var(--bg-panel); border-top: 1px solid var(--frame-normal); font-size: 9px; letter-spacing: .04em; }
 .rh-vim-mode { color: var(--accent); font-weight: 700; letter-spacing: .08em; white-space: nowrap; }
-.rh-vim-commandline { flex: 1 1 auto; min-width: 0; height: 18px; padding: 0 6px; color: var(--text); background: var(--bg-raised); border: 1px solid var(--frame-normal); border-radius: var(--radius); font: inherit; font-size: 10px; }
-.rh-vim-commandline:focus-visible { outline: none; border-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+.rh-vim-native-status { flex: 1 1 auto; min-width: 0; color: var(--text-secondary); }
+.rh-vim-native-status > span:first-child { display: none; }
+.rh-vim-native-status input { width: min(100%, 620px); height: 18px; padding: 0 6px; color: var(--text); background: var(--bg-raised); border: 1px solid var(--frame-normal); border-radius: var(--radius); font: inherit; font-size: 10px; }
+.rh-vim-native-status input:focus-visible { outline: none; border-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+.rh-vim-native-status .vim-notification { margin-left: 8px; color: var(--danger); }
 .rh-vim-pending-hints { position: absolute; right: 8px; bottom: 30px; z-index: 95; display: flex; flex-direction: column; gap: 6px; min-width: 220px; max-width: 320px; padding: 10px 12px; color: var(--text); background: var(--bg-panel); border: 1px solid var(--frame-strong); box-shadow: 6px 6px 0 color-mix(in srgb, var(--bg-app) 55%, transparent); }
 .rh-vim-pending-prefix { color: var(--accent); font-weight: 700; font-size: 11px; letter-spacing: .08em; }
 .rh-vim-pending-hints-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 14px; }
 .rh-vim-pending-hint { display: flex; align-items: baseline; gap: 8px; min-height: 20px; font-size: 10px; }
 .rh-vim-pending-hint kbd { flex: 0 0 auto; color: var(--accent); border: 1px solid var(--frame-weak); padding: 1px 5px; font: inherit; font-size: 9px; letter-spacing: .03em; }
 .rh-vim-pending-hint span { color: var(--text-secondary); }
+@media (max-width: 760px) { .rh-vim-help-body { grid-template-columns: 1fr 1fr; } }
 .rh-source-tabs > .rh-icon-button { width: 30px; min-height: 30px; margin-left: 1px; border-color: var(--frame-normal); }
 .rh-source-tabs > .rh-icon-button:hover { color: var(--accent-strong); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 @media (max-width: 760px) {

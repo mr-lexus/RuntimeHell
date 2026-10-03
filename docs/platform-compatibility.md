@@ -39,4 +39,4 @@ Engine downloads are intentionally conservative. V8 canary artifacts are enabled
 
 ## CI/release gates
 
-Every pull request and push to `main` runs lint, full typecheck, tests, a production build, and the native Electron smoke test on Windows, macOS, and Linux. Pushing an alpha tag matching `package.json` (for example `v0.1.0-alpha.7`) repeats the native smoke on each packaging runner, packages all release targets, and creates a GitHub prerelease. Release artifacts are unsigned in this alpha; macOS packages are not notarized.
+Every pull request and push to `main` runs lint, full typecheck, tests, a production build, and the native Electron smoke test on Windows, macOS, and Linux. Pushing an alpha tag matching `package.json` (for example `v0.1.0-alpha.8`) repeats the native smoke on each packaging runner, packages all release targets, and creates a GitHub prerelease. Release artifacts are unsigned in this alpha; macOS packages are not notarized.

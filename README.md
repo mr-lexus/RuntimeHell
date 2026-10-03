@@ -53,7 +53,7 @@ See [platform compatibility](docs/platform-compatibility.md) for the tested nati
 - Monaco-based editor with multiple tabs, TypeScript language tooling, formatting, folding, and bracket-pair colorization.
 - Automatic type acquisition for imported packages.
 - Autosave, session restore, run history, command palette, and optional auto-run.
-- Optional Vim-style editing plus configurable themes, accent colors, density, motion, UI scale, and editor behavior.
+- Optional Vim/Neovim editing powered by `monaco-vim`, with a documented LazyVim keymap profile, which-key hints, and RuntimeHell-native buffer/file/diagnostic actions.
 
 ### Engine internals
 

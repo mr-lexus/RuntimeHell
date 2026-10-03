@@ -1,17 +1,15 @@
-# RuntimeHell v0.1.0-alpha.7
+# RuntimeHell v0.1.0-alpha.8
 
-This alpha focuses on native macOS behavior and cross-platform regression hardening.
+This alpha replaces the partial home-grown Vim emulation with a mature modal editing engine and adds a reviewable LazyVim compatibility profile.
 
 ## What to expect
 
-- Builds are provided for Windows x64, macOS Intel/Apple Silicon, and Linux x64.
-- Closing the last window now follows native macOS lifecycle conventions: the app stays available in the Dock and reopens on activation.
-- Filesystem path comparisons preserve case on macOS/Linux, including case-sensitive APFS volumes and nvm installations.
-- Stack trace remapping now handles spaces, file URLs, and both bare and parenthesized Node frames without corrupting their shape.
-- Runtime archive coverage now performs a real TAR extraction/install check on POSIX hosts and verifies executable permissions.
-- External Chrome/Firefox benchmarks retain only the allow-listed Linux display/session variables they need, avoiding headless startup timeouts without exposing the full parent environment.
-- Shortcut labels and local-import guidance adapt to macOS, Windows, and Linux instead of displaying Windows-only text.
-- A large unreachable legacy renderer implementation was removed, reducing `App.tsx` and its maintenance surface substantially.
-- Tagged release builds now run the native Electron compatibility smoke on every packaging runner, including both Intel and Apple Silicon macOS.
-- The release is unsigned and macOS is not notarized yet; the operating system may show a first-run security prompt.
-- This is an alpha: some runtimes and engine downloads remain platform-specific. Please report reproducible issues with the OS, architecture, RuntimeHell version, and a short log.
+- Vim editing now uses `monaco-vim` 0.4.4, adding reliable text objects, registers, marks, macros, visual-block mode, search/Ex history, repeat operations, and broader command coverage.
+- LazyVim's Space leader, display-line movement, buffer navigation, line movement, save, formatting, LSP navigation, diagnostics, UI toggles, and tab mappings are wired to RuntimeHell/Monaco equivalents.
+- `H`/`L`, `[b`/`]b`, `Space bd`, `Space fn`, `Space cf`, `]d`/`[d`, `Space uw`, and the standard LazyVim tab group are available.
+- `Space ?` and `:help` open a generated keymap reference; the help view, which-key hints, and registered shortcuts share one catalog.
+- Physical punctuation normalization keeps `:`, `/`, brackets, and related Vim keys working on Cyrillic and other non-US keyboard layouts.
+- RuntimeHell global shortcuts no longer steal Vim's `Ctrl+W` and `Ctrl+J` behavior while modal editing is enabled.
+- Neovim-only features that RuntimeHell cannot represent—split windows, floating terminal, Lazy/Lazygit, and quickfix/location lists—are clearly marked unavailable instead of becoming deceptive no-ops.
+- Regression coverage drives a packaged Electron build through `diw`, undo, macro recording/replay, and the LazyVim leader help mapping.
+- Builds are provided for Windows x64, macOS Intel/Apple Silicon, and Linux x64. This alpha remains unsigned and macOS is not notarized.

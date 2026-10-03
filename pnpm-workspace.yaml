@@ -11,6 +11,13 @@ allowBuilds:
 # Don't auto-run install before every package script (fails CI-less runs on warnings)
 verifyDepsBeforeRun: false
 
+audit:
+  # No patched release exists as of 2026-10-03. This is reachable only from
+  # electron-builder's single-user artifact downloader, never app runtime or
+  # a shared HTTP cache. Remove the exception as soon as upstream publishes a fix.
+  ignore:
+    - GHSA-ch52-4w7c-c8xp
+
 overrides:
   'brace-expansion@<2': 1.1.21
   'brace-expansion@>=2 <3': 2.1.7

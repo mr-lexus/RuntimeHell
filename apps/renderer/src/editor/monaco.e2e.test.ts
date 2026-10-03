@@ -42,6 +42,53 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
 }
 
 describe.skipIf(!existsSync(mainEntry))('monaco e2e (built app)', () => {
+  it('runs Vim text objects, macros, and the LazyVim help mapping', async () => {
+    const { app, page } = await launchApp();
+    const originalVimMode = await page.evaluate(async () => (await window.api.settingsGet()).editor.vimMode);
+    try {
+      await page.evaluate(() => window.api.settingsSet({ editor: { vimMode: true } }));
+      await page.reload();
+      await page.waitForFunction(() => Boolean((window as unknown as Record<string, unknown>)['__rh_editor']), undefined, { timeout: 20000 });
+      await page.locator('.rh-vim-statusline').waitFor({ state: 'visible', timeout: 10000 });
+
+      await page.evaluate(() => {
+        const editor = (window as unknown as Record<string, unknown>)['__rh_editor'] as {
+          setValue: (value: string) => void;
+          setSelection: (startLine: number, startCol: number, endLine: number, endCol: number) => void;
+        };
+        editor.setValue('alpha beta\nsecond line\n');
+        editor.setSelection(1, 1, 1, 1);
+      });
+
+      await page.keyboard.press('d');
+      await page.keyboard.press('i');
+      await page.keyboard.press('w');
+      expect(await page.evaluate(() => ((window as unknown as Record<string, unknown>)['__rh_editor'] as { getValue: () => string }).getValue())).toBe(' beta\nsecond line\n');
+
+      await page.keyboard.press('u');
+      expect(await page.evaluate(() => ((window as unknown as Record<string, unknown>)['__rh_editor'] as { getValue: () => string }).getValue())).toBe('alpha beta\nsecond line\n');
+
+      await page.evaluate(() => {
+        const editor = (window as unknown as Record<string, unknown>)['__rh_editor'] as {
+          setValue: (value: string) => void;
+          setSelection: (startLine: number, startCol: number, endLine: number, endCol: number) => void;
+        };
+        editor.setValue('abcd');
+        editor.setSelection(1, 1, 1, 1);
+      });
+      for (const key of ['q', 'a', 'x', 'q', '@', 'a']) await page.keyboard.press(key);
+      expect(await page.evaluate(() => ((window as unknown as Record<string, unknown>)['__rh_editor'] as { getValue: () => string }).getValue())).toBe('cd');
+
+      await page.keyboard.press('Space');
+      await page.keyboard.press('Shift+/');
+      await page.locator('.rh-vim-help').waitFor({ state: 'visible', timeout: 5000 });
+      expect(await page.locator('.rh-vim-help-heading').textContent()).toContain('LazyVim keybindings');
+    } finally {
+      await page.evaluate((vimMode) => window.api.settingsSet({ editor: { vimMode } }), originalVimMode).catch(() => undefined);
+      await app.close();
+    }
+  }, 60000);
+
   it('boots, pings main, and surfaces TS diagnostics for a type error', async () => {
     const { app, page } = await launchApp();
     try {
@@ -98,7 +145,7 @@ describe.skipIf(!existsSync(mainEntry))('monaco e2e (built app)', () => {
         const ed = (window as never as Record<string, unknown>)['__rh_editor'] as { setLanguage: (v: string) => void };
         ed.setLanguage('javascript');
       });
-      await page.waitForTimeout(1000);
+      await page.waitForFunction(() => ((window as never as Record<string, unknown>)['__rh_monaco'] as { editor: { getModelMarkers: (o: object) => unknown[] } }).editor.getModelMarkers({}).length > 0, undefined, { timeout: 5000 });
       const jsMarkerCount = await page.evaluate(() => ((window as never as Record<string, unknown>)['__rh_monaco'] as { editor: { getModelMarkers: (o: object) => unknown[] } }).editor.getModelMarkers({}).length);
       expect(jsMarkerCount).toBeGreaterThanOrEqual(1);
       const jsLanguageId = await page.evaluate(() => ((window as never as Record<string, unknown>)['__rh_monaco'] as { editor: { getEditors: () => Array<{ getModel: () => { getLanguageId: () => string } | null }> } }).editor.getEditors()[0]?.getModel()?.getLanguageId());
