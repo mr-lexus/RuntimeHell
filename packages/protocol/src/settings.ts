@@ -97,7 +97,20 @@ const EditorSettingsSchema = z
   })
   .strict();
 
-export const DrawerTabSchema = z.enum(['console', 'inspector', 'analysis', 'packages', 'runtimes']);
+export const DrawerTabSchema = z.enum(['console', 'inspector', 'analysis', 'packages', 'runtimes', 'performance']);
+
+// Defaults belong to persisted settings, never PATCH payloads. This also lets
+// older v2 files acquire the new layout options without losing their choices.
+const LayoutSettingsValueSchema = z.object({
+  drawerOpen: z.boolean(),
+  drawerRatio: z.number().min(0.08).max(0.85),
+  drawerTab: DrawerTabSchema,
+  inlineOutputWidth: z.number().int().min(180).max(720),
+  toolPosition: z.enum(['bottom', 'right']),
+  sideRatio: z.number().min(0.25).max(0.65),
+  focusMode: z.boolean(),
+  showStatusBar: z.boolean()
+}).strict();
 
 const SessionTabSchema = z.object({ workspaceId: z.string().min(1), relPath: z.string().min(1) }).strict();
 
@@ -124,14 +137,12 @@ export const AppSettingsSchema = z
       })
       .strict(),
     editor: EditorSettingsSchema,
-    layout: z
-      .object({
-        drawerOpen: z.boolean(),
-        drawerRatio: z.number().min(0.08).max(0.85),
-        drawerTab: DrawerTabSchema,
-        inlineOutputWidth: z.number().int().min(180).max(720)
-      })
-      .strict(),
+    layout: LayoutSettingsValueSchema.extend({
+      toolPosition: LayoutSettingsValueSchema.shape.toolPosition.default('bottom'),
+      sideRatio: LayoutSettingsValueSchema.shape.sideRatio.default(0.4),
+      focusMode: LayoutSettingsValueSchema.shape.focusMode.default(false),
+      showStatusBar: LayoutSettingsValueSchema.shape.showStatusBar.default(true)
+    }),
     session: z
       .object({
         tabs: z.array(SessionTabSchema),
@@ -147,7 +158,7 @@ export const SettingsPatchSchema = z
     prefs: AppSettingsSchema.shape.prefs.partial().optional(),
     appearance: AppSettingsSchema.shape.appearance.partial().optional(),
     editor: EditorSettingsValueSchema.partial().optional(),
-    layout: AppSettingsSchema.shape.layout.partial().optional(),
+    layout: LayoutSettingsValueSchema.partial().optional(),
     session: AppSettingsSchema.shape.session.partial().optional()
   })
   .strict();

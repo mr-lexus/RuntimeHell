@@ -26,7 +26,7 @@ const DEMO_FILE = {
   relPath: 'entry.ts',
   language: 'typescript',
   dirty: false,
-  content: ANALYSIS_DEMO_CODE
+  content: `// ${primaryShortcut('Enter')} to run. Your results appear in Console.\n\nconst values = [1, 2, 3, 4, 5];\n\nfunction sum(items: number[]): number {\n  return items.reduce((total, value) => total + value, 0);\n}\n\nconsole.log('Total:', sum(values));\n({ count: values.length, total: sum(values) });\n`
 };
 
 const DRAWER_TABS: DrawerTab[] = ['console', 'inspector', 'analysis', 'packages', 'runtimes', 'performance'];
@@ -54,7 +54,7 @@ export function App(): React.JSX.Element {
   const resetAllSettings = useSettings((s) => s.resetAll);
   const [workspaceView, setWorkspaceView] = useState<'editor' | 'settings'>('editor');
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [systemThemeTick, setSystemThemeTick] = useState(0);
   const runtimeSettingsReadyRef = useRef(false);
   const activeRuntime = useRuntimes((s) => s.activeRuntime);
@@ -165,7 +165,15 @@ export function App(): React.JSX.Element {
     })();
     // Real executor wiring (todo 11): Ctrl+Enter and toolbar both funnel into
     // the run store; streamed events update it via the preload bridge.
-    const offRun = onRunRequested(() => { void useRun.getState().requestStart(); });
+    const offRun = onRunRequested(() => {
+      const layout = useSettings.getState().settings.layout;
+      if (!layout.focusMode && !layout.drawerOpen) {
+        setDrawerTab('console');
+        setDrawerOpen(true);
+        void useSettings.getState().patch({ layout: { drawerTab: 'console', drawerOpen: true } });
+      }
+      void useRun.getState().requestStart();
+    });
     const offEvents = window.api?.onRunEvent((event) => useRun.getState().handleEvent(event));
     const offAnalysis = window.api?.onAnalysisEvent((event) => useAnalysis.getState().handleEvent(event));
     const offPerformance = usePerformance.getState().bindEvents();
@@ -189,8 +197,9 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     setShowOutputColumn(appSettings.editor.inlineInspector);
     setDrawerOpen(appSettings.layout.drawerOpen);
+    setDrawerTab(appSettings.layout.drawerTab);
     if (useUi.getState().drawerRatio !== appSettings.layout.drawerRatio) setDrawerRatio(appSettings.layout.drawerRatio);
-  }, [appSettings.editor.inlineInspector, appSettings.layout.drawerOpen, appSettings.layout.drawerRatio, setDrawerRatio]);
+  }, [appSettings.editor.inlineInspector, appSettings.layout.drawerOpen, appSettings.layout.drawerRatio, appSettings.layout.drawerTab, setDrawerRatio, setDrawerTab]);
   useEffect(() => {
     if (appSettings.appearance.theme !== 'system') return;
     const media = window.matchMedia('(prefers-color-scheme: light)');
@@ -355,34 +364,77 @@ export function App(): React.JSX.Element {
     if (patch.editor?.inlineInspector !== undefined) setShowOutputColumn(patch.editor.inlineInspector);
     if (patch.layout?.drawerOpen !== undefined) setDrawerOpen(patch.layout.drawerOpen);
     if (patch.layout?.drawerRatio !== undefined) setDrawerRatio(patch.layout.drawerRatio);
+    if (patch.layout?.drawerTab !== undefined) setDrawerTab(patch.layout.drawerTab);
   };
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
+      if (document.querySelector('dialog[open], .rh-vim-help, .rh-tab-rename-popover')) return;
       const key = event.key.toLowerCase();
-      if ((event.ctrlKey || event.metaKey) && event.shiftKey && key === 'p') { event.preventDefault(); setPaletteOpen(true); }
-      else if (event.key === 'F1') { event.preventDefault(); setPaletteOpen(true); }
-      else if ((event.ctrlKey || event.metaKey) && key === ',') { event.preventDefault(); setWorkspaceView('settings'); }
-      else if ((event.ctrlKey || event.metaKey) && key === 'j' && !(appSettings.editor.vimMode && event.ctrlKey && !event.metaKey)) { event.preventDefault(); setDrawerOpen((value) => !value); }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && key === 'p') { event.preventDefault(); event.stopPropagation(); setPaletteOpen(true); }
+      else if (event.key === 'F1') { event.preventDefault(); event.stopPropagation(); setPaletteOpen(true); }
+      else if ((event.ctrlKey || event.metaKey) && key === ',') { event.preventDefault(); event.stopPropagation(); setWorkspaceView('settings'); }
+      else if ((event.ctrlKey || event.metaKey) && key === 'n' && !(appSettings.editor.vimMode && event.ctrlKey && !event.metaKey)) { event.preventDefault(); event.stopPropagation(); createTab(); }
+      else if ((event.ctrlKey || event.metaKey) && key === 'j' && !(appSettings.editor.vimMode && event.ctrlKey && !event.metaKey)) {
+        event.preventDefault();
+        event.stopPropagation();
+        const layout = useSettings.getState().settings.layout;
+        void useSettings.getState().patch({ layout: { drawerOpen: layout.focusMode || !layout.drawerOpen, focusMode: false } });
+      }
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [appSettings.editor.vimMode]);
   const commands: readonly PaletteCommand[] = [
+    ...files.map((file) => ({ id: `file-${file.id}`, label: file.relPath, category: 'Open files', run: () => { setWorkspaceView('editor'); setActive(file.id); } })),
     { id: 'run', label: 'Run current file', category: 'Execution', shortcut: primaryShortcut('Enter'), enabled: Boolean(activeFile) && phase === 'idle', run: () => emitRunRequested() },
     { id: 'cancel', label: 'Cancel active run', category: 'Execution', enabled: phase !== 'idle', run: () => void requestCancel() },
     { id: 'save', label: 'Save current file', category: 'File', shortcut: primaryShortcut('S'), enabled: Boolean(activeFile), run: () => { if (activeFile) onSave(activeFile.content); } },
     { id: 'new-tab', label: 'New untitled tab', category: 'File', shortcut: primaryShortcut('N'), run: createTab },
-    ...DRAWER_TABS.map((tab) => ({ id: `tool-${tab}`, label: `Focus ${tab}`, category: 'View', run: () => { setDrawerTab(tab); setDrawerOpen(true); } })),
+    ...DRAWER_TABS.map((tab) => ({ id: `tool-${tab}`, label: `Open ${tab === 'inspector' ? 'values inspector' : tab}`, category: 'Tools', run: () => { setWorkspaceView('editor'); applySettingsPatch({ layout: { drawerTab: tab, drawerOpen: true, focusMode: false } }); } })),
     { id: 'settings', label: 'Open Settings', category: 'View', shortcut: primaryShortcut(','), run: () => setWorkspaceView('settings') },
     { id: 'vim-mode', label: appSettings.editor.vimMode ? 'Disable Vim mode' : 'Enable Vim mode', category: 'Editor', keywords: 'vim neovim modal normal insert', run: () => applySettingsPatch({ editor: { vimMode: !appSettings.editor.vimMode } }) },
     { id: 'theme-dark', label: 'Use dark theme', category: 'Appearance', run: () => applySettingsPatch({ appearance: { theme: 'dark' } }) },
     { id: 'theme-light', label: 'Use light theme', category: 'Appearance', run: () => applySettingsPatch({ appearance: { theme: 'light' } }) },
-    { id: 'bg-topology', label: 'Background: topology', category: 'Appearance', run: () => applySettingsPatch({ appearance: { background: 'topology' } }) },
-    { id: 'bg-signal', label: 'Background: signal', category: 'Appearance', run: () => applySettingsPatch({ appearance: { background: 'signal' } }) },
-    { id: 'bg-blueprint', label: 'Background: blueprint', category: 'Appearance', run: () => applySettingsPatch({ appearance: { background: 'blueprint' } }) },
-    { id: 'bg-off', label: 'Disable animated background', category: 'Appearance', run: () => applySettingsPatch({ appearance: { background: 'off' } }) },
+    { id: 'word-wrap', label: appSettings.editor.wordWrap === 'off' ? 'Enable word wrap' : 'Disable word wrap', category: 'Editor', run: () => applySettingsPatch({ editor: { wordWrap: appSettings.editor.wordWrap === 'off' ? 'on' : 'off' } }) },
+    { id: 'clear-console', label: 'Clear console', category: 'Tools', run: () => useRun.getState().clearConsole() },
     { id: 'autorun', label: autoRun ? 'Disable auto-run' : 'Enable auto-run', category: 'Execution', run: () => applySettingsPatch({ prefs: { autorun: !autoRun } }) }
   ];
 
-  return <WorkbenchShell settings={appSettings} files={files} activeFileId={activeFileId} activeFile={activeFile} drawerTab={drawerTab} drawerRatio={drawerRatio} drawerOpen={drawerOpen} showOutputColumn={showOutputColumn} phase={phase} runtimeVersion={runtimeVersion} lastRuntimeId={lastRuntimeId} activeRuntime={activeRuntime} lastExit={lastExit} autoRun={autoRun} lang={lang} ataStatus={ataStatus} status={status} lineCount={lineCount} scrollTop={scrollTop} inlineByLine={inlineByLine} resultByLine={resultByLine} analyzeActions={analyzeActions} paletteOpen={paletteOpen} settingsViewActive={workspaceView === 'settings'} commands={commands} onOpenPalette={() => setPaletteOpen(true)} onClosePalette={() => setPaletteOpen(false)} onOpenSettings={() => setWorkspaceView('settings')} onSetWorkspaceView={setWorkspaceView} onSetActive={setActive} onCloseFile={closeFile} onMoveFile={moveFile} onRenameFile={renameFile} onCreateTab={createTab} onRun={() => emitRunRequested()} onSave={onSave} onSaveFile={(file) => saveFile(file)} onChange={(value) => { if (activeFile) { updateContent(activeFile.id, value); scheduleAutoRun(); scheduleAta(value); } }} onFormatError={(message) => setStatus(`format error: ${message}`)} onSelectionChanged={(info) => { lastSelectionRef.current = info; }} onScrollTop={setScrollTop} onLineCount={setLineCount} onAnalyze={(type, code, info) => { useAnalysis.getState().requestFromSelection(info ?? null, code || activeFile?.content || '', [type], false, lang); setDrawerTab('analysis'); setDrawerOpen(true); }} onLoadAnalysisDemo={loadAnalysisDemo} onSetDrawerTab={(tab) => { setDrawerTab(tab); if (tab !== 'performance') applySettingsPatch({ layout: { drawerTab: tab } }); }} onSetDrawerOpen={(open) => { setDrawerOpen(open); applySettingsPatch({ layout: { drawerOpen: open } }); }} onSetDrawerRatio={(ratio) => { setDrawerRatio(ratio); applySettingsPatch({ layout: { drawerRatio: ratio } }); }} onSetAutoRun={(value) => applySettingsPatch({ prefs: { autorun: value } })} onCancel={() => void requestCancel()} onSetLang={setLang} onSetOutputColumn={(value) => applySettingsPatch({ editor: { inlineInspector: value } })} onPatchSettings={applySettingsPatch} onResetAppearance={() => void resetAppearance()} onResetEditor={() => void resetEditor()} onResetAll={() => void resetAllSettings()} />;
+  return <WorkbenchShell
+    settings={appSettings} files={files} activeFileId={activeFileId} activeFile={activeFile}
+    drawerTab={drawerTab} drawerRatio={drawerRatio} drawerOpen={drawerOpen} showOutputColumn={showOutputColumn}
+    phase={phase} runtimeVersion={runtimeVersion} lastRuntimeId={lastRuntimeId} activeRuntime={activeRuntime}
+    lastExit={lastExit} autoRun={autoRun} lang={lang} ataStatus={ataStatus} status={status}
+    lineCount={lineCount} scrollTop={scrollTop} inlineByLine={inlineByLine} resultByLine={resultByLine}
+    analyzeActions={analyzeActions} commands={commands} paletteOpen={paletteOpen}
+    settingsViewActive={workspaceView === 'settings'} onSetWorkspaceView={setWorkspaceView}
+    onOpenPalette={() => setPaletteOpen(true)} onClosePalette={() => setPaletteOpen(false)}
+    onOpenSettings={() => setWorkspaceView('settings')}
+    onSetActive={setActive} onCloseFile={closeFile} onMoveFile={moveFile} onRenameFile={renameFile} onCreateTab={createTab}
+    onRun={() => emitRunRequested()} onSave={onSave} onSaveFile={(file) => saveFile(file)}
+    onChange={(value, source) => {
+      if (activeFile) {
+        updateContent(activeFile.id, value);
+        if (source === 'package-import') useRun.getState().cancelScheduledRun();
+        else scheduleAutoRun();
+        scheduleAta(value);
+      }
+    }}
+    onFormatError={(message) => setStatus(`format error: ${message}`)}
+    onSelectionChanged={(info) => { lastSelectionRef.current = info; }}
+    onScrollTop={setScrollTop} onLineCount={setLineCount}
+    onAnalyze={(type, code, info) => {
+      useAnalysis.getState().requestFromSelection(info ?? null, code || activeFile?.content || '', [type], false, lang);
+      applySettingsPatch({ layout: { drawerTab: 'analysis', drawerOpen: true, focusMode: false } });
+    }}
+    onLoadAnalysisDemo={loadAnalysisDemo}
+    onSetDrawerTab={(drawerTab) => applySettingsPatch({ layout: { drawerTab } })}
+    onSetDrawerOpen={(drawerOpen) => applySettingsPatch({ layout: { drawerOpen } })}
+    onSetDrawerRatio={(drawerRatio) => applySettingsPatch({ layout: { drawerRatio } })}
+    onSetAutoRun={(autorun) => applySettingsPatch({ prefs: { autorun } })}
+    onCancel={() => void requestCancel()} onSetLang={setLang}
+    onSetOutputColumn={(inlineInspector) => applySettingsPatch({ editor: { inlineInspector } })}
+    onPatchSettings={applySettingsPatch} onResetAppearance={() => void resetAppearance()}
+    onResetEditor={() => void resetEditor()} onResetAll={() => void resetAllSettings()}
+  />;
 }

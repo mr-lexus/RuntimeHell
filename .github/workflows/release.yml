@@ -1,4 +1,4 @@
-name: Alpha release
+name: Desktop release
 
 on:
   push:
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate source and alpha tag
+    name: Validate source and prerelease tag
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -32,7 +32,7 @@ jobs:
         run: pnpm install --frozen-lockfile
         env:
           ELECTRON_SKIP_NOTHING: '1'
-      - name: Validate alpha version/tag
+      - name: Validate prerelease version/tag
         run: pnpm release:validate "${GITHUB_REF_NAME}"
       - name: Peer dependencies and vulnerability audit
         run: pnpm deps:check
@@ -41,7 +41,7 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck:all
       - name: Unit tests
-        run: xvfb-run -a pnpm test
+        run: xvfb-run -a pnpm test --maxWorkers=4
 
   build:
     name: Build ${{ matrix.name }}
@@ -120,15 +120,12 @@ jobs:
           pattern: runtimehell-*
           path: release-assets
           merge-multiple: false
-      - name: Create prerelease and upload installers
+      - name: Create draft, upload installers, then publish prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         shell: bash
         run: |
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --prerelease --title "RuntimeHell $TAG (alpha)" --notes-file .github/alpha-release-notes.md
-          fi
           mapfile -d '' assets < <(
             find release-assets -type f \( \
               -name '*.exe' -o \
@@ -145,6 +142,17 @@ jobs:
             echo 'No platform artifacts were downloaded' >&2
             exit 1
           fi
+          channel=alpha
+          if [[ "$TAG" == *-beta.* ]]; then channel=beta; fi
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --draft --prerelease --title "RuntimeHell $TAG ($channel)" --notes-file ".github/$channel-release-notes.md"
+          fi
+          # Hash the actual installers, with portable basename-only entries.
+          for asset in "${assets[@]}"; do
+            (cd "$(dirname "$asset")" && sha256sum "$(basename "$asset")")
+          done > SHA256SUMS.txt
           for asset in "${assets[@]}"; do
             gh release upload "$TAG" "$asset" --clobber
           done
+          gh release upload "$TAG" SHA256SUMS.txt --clobber
+          gh release edit "$TAG" --draft=false --prerelease

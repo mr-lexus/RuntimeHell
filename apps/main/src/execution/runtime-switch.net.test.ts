@@ -88,12 +88,12 @@ function assertDemoCaptured(emitted: RunEvent[]): void {
   const text = consoles.map((e) => (e.type === 'console' ? e.text : '')).join(' ');
   expect(text).toContain('active users: 1');
 
-  // ResultCapture: idx0 users, idx1 active, idx2 console call, idx3 sum(40,2).
+  // ResultCapture: idx0 users, idx1 active, idx2 sum(40,2); console has its own frame.
   const results = emitted.filter((e) => e.type === 'result');
-  expect(results.length).toBeGreaterThanOrEqual(4);
-  const sumReport = results.find((e) => e.type === 'result' && e.index === 3);
+  expect(results.length).toBeGreaterThanOrEqual(3);
+  const sumReport = results.find((e) => e.type === 'result' && e.index === 2);
   if (sumReport === undefined || sumReport.type !== 'result') {
-    throw new Error('missing sum(40,2) capture at index 3');
+    throw new Error('missing sum(40,2) capture at index 2');
   }
   expect(sumReport.value).toEqual({ t: 'number', prim: '42' });
 }

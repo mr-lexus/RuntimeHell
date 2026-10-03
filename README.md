@@ -7,25 +7,27 @@
 
   [English](README.md) · [Русский](README.ru.md)
 
-  ![Alpha](https://img.shields.io/badge/status-alpha-f5c400?style=flat-square)
+  ![Beta](https://img.shields.io/badge/status-beta-f5c400?style=flat-square)
   [![CI](https://github.com/mr-lexus/RuntimeHell/actions/workflows/ci.yml/badge.svg)](https://github.com/mr-lexus/RuntimeHell/actions/workflows/ci.yml)
   ![Desktop](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-59a8ff?style=flat-square)
-  ![Electron](https://img.shields.io/badge/Electron-43-47848f?style=flat-square)
+  ![Electron](https://img.shields.io/badge/Electron-44-47848f?style=flat-square)
   ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square)
 </div>
 
 > [!WARNING]
-> **RuntimeHell is alpha software.** Features may be incomplete, unstable, or unavailable on some machines; interfaces and persisted data formats may change without notice. Runtime and engine integration also depends on locally installed tools and upstream binary availability. Do not rely on this build for critical work, and keep backups of important workspace files.
+> **RuntimeHell is beta software.** Main workflows are ready for testing, but bugs and platform-specific limitations remain possible. Installers are unsigned and macOS builds are not notarized. Keep backups of important workspaces and run only code you trust.
 
 RuntimeHell is a Windows-first desktop playground for developers who want to run the same JavaScript or TypeScript across different runtimes, inspect what an engine does with the code, and compare performance without leaving one workspace.
 
-## Alpha downloads
+## Beta downloads
 
-Tagged alpha releases are built by GitHub Actions for Windows x64 (NSIS installer), macOS Intel and Apple Silicon (DMG/ZIP), and Linux x64 (AppImage/DEB). See the [GitHub Releases](https://github.com/mr-lexus/RuntimeHell/releases) page for installers. Builds are currently unsigned and macOS packages are not notarized.
+**[Visit the product website](https://mr-lexus.github.io/RuntimeHell/)** · **[Download 0.1.0-beta.1](https://github.com/mr-lexus/RuntimeHell/releases/tag/v0.1.0-beta.1)**
+
+Native GitHub Actions builds provide Windows x64 (NSIS), macOS Intel/Apple Silicon (DMG/ZIP), and Linux x64 (AppImage/DEB). Each release includes SHA-256 checksums. Builds are currently unsigned and macOS packages are not notarized.
 
 ### Release pipeline
 
-Pushing a version tag such as `v0.1.0-alpha.0` starts the release workflow. It validates the alpha version, runs lint/typecheck/tests, builds on native Windows, Linux, and macOS runners, and publishes a GitHub prerelease after every platform job succeeds. The regular [CI workflow](.github/workflows/ci.yml) runs the same checks plus compatibility smoke probes on pull requests and pushes to `main`/`master`.
+Pushing a version tag such as `v0.1.0-beta.1` starts the release workflow. It validates the version, runs lint/typecheck/tests, builds on native Windows, Linux, and macOS runners, then uploads all installers to a draft before publishing the prerelease. The regular [CI workflow](.github/workflows/ci.yml) also checks pushes and pull requests.
 
 | Platform | Runner | Artifacts |
 | --- | --- | --- |
@@ -36,9 +38,9 @@ Pushing a version tag such as `v0.1.0-alpha.0` starts the release workflow. It v
 
 See [platform compatibility](docs/platform-compatibility.md) for the tested native paths, runtime discovery behavior, and known engine limitations.
 
-![RuntimeHell workbench with TypeScript source and streamed console output](docs/images/readme/workbench.png)
+![RuntimeHell running TypeScript with expandable inline values and prototypes](website/assets/screens/workspace.png)
 
-## What is available in the alpha
+## What is available in the beta
 
 ### Multi-runtime execution
 
@@ -47,6 +49,7 @@ See [platform compatibility](docs/platform-compatibility.md) for the tested nati
 - Stream stdout, stderr, structured console values, per-line output, exit status, and duration while a run is active.
 - Cancel long-running code and enforce a configurable timeout with child-process tree cleanup.
 - Inspect captured values as an expandable, virtualized object tree.
+- Inspect top-level objects without `console.log`, including destructured bindings, multiple values per line, hidden/symbol properties and prototype chains. Accessors are displayed without invocation.
 
 ### Editor and workspace
 
@@ -54,6 +57,9 @@ See [platform compatibility](docs/platform-compatibility.md) for the tested nati
 - Automatic type acquisition for imported packages.
 - Autosave, session restore, run history, command palette, and optional auto-run.
 - Optional Vim/Neovim editing powered by `monaco-vim`, with a documented LazyVim keymap profile, which-key hints, and RuntimeHell-native buffer/file/diagnostic actions.
+- Compact Code/Run/Analyze layouts, dock positioning, focus mode, searchable settings, density and motion preferences.
+
+![RuntimeHell workspace layout presets](website/assets/screens/layout.png)
 
 ### Engine internals
 
@@ -68,8 +74,6 @@ Inspect code with **V8 / d8**, **SpiderMonkey**, and **JavaScriptCore** adapters
 
 Analysis can target the whole module or an individual function. Results provide normalized views where available while retaining the raw engine output for verification. Compatible engine binaries must be installed or imported separately.
 
-![RuntimeHell engine analysis panel](docs/images/readme/analysis.png)
-
 ### Runtime and package management
 
 - Detect system installations of Node.js, Deno, Bun, Chrome, Firefox, and nvm-managed Node versions.
@@ -77,8 +81,7 @@ Analysis can target the whole module or an individual function. Results provide 
 - Browse the wider runtime and engine catalog, including experimental entries whose execution adapters may not be complete yet.
 - Search the npm registry and install, update, pin, or remove dependencies per workspace.
 - Package install scripts are ignored by default; the npm log remains visible for inspection.
-
-![RuntimeHell runtime manager](docs/images/readme/runtimes.png)
+- Insert imports from the installed package's README, optionally add a commented example, and undo the entire insertion in one step. No automatic execution on insertion.
 
 ### Performance Lab
 
@@ -88,16 +91,16 @@ Analysis can target the whole module or an individual function. Results provide 
 - Compare median, mean, p95, p99, standard deviation, throughput, paired deltas, and warnings.
 - Export experiment results as JSON.
 
-![RuntimeHell Performance Lab](docs/images/readme/performance.png)
+![RuntimeHell Performance Lab with a real local benchmark](website/assets/screens/performance.png)
 
 ## Quick start
 
-RuntimeHell is currently intended to be run from source. The primary development target is **Windows 10/11 x64**.
+Download an installer above, or run from source. The primary development target is **Windows 10/11 x64**, with native macOS and Linux release builds.
 
 ### Requirements (from source)
 
 - Node.js 24
-- pnpm 11.22.0
+- pnpm 12.8.1 (see `packageManager`)
 - Git
 
 ```sh
@@ -109,7 +112,7 @@ The app opens with an executable TypeScript analysis demo. Press `Ctrl+Enter` (`
 
 ## Platform compatibility
 
-The main execution path, native config/cache directories, runtime discovery, PATH handling, process cancellation, and Node/Deno/Bun archive formats are selected at runtime for Windows, macOS, and Linux. Optional engine downloads remain availability-dependent: V8 canary packages are enabled for Windows x64, Linux x64, and Intel macOS; SpiderMonkey, JavaScriptCore, and several standalone engines still require a Windows x64 build or a local import in this alpha. See the [detailed compatibility matrix](docs/platform-compatibility.md).
+The main execution path, native config/cache directories, runtime discovery, PATH handling, process cancellation, and Node/Deno/Bun archive formats are selected at runtime for Windows, macOS, and Linux. Optional engine downloads remain availability-dependent: V8 canary packages are enabled for Windows x64, Linux x64, and Intel macOS; SpiderMonkey, JavaScriptCore, and several standalone engines still require a Windows x64 build or a local import. See the [detailed compatibility matrix](docs/platform-compatibility.md).
 
 ## Development
 
@@ -141,12 +144,12 @@ The main execution path, native config/cache directories, runtime discovery, PAT
 
 The renderer uses context isolation, sandboxing, and validated IPC contracts. Runtime processes have bounded timeouts and process-tree cancellation; managed downloads use official sources and checksum verification where upstream checksums are available. See [the threat model](docs/threat-model.md) for the exact guarantees and non-guarantees.
 
-## Alpha limitations
+## Beta limitations
 
-- Windows is the primary development platform; packaged alpha builds are also produced and smoke-tested on macOS and Linux.
+- Windows is the primary development platform; packaged beta builds are also produced and smoke-tested on macOS and Linux.
 - Runtime and engine availability varies by architecture, installed software, network access, and upstream releases.
 - Not every catalog entry has a finished execution or analysis adapter.
 - Some analysis modes require debug or custom engine builds and are unsupported by release binaries.
-- UI behavior, IPC contracts, workspace metadata, and benchmark formats may change before beta.
+- UI behavior, IPC contracts, workspace metadata, and benchmark formats may change before stable release.
 
-Bug reports with reproduction steps, runtime/engine versions, and relevant raw output are especially valuable during the alpha phase.
+Bug reports with reproduction steps, runtime/engine versions, and relevant raw output are especially valuable during the beta phase.

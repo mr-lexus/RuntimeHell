@@ -24,7 +24,12 @@ interface PerformanceConfig {
 interface PerformanceState extends PerformanceConfig {
   catalog: PerformanceCatalogResponse | null;
   loadingCatalog: boolean;
+  catalogUpdatedAt: number;
   running: boolean;
+  cancelling: boolean;
+  outcome: 'completed' | 'partial' | 'cancelled' | 'failed' | null;
+  startedAt: number | null;
+  finishedAt: number | null;
   requestId: string | null;
   progress: string;
   progressCompleted: number;
@@ -34,7 +39,7 @@ interface PerformanceState extends PerformanceConfig {
   completedGroups: number;
   totalGroups: number;
   errors: Record<string, string>;
-  refreshCatalog: () => Promise<void>;
+  refreshCatalog: (force?: boolean) => Promise<void>;
   bindEvents: () => (() => void) | undefined;
   addCase: (item: PerformanceCase) => void;
   duplicateCase: (id: string) => void;
@@ -59,6 +64,7 @@ interface PerformanceState extends PerformanceConfig {
 const DEFAULT_MEASUREMENT: PerformanceMeasurement = { samples: 20, warmupRounds: 5, iterationsPerSample: 1_000, timeoutMs: 120_000, gcMode: 'runtime' };
 const RUN_TARGETS_KEY = 'rh.performance.run-targets.v1';
 const PERFORMANCE_CATALOG_TIMEOUT_MS = 35_000;
+const PERFORMANCE_CATALOG_CACHE_MS = 30_000;
 let catalogRequestToken = 0;
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -124,11 +130,22 @@ function naturalProfile(target: PerformanceTargetOption): string | undefined {
 }
 
 const initialExperiment: PerformanceConfig = { cases: [], runTargets: loadRunTargets(), selectedProfiles: {}, measurement: DEFAULT_MEASUREMENT, results: [] };
+const emptyRun = {
+  results: [] as PerformanceRunResult[], errors: {} as Record<string, string>,
+  outcome: null, cancelling: false, startedAt: null, finishedAt: null,
+  progress: 'ready', progressCompleted: 0, progressTotal: 0,
+  progressPhase: null, activeGroupId: null, completedGroups: 0, totalGroups: 0
+};
 export const usePerformance = create<PerformanceState>((set, get) => ({
   ...initialExperiment,
   catalog: null,
   loadingCatalog: false,
+  catalogUpdatedAt: 0,
   running: false,
+  cancelling: false,
+  outcome: null,
+  startedAt: null,
+  finishedAt: null,
   requestId: null,
   progress: 'ready',
   progressCompleted: 0,
@@ -139,8 +156,15 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
   totalGroups: 0,
   errors: {},
 
-  refreshCatalog: async () => {
-    if (!window.api?.performanceCatalog) return;
+  refreshCatalog: async (force = false) => {
+    const state = get();
+    // React StrictMode and reopening a tool must not restart expensive probes.
+    if (state.loadingCatalog || state.running) return;
+    if (!force && state.catalog && Date.now() - state.catalogUpdatedAt < PERFORMANCE_CATALOG_CACHE_MS) return;
+    if (!window.api?.performanceCatalog) {
+      set((current) => ({ errors: { ...current.errors, catalog: 'Performance is unavailable. Restart the app and try again.' } }));
+      return;
+    }
     const token = ++catalogRequestToken;
     set((state) => {
       const errors = { ...state.errors };
@@ -184,10 +208,10 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
         return target && profile ? [{ target: target.ref, profiles: [{ id: profile.id, label: profile.label }] }] : [];
       })();
       persistRunTargets(fallback);
-      set({ catalog, loadingCatalog: false, selectedProfiles, runTargets: fallback });
+      set({ catalog, loadingCatalog: false, catalogUpdatedAt: Date.now(), selectedProfiles, runTargets: fallback });
     } catch (error) {
       if (token !== catalogRequestToken) return;
-      set({ loadingCatalog: false, errors: { catalog: error instanceof Error ? error.message : String(error) } });
+      set((current) => ({ loadingCatalog: false, errors: { ...current.errors, catalog: error instanceof Error ? error.message : String(error) } }));
     }
   },
 
@@ -195,19 +219,19 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
 
   addCase: (item) => {
     if (get().running) return;
-    set((state) => ({ cases: [...state.cases, { ...item, target: undefined, profileIds: undefined }], results: [], errors: {} }));
+    set((state) => ({ cases: [...state.cases, { ...item, target: undefined, profileIds: undefined }], ...emptyRun }));
   },
   duplicateCase: (id) => {
     if (get().running) return;
     const source = get().cases.find((item) => item.id === id);
     if (!source) return;
     const copy = { ...source, id: requestId(), label: `${source.label} copy`.slice(0, 80) };
-    set((state) => ({ cases: [...state.cases, copy], results: [], errors: {} }));
+    set((state) => ({ cases: [...state.cases, copy], ...emptyRun }));
   },
-  removeCase: (id) => { if (!get().running) set((state) => ({ cases: state.cases.filter((item) => item.id !== id), results: [], errors: {} })); },
-  renameCase: (id, label) => { if (!get().running && label.trim()) set((state) => ({ cases: state.cases.map((item) => item.id === id ? { ...item, label: label.slice(0, 80) } : item), results: [] })); },
-  updateCaseBody: (id, body) => { if (!get().running) set((state) => ({ cases: state.cases.map((item) => item.id === id ? { ...item, body } : item), results: [], errors: {} })); },
-  setCaseMode: (id, mode) => { if (!get().running) set((state) => ({ cases: state.cases.map((item) => item.id === id ? { ...item, mode } : item), results: [], errors: {} })); },
+  removeCase: (id) => { if (!get().running) set((state) => ({ cases: state.cases.filter((item) => item.id !== id), ...emptyRun })); },
+  renameCase: (id, label) => { if (!get().running && label.trim()) set((state) => ({ cases: state.cases.map((item) => item.id === id ? { ...item, label: label.slice(0, 80) } : item), ...emptyRun })); },
+  updateCaseBody: (id, body) => { if (!get().running) set((state) => ({ cases: state.cases.map((item) => item.id === id ? { ...item, body } : item), ...emptyRun })); },
+  setCaseMode: (id, mode) => { if (!get().running) set((state) => ({ cases: state.cases.map((item) => item.id === id ? { ...item, mode } : item), ...emptyRun })); },
   setCaseTarget: (id, target) => {
     if (get().running) return;
     set((state) => ({
@@ -217,7 +241,7 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
         const natural = naturalProfile(target);
         return { ...item, target: target.ref, profileIds: natural ? [natural] : undefined };
       }),
-      results: [], errors: {}
+      ...emptyRun
     }));
   },
   toggleCaseProfile: (id, profileId) => {
@@ -229,13 +253,13 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
     if (!target || !profile) return;
     const current = item.profileIds ?? [naturalProfile(target) ?? profileId];
     const next = current.includes(profileId) ? current.filter((idValue) => idValue !== profileId) : [...current, profileId];
-    set((state) => ({ cases: state.cases.map((candidate) => candidate.id === id ? { ...candidate, profileIds: next.length ? next : [profileId] } : candidate), results: [], errors: {} }));
+    set((state) => ({ cases: state.cases.map((candidate) => candidate.id === id ? { ...candidate, profileIds: next.length ? next : [profileId] } : candidate), ...emptyRun }));
   },
   setRunTargets: (runTargets) => {
     if (get().running) return;
     const normalized = runTargets.filter((selection) => selection.profiles.length > 0).slice(0, MAX_PERFORMANCE_TARGETS).map((selection) => ({ target: selection.target, profiles: selection.profiles.slice(0, 8) }));
     persistRunTargets(normalized);
-    set({ runTargets: normalized, results: [], errors: {} });
+    set({ runTargets: normalized, ...emptyRun });
   },
   toggleTarget: (target) => {
     if (get().running || !target.available) return;
@@ -258,7 +282,7 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
     if (next.length) runTargets.push({ target: target.ref, profiles: next.map((id) => ({ id, label: target.profiles.find((item) => item.id === id)?.label ?? id })) });
     get().setRunTargets(runTargets);
   },
-  setMeasurement: (patch) => { if (!get().running) set((state) => ({ measurement: { ...state.measurement, ...patch }, results: [] })); },
+  setMeasurement: (patch) => { if (!get().running) set((state) => ({ measurement: { ...state.measurement, ...patch }, ...emptyRun })); },
   applyPreset: (preset) => {
     if (get().running) return;
     const gcMode = get().measurement.gcMode;
@@ -268,48 +292,70 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
       cold: { samples: 15, warmupRounds: 0, iterationsPerSample: 1, timeoutMs: 120_000, gcMode },
       steady: { samples: 30, warmupRounds: 50, iterationsPerSample: 2_000, timeoutMs: 240_000, gcMode }
     };
-    set({ measurement: measurement[preset], results: [], errors: {} });
+    set({ measurement: measurement[preset], ...emptyRun });
   },
   clearExperiment: () => {
     if (get().running) return;
     persistRunTargets([]);
-    set({ cases: [], runTargets: [], selectedProfiles: {}, measurement: DEFAULT_MEASUREMENT, results: [], errors: {}, progress: 'ready', progressCompleted: 0, progressTotal: 0, progressPhase: null, activeGroupId: null });
+    set({ cases: [], runTargets: [], selectedProfiles: {}, measurement: DEFAULT_MEASUREMENT, ...emptyRun });
   },
-  clearResults: () => { if (!get().running) set({ results: [], errors: {}, progress: 'ready', progressCompleted: 0, progressTotal: 0, progressPhase: null, activeGroupId: null }); },
+  clearResults: () => { if (!get().running) set(emptyRun); },
 
   run: async (casesOverride) => {
     const state = get();
-    if (state.running) return;
+    if (state.running || state.loadingCatalog) return;
     // Runtime/profile selection is now a run-level matrix. Strip legacy
     // per-case assignments so every selected runtime executes every file case.
     const cases = (casesOverride ?? state.cases).map((item) => ({ ...item, target: undefined, profileIds: undefined }));
-    if (cases.length === 0) { set({ errors: { experiment: 'Add at least one benchmark case.' } }); return; }
-    if (cases.some((item) => !item.body.trim())) { set({ errors: { experiment: 'Every case must contain executable code.' } }); return; }
+    const rejectRun = (message: string): void => {
+      set({ ...emptyRun, outcome: 'failed', finishedAt: Date.now(), progress: 'failed', errors: { experiment: message } });
+    };
+    if (cases.length === 0) { rejectRun('Add at least one benchmark case.'); return; }
+    if (cases.some((item) => !item.body.trim())) { rejectRun('Every case must contain executable code.'); return; }
     const targets: PerformanceTargetSelection[] = state.runTargets;
-    if (targets.length === 0) { set({ errors: { experiment: 'Select one available runtime and profile for your cases.' } }); return; }
+    if (targets.length === 0) { rejectRun('Select one available runtime and profile for your cases.'); return; }
     const id = requestId();
     const totalGroups = targets.reduce((sum, target) => sum + target.profiles.length, 0);
-    set({ running: true, requestId: id, results: [], errors: {}, progress: 'starting', progressCompleted: 0, progressTotal: 0, progressPhase: 'resolving', activeGroupId: null, completedGroups: 0, totalGroups });
+    set({ ...emptyRun, running: true, requestId: id, startedAt: Date.now(), cases, progress: 'Checking runtime capabilities…', progressPhase: 'resolving', totalGroups });
     try {
       const response = await window.api.performanceStart({
         requestId: id, workspaceId: 'default', name: 'Performance experiment', setup: '', cases, targets,
         measurement: state.measurement, isolation: { mode: 'target-profile' }
       });
-      set({ totalGroups: response.totalGroups });
+      if (get().requestId === id) set({ totalGroups: response.totalGroups });
     } catch (error) {
-      set({ running: false, requestId: null, progress: 'failed', progressPhase: null, activeGroupId: null, errors: { experiment: error instanceof Error ? error.message : String(error) } });
+      if (get().requestId !== id) return;
+      set({ running: false, cancelling: false, outcome: 'failed', finishedAt: Date.now(), requestId: null, progress: 'failed', progressPhase: null, activeGroupId: null, errors: { experiment: error instanceof Error ? error.message : String(error) } });
     }
   },
-  cancel: async () => { const id = get().requestId; if (id) await window.api.performanceCancel(id); },
+  cancel: async () => {
+    const { requestId: id, cancelling } = get();
+    if (!id || cancelling) return;
+    set({ cancelling: true });
+    try {
+      const response = await window.api.performanceCancel(id);
+      if (!response.ok && get().requestId === id) throw new Error('The runtime did not acknowledge cancellation');
+      // The correlated done event, not the IPC acknowledgement, ends the run.
+    } catch (error) {
+      if (get().requestId !== id) return;
+      set((state) => ({ cancelling: false, errors: { ...state.errors, cancellation: `Could not stop: ${error instanceof Error ? error.message : String(error)}. Try again.` } }));
+    }
+  },
 
   handleEvent: (event) => {
     if (event.requestId !== get().requestId) return;
-    if (event.type === 'progress') set({ progress: event.message, progressCompleted: event.completed, progressTotal: event.total, progressPhase: event.phase, activeGroupId: event.groupId ?? null });
-    else if (event.type === 'result') set((state) => ({ results: [...state.results.filter((item) => item.groupId !== event.result.groupId), event.result], completedGroups: state.completedGroups + 1 }));
+    if (event.type === 'progress') {
+      if (event.completed < get().progressCompleted) return;
+      set({ progress: event.message, progressCompleted: Math.min(event.completed, event.total), progressTotal: event.total, progressPhase: event.phase, activeGroupId: event.groupId ?? null });
+    }
+    else if (event.type === 'result') set((state) => {
+      const results = [...state.results.filter((item) => item.groupId !== event.result.groupId), event.result];
+      return { results, completedGroups: results.length };
+    });
     else if (event.type === 'cell-error') set((state) => ({ errors: { ...state.errors, [event.groupId]: event.message } }));
     else {
-      const finished = event.status !== 'cancelled';
-      set((state) => ({ running: false, requestId: null, progress: event.status, progressCompleted: finished ? Math.max(state.progressCompleted, state.progressTotal) : state.progressCompleted, progressPhase: null, activeGroupId: null, completedGroups: event.completedGroups, totalGroups: event.totalGroups }));
+      const finished = event.status === 'completed' || event.status === 'partial';
+      set((state) => ({ running: false, cancelling: false, outcome: event.status, finishedAt: Date.now(), requestId: null, progress: event.status, progressCompleted: finished ? Math.max(state.progressCompleted, state.progressTotal) : state.progressCompleted, progressPhase: null, activeGroupId: null, completedGroups: event.completedGroups, totalGroups: event.totalGroups }));
     }
   }
 }));

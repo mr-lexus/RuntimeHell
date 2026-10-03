@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { IPC } from '@rh/protocol';
-import { handlePing, registerIpcHandlers, registerPersistenceHandlers } from './router.js';
+import { handlePing, registerIpcHandlers, registerPersistenceHandlers, registerPackageHandlers } from './router.js';
+import { PackageService } from '../packages/package-service.js';
 
 type Handler = (payload: unknown) => Promise<unknown>;
 
@@ -17,6 +18,18 @@ function persistenceHandlers(): Map<string, Handler> {
 }
 
 describe('main IPC validation', () => {
+  it('validates package import requests before reading installed files', async () => {
+    const service = new PackageService({ emit: () => {} });
+    const inspect = vi.spyOn(service, 'importInfo').mockResolvedValue({ ok: false, message: 'not installed' });
+    const handlers = new Map<string, Handler>();
+    registerPackageHandlers((channel, handler) => handlers.set(channel, handler), service);
+    const handler = handlers.get(IPC.packagesImportInfo)!;
+    await expect(handler({ workspaceId: 'default', name: '../escape' })).rejects.toThrow();
+    await expect(handler({ workspaceId: 'default', name: 'demo', path: '/secret' })).rejects.toThrow();
+    expect(inspect).not.toHaveBeenCalled();
+    await expect(handler({ workspaceId: 'default', name: 'demo' })).resolves.toMatchObject({ ok: false });
+    expect(inspect).toHaveBeenCalledExactlyOnceWith('default', 'demo');
+  });
   it('rejects malformed ping payloads in the privileged process', async () => {
     await expect(handlePing({ sentAt: 'not-a-number' })).rejects.toThrow();
     await expect(handlePing({ sentAt: 1, extra: true })).rejects.toThrow();

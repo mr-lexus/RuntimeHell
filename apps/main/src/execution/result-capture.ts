@@ -98,16 +98,26 @@ export function injectCapture(
   for (const stmt of ast.program.body) {
     const line = stmt.loc?.start.line ?? 0;
     if (t.isExpressionStatement(stmt) && t.isExpression(stmt.expression)) {
+      // Console calls already emit their arguments. Reporting their return
+      // value adds a meaningless undefined beside the actual values.
+      if (t.isCallExpression(stmt.expression) && t.isMemberExpression(stmt.expression.callee) && t.isIdentifier(stmt.expression.callee.object, { name: '__rh' }) && t.isIdentifier(stmt.expression.callee.property, { name: 'console' })) {
+        statements.push(stmt);
+        continue;
+      }
       statements.push(reportCall(stmt.expression, line));
       continue;
     }
-    if (t.isVariableDeclaration(stmt)) {
+    const declaration = t.isExportNamedDeclaration(stmt) ? stmt.declaration : stmt;
+    if (t.isVariableDeclaration(declaration)) {
       statements.push(stmt);
-      if (opts.captureDeclarations) {
-        for (const decl of stmt.declarations) {
-          if (t.isIdentifier(decl.id)) {
-            const declLine = decl.loc?.start.line ?? line;
-            statements.push(reportCall(t.identifier(decl.id.name), declLine));
+      if (opts.captureDeclarations && !declaration.declare) {
+        for (const decl of declaration.declarations) {
+          // Read only the bindings after initialization. Never repeat a
+          // destructuring initializer, computed key, default or getter.
+          const bindings = Object.values(t.getBindingIdentifiers(decl.id)).sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+          for (const binding of bindings) {
+            const declLine = binding.loc?.start.line ?? decl.loc?.start.line ?? line;
+            statements.push(reportCall(t.identifier(binding.name), declLine));
           }
         }
       }

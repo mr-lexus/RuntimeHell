@@ -82,3 +82,28 @@ export const PkgSearchResponseSchema = z.union([
   z.object({ ok: z.literal(false), message: z.string().min(1) }).strict()
 ]);
 export type PkgSearchResponse = z.infer<typeof PkgSearchResponseSchema>;
+
+export const PkgImportRequestSchema = z.object({ workspaceId: WorkspaceIdSchema, name: NpmPackageNameSchema }).strict();
+const ImportIdentifierSchema = z.string().min(1).max(128).regex(/^[A-Za-z_$][\w$]*$/);
+export const PkgImportBindingSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('default'), local: ImportIdentifierSchema }).strict(),
+  z.object({ kind: z.literal('namespace'), local: ImportIdentifierSchema }).strict(),
+  z.object({ kind: z.literal('named'), local: ImportIdentifierSchema, imported: ImportIdentifierSchema }).strict()
+]);
+export const PkgImportInfoSchema = z.object({
+  name: NpmPackageNameSchema, version: z.string().min(1).max(128),
+  bindings: z.array(PkgImportBindingSchema).min(1).max(16).refine((bindings) =>
+    bindings.filter((binding) => binding.kind === 'default').length <= 1 &&
+    bindings.filter((binding) => binding.kind === 'namespace').length <= 1 &&
+    !(bindings.some((binding) => binding.kind === 'namespace') && bindings.some((binding) => binding.kind === 'named'))),
+  source: z.enum(['readme', 'namespace']), example: z.string().max(4000).nullable(),
+  workspaceModuleType: z.enum(['module', 'commonjs']).default('commonjs'),
+  supportsImport: z.boolean(), supportsRequire: z.boolean()
+}).strict();
+export const PkgImportResponseSchema = z.union([
+  z.object({ ok: z.literal(true), info: PkgImportInfoSchema }).strict(),
+  z.object({ ok: z.literal(false), message: z.string().min(1) }).strict()
+]);
+export type PkgImportInfo = z.infer<typeof PkgImportInfoSchema>;
+export type PkgImportBinding = z.infer<typeof PkgImportBindingSchema>;
+export type PkgImportResponse = z.infer<typeof PkgImportResponseSchema>;

@@ -14,10 +14,27 @@ function settingsWithEditor(editorPatch: Partial<AppSettings['editor']>): AppSet
 }
 
 function resetStore(): void {
-  useSettings.setState({ settings: settingsWithEditor({}), hydrated: true });
+  useSettings.setState({ settings: settingsWithEditor({}), hydrated: true, saveStatus: 'idle', saveError: null });
 }
 
 describe('settings patching', () => {
+  it('reports persistence failures without discarding the local edit and supports retry', async () => {
+    const settingsSet = vi.fn().mockRejectedValueOnce(new Error('Disk is read-only')).mockResolvedValueOnce(settingsWithEditor({ fontSize: 16 }));
+    vi.stubGlobal('window', { api: { settingsSet } });
+    resetStore();
+    await useSettings.getState().patch({ editor: { fontSize: 16 } });
+    expect(useSettings.getState()).toMatchObject({ saveStatus: 'error', saveError: 'Disk is read-only' });
+    expect(useSettings.getState().settings.editor.fontSize).toBe(16);
+    await useSettings.getState().patch({ editor: { fontSize: 16 } });
+    expect(useSettings.getState()).toMatchObject({ saveStatus: 'saved', saveError: null });
+  });
+
+  it('does not report a successful save without the settings bridge', async () => {
+    vi.stubGlobal('window', {});
+    resetStore();
+    await useSettings.getState().patch({ layout: { focusMode: true } });
+    expect(useSettings.getState().saveStatus).toBe('error');
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
     resetStore();
@@ -38,6 +55,7 @@ describe('settings patching', () => {
 
     const lineNumbersPatch = useSettings.getState().patch({ editor: { lineNumbers: 'relative' } });
     const vimModePatch = useSettings.getState().patch({ editor: { vimMode: true } });
+    expect(useSettings.getState().saveStatus).toBe('saving');
 
     expect(useSettings.getState().settings.editor.lineNumbers).toBe('relative');
     expect(useSettings.getState().settings.editor.vimMode).toBe(true);
@@ -48,12 +66,14 @@ describe('settings patching', () => {
     // An older complete response must not overwrite the newer optimistic patch.
     resolvers[0]!(settingsWithEditor({ lineNumbers: 'on', vimMode: false }));
     await secondStarted;
+    expect(useSettings.getState().saveStatus).toBe('saving');
     expect(settingsSet).toHaveBeenCalledTimes(2);
     expect(useSettings.getState().settings.editor.lineNumbers).toBe('relative');
     expect(useSettings.getState().settings.editor.vimMode).toBe(true);
 
     resolvers[1]!(settingsWithEditor({ lineNumbers: 'relative', vimMode: true }));
     await Promise.all([lineNumbersPatch, vimModePatch]);
+    expect(useSettings.getState().saveStatus).toBe('saved');
 
     expect(useSettings.getState().settings.editor.lineNumbers).toBe('relative');
     expect(useSettings.getState().settings.editor.vimMode).toBe(true);

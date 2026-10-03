@@ -1,6 +1,8 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
+import './ui/workbench.css';
+import './panels/performance/performance.css';
 import { App } from './App';
 import { APP_LOGO_URL } from './branding';
 

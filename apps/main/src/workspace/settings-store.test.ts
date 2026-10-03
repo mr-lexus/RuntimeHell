@@ -75,6 +75,22 @@ describe('settings store', () => {
     expect(settings.prefs.autorun).toBe(true);
   });
 
+  it('extends old layouts without replacing existing preferences', async () => {
+    const path = settingsPath();
+    await saveSettings(DEFAULT_SETTINGS, path);
+    await writeFile(path, JSON.stringify({ ...DEFAULT_SETTINGS, layout: { drawerOpen: true, drawerRatio: .55, drawerTab: 'analysis', inlineOutputWidth: 420 } }), 'utf8');
+    const { settings, corruptBackupPath } = await loadSettings(path);
+    expect(corruptBackupPath).toBeNull();
+    expect(settings.layout).toEqual({ drawerOpen: true, drawerRatio: .55, drawerTab: 'analysis', inlineOutputWidth: 420, toolPosition: 'bottom', sideRatio: .4, focusMode: false, showStatusBar: true });
+  });
+
+  it('persists the full workspace layout across independent updates', async () => {
+    await updateSettings({ layout: { toolPosition: 'right', sideRatio: .52, drawerTab: 'performance', focusMode: true, showStatusBar: false } });
+    await updateSettings({ layout: { drawerOpen: false } });
+    const { settings } = await loadSettings();
+    expect(settings.layout).toMatchObject({ toolPosition: 'right', sideRatio: .52, drawerTab: 'performance', focusMode: true, showStatusBar: false, drawerOpen: false });
+  });
+
   it('keeps Vim mode enabled when another editor setting changes', async () => {
     await updateSettings({ editor: { vimMode: true } });
     await updateSettings({ editor: { fontSize: 16 } });

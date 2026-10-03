@@ -1,7 +1,7 @@
 {
   "name": "runtimehell",
   "private": true,
-  "version": "0.1.0-alpha.8",
+  "version": "0.1.0-beta.1",
   "description": "RuntimeHell - multi-runtime JS/TS playground with engine internals analysis",
   "author": "RuntimeHell contributors",
   "repository": {
@@ -23,7 +23,9 @@
     "gen-fixtures": "node scripts/gen-fixtures.mjs",
     "typecheck:all": "node scripts/typecheck.mjs --all",
     "compatibility": "node scripts/e2e-compatibility.mjs",
-    "release:validate": "node scripts/validate-release.mjs"
+    "release:validate": "node scripts/validate-release.mjs",
+    "site:build": "node website/build.mjs",
+    "site:test": "node scripts/test-website.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",

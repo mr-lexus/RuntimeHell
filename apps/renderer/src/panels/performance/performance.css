@@ -1,0 +1,52 @@
+/* One vertical scroll owner. Nested case/result scroll areas used to consume
+   the wheel while the visible dock scrollbar stood still. */
+.rh-workbench .rh-dock-content.is-performance { overflow: hidden; }
+.rh-workbench .rh-perf { flex: 1 1 0; min-height: 0; overflow: hidden; gap: 8px; padding-bottom: 0; }
+.rh-perf-toolbar { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; gap: 5px; padding-bottom: 6px; border-bottom: 1px solid var(--separator); }
+.rh-workbench .rh-perf-toolbar .rh-perf-header-controls { display: contents; }
+.rh-perf-scroll { flex: 1 1 0; min-height: 0; overflow: auto; scrollbar-gutter: stable; padding: 0 3px 8px 0; }
+.rh-workbench .rh-perf .rh-instrument-body { overflow: visible; }
+.rh-workbench .rh-perf-builder > .rh-perf-section:not(.rh-perf-settings),
+.rh-workbench .rh-perf-results-scroll { max-height: none; overflow: visible; }
+.rh-workbench .rh-perf .rh-perf-cases-frame,
+.rh-workbench .rh-perf .rh-perf-results-frame { display: none; }
+.rh-workbench .rh-perf.is-cases .rh-perf-cases-frame,
+.rh-workbench .rh-perf.is-results .rh-perf-results-frame { display: flex; }
+.rh-workbench .rh-perf-view-switch { position: static; display: flex; flex: 0 0 auto; gap: 4px; margin: 0 auto 0 0; padding: 0; border: 0; background: transparent; }
+.rh-workbench .rh-perf-view-switch button { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; padding: 4px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text-dim); font: 12px var(--font-ui); letter-spacing: 0; text-transform: none; cursor: pointer; }
+.rh-workbench .rh-perf-view-switch button.is-active { color: var(--text); background: var(--bg-raised); box-shadow: none; }
+.rh-workbench .rh-perf-view-switch button span { color: var(--text-dim); font: 10px var(--font-mono); }
+.rh-workbench .rh-perf-section-title { flex-wrap: wrap; gap: 6px; }
+.rh-workbench .rh-perf-section-actions { flex-wrap: wrap; }
+.rh-perf-guidance { margin: 0 0 8px; color: var(--text-dim); font: 12px/1.5 var(--font-ui); }
+.rh-perf-status { flex: 0 0 auto; display: grid; gap: 5px; padding: 8px 10px; border: 1px solid var(--separator); border-radius: 7px; background: var(--bg-raised); color: var(--accent); }
+.rh-perf-status-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 3px 12px; font: 12px/1.3 var(--font-ui); }
+.rh-perf-status-heading strong { color: var(--text); font-weight: 600; }
+.rh-perf-status-heading > span { color: var(--text-dim); font: 10px var(--font-mono); font-variant-numeric: tabular-nums; }
+.rh-perf-status-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font: 11px/1.3 var(--font-ui); }
+.rh-perf-status.is-completed { color: var(--ok); }
+.rh-perf-status.is-partial, .rh-perf-status.is-cancelled { color: var(--warn); }
+.rh-perf-status.is-failed { color: var(--err); }
+.rh-progress-bar { position: relative; height: 4px; overflow: hidden; border-radius: 3px; background: color-mix(in srgb, currentColor 12%, transparent); isolation: isolate; }
+.rh-progress-fill { display: block; height: 100%; width: 100%; background: currentColor; transform-origin: left center; transition: transform 320ms cubic-bezier(.2,.8,.2,1); }
+.rh-progress-sweep { position: absolute; inset: 0 auto 0 0; width: 35%; border-radius: inherit; background: linear-gradient(90deg, transparent, currentColor, transparent); animation: rh-progress-travel 1500ms cubic-bezier(.45,0,.55,1) -450ms infinite; }
+.rh-progress-bar:not(.is-indeterminate) .rh-progress-sweep { opacity: .5; }
+@keyframes rh-progress-travel { from { transform: translateX(-100%); } to { transform: translateX(390%); } }
+.rh-workbench .rh-perf-chart-track span { width: 100%; min-width: 0; transform-origin: left center; transition: transform 320ms ease-out; }
+.rh-perf-chart-grow { height: 100%; animation: rh-perf-chart-enter 420ms cubic-bezier(.2,.8,.2,1) both; transform-origin: left center; }
+@keyframes rh-perf-chart-enter { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+html[data-motion='reduced'] .rh-progress-sweep { animation: none; transform: translateX(95%); opacity: .5; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion='full']) .rh-progress-sweep { animation: none; transform: translateX(95%); opacity: .5; }
+}
+/* Keep background tools dormant without remounting their state. */
+.rh-dock-content[hidden] .rh-progress-sweep { animation-play-state: paused; }
+@container (min-width: 720px) {
+  .rh-perf-status { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 6px 18px; }
+  .rh-perf-status .rh-progress-bar { grid-column: 1 / -1; grid-row: 2; }
+  .rh-perf-status-detail { grid-column: 2; grid-row: 1; text-align: right; }
+}
+@container (max-width: 520px) {
+  .rh-workbench .rh-perf-chart-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .rh-workbench .rh-perf-chart-track { grid-column: 1 / -1; }
+}

@@ -5,8 +5,10 @@
  *
  * Requires a prior `pnpm build` (launches out/main/index.js).
  */
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { _electron, type ElectronApplication, type Page } from 'playwright';
 
@@ -15,9 +17,14 @@ const mainEntry = resolve(process.cwd(), 'out/main/index.js');
 async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
   const t0 = Date.now();
   const step = (m: string): void => console.log(`[e2e-monaco +${Date.now() - t0}ms] ${m}`);
+  const profile = await mkdtemp(join(tmpdir(), 'rh-monaco-'));
   const app = await _electron.launch({
-    args: [mainEntry],
-    env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1' }
+    args: [mainEntry, `--user-data-dir=${join(profile, 'chromium')}`],
+    env: {
+      ...process.env, ELECTRON_ENABLE_LOGGING: '1', USERPROFILE: profile, HOME: profile,
+      APPDATA: join(profile, 'config'), LOCALAPPDATA: join(profile, 'local'),
+      XDG_CONFIG_HOME: join(profile, 'config'), RH_CACHE_ROOT: join(profile, 'cache')
+    }
   });
   step('launched');
   app.process().stdout?.on('data', (c: Buffer) => {
@@ -50,6 +57,11 @@ describe.skipIf(!existsSync(mainEntry))('monaco e2e (built app)', () => {
       await page.reload();
       await page.waitForFunction(() => Boolean((window as unknown as Record<string, unknown>)['__rh_editor']), undefined, { timeout: 20000 });
       await page.locator('.rh-vim-statusline').waitFor({ state: 'visible', timeout: 10000 });
+
+      const sourceCount = await page.locator('.rh-tab[data-file-id]').count();
+      await page.evaluate(() => ((window as unknown as Record<string, unknown>)['__rh_editor'] as { setSelection: (a: number, b: number, c: number, d: number) => void }).setSelection(1, 1, 1, 1));
+      await page.keyboard.press('Control+n');
+      expect(await page.locator('.rh-tab[data-file-id]').count()).toBe(sourceCount);
 
       await page.evaluate(() => {
         const editor = (window as unknown as Record<string, unknown>)['__rh_editor'] as {
@@ -116,6 +128,7 @@ describe.skipIf(!existsSync(mainEntry))('monaco e2e (built app)', () => {
         return m.editor.getModelMarkers({}).length;
       });
       expect(markerCount).toBeGreaterThanOrEqual(1);
+      expect(await page.evaluate(() => ((window as unknown as Record<string, unknown>)['__rh_monaco'] as { editor: { getModelMarkers: (options: object) => Array<{ code?: string }> } }).editor.getModelMarkers({}).some((marker) => marker.code === '2322'))).toBe(true);
 
       // The language picker must change the Monaco model as well as the run
       // preference. TS-only syntax is valid in TypeScript and a syntax error
@@ -140,6 +153,7 @@ describe.skipIf(!existsSync(mainEntry))('monaco e2e (built app)', () => {
       await page.waitForTimeout(1000);
       const tsLanguageId = await page.evaluate(() => ((window as never as Record<string, unknown>)['__rh_monaco'] as { editor: { getEditors: () => Array<{ getModel: () => { getLanguageId: () => string } | null }> } }).editor.getEditors()[0]?.getModel()?.getLanguageId());
       expect(tsLanguageId).toBe('typescript');
+      await page.waitForFunction(() => ((window as unknown as Record<string, unknown>)['__rh_monaco'] as { editor: { getModelMarkers: (options: object) => unknown[] } }).editor.getModelMarkers({}).length === 0, undefined, { timeout: 5000 });
 
       await page.evaluate(() => {
         const ed = (window as never as Record<string, unknown>)['__rh_editor'] as { setLanguage: (v: string) => void };
@@ -158,6 +172,7 @@ describe.skipIf(!existsSync(mainEntry))('monaco e2e (built app)', () => {
       await page.waitForTimeout(1000);
       const restoredTsLanguageId = await page.evaluate(() => ((window as never as Record<string, unknown>)['__rh_monaco'] as { editor: { getEditors: () => Array<{ getModel: () => { getLanguageId: () => string } | null }> } }).editor.getEditors()[0]?.getModel()?.getLanguageId());
       expect(restoredTsLanguageId).toBe('typescript');
+      await page.waitForFunction(() => ((window as unknown as Record<string, unknown>)['__rh_monaco'] as { editor: { getModelMarkers: (options: object) => unknown[] } }).editor.getModelMarkers({}).length === 0, undefined, { timeout: 5000 });
     } finally {
       await app.close();
     }

@@ -209,16 +209,50 @@ describe('structural serializer', () => {
     expect(innerParent?.node.refId).toBe(0);
   });
 
-  it('replaces throwing getters with the <threw> marker', () => {
+  it('shows accessors without invoking throwing or mutating getters', () => {
     const s = makeSerializer();
+    let reads = 0;
     const evil = {
       get broken(): number {
+        reads++;
         throw new Error('nope');
       }
     };
     const node = s(evil);
     expect(node.children?.[0]?.k).toBe('broken');
-    expect(node.children?.[0]?.node.prim).toBe('<threw>');
+    expect(node.children?.[0]?.node.prim).toBe('[Getter]');
+    expect(reads).toBe(0);
+  });
+
+  it('includes hidden and symbol properties, and inspects prototype accessors inertly', () => {
+    let reads = 0;
+    const proto = { get inherited() { reads++; return 99; } };
+    const value = Object.create(proto) as Record<PropertyKey, unknown>;
+    Object.defineProperty(value, 'hidden', { value: 42 });
+    Object.defineProperty(value, 'constructor', { get() { reads++; throw Error('unsafe'); } });
+    value[Symbol.for('token')] = 'secret';
+    const node = makeSerializer()(value);
+    expect(node.children).toContainEqual({ k: 'hidden', node: { t: 'number', prim: '42' } });
+    expect(node.children).toContainEqual({ k: 'Symbol(token)', node: { t: 'string', prim: 'secret' } });
+    expect(node.children?.find((child) => child.k === '[[Prototype]]')?.node.children).toContainEqual({ k: 'inherited', node: { t: 'string', prim: '[Getter]' } });
+    expect(reads).toBe(0);
+  });
+
+  it('does not invoke indexed or named array getters', () => {
+    let reads = 0;
+    const value: unknown[] = [];
+    for (const key of ['0', 'extra']) Object.defineProperty(value, key, { enumerable: true, get() { reads++; return 42; } });
+    const node = makeSerializer()(value);
+    expect(node.children?.slice(0, 2).map((child) => child.node.prim)).toEqual(['[Getter]', '[Getter]']);
+    expect(reads).toBe(0);
+  });
+
+  it('counts accessor and empty array slots toward the node budget', () => {
+    const values: unknown[] = new Array(100);
+    Object.defineProperty(values, '0', { get() { throw Error('must not run'); } });
+    const node = makeSerializer({ maxNodes: 10 })(values);
+    expect(node.truncated).toBe(true);
+    expect(node.children!.length).toBeLessThanOrEqual(10);
   });
 
   it('stops at the depth cap with a truncated marker', () => {

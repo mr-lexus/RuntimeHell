@@ -52,7 +52,7 @@ function InspectorRow({ ariaAttributes, index, items, onToggle, style }: RowComp
       <span style={{ width: 34, color: 'var(--accent)', textAlign: 'right', marginRight: 8 }}>
         {item.row.depth === 0 ? `#${item.rootIndex}` : ''}
       </span>
-      <span style={{ width: 12, color: 'var(--text-faint)' }}>{arrow}</span>
+      {item.row.hasChildren ? <button className="rh-value-expander" aria-label={`Toggle ${item.row.childKey ?? `value ${item.rootIndex}`}`} aria-expanded={item.row.isExpanded} onClick={(event) => { event.stopPropagation(); onToggle(item.rootIndex, item.row.key); }}>{arrow}</button> : <span style={{ width: 18 }} />}
       <span>
         {item.row.depth > 0 && (isPrototype
           ? <><span style={{ fontStyle: 'italic' }}>[[Prototype]]</span><span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> → </span><span>{item.row.label}</span></>
@@ -112,7 +112,7 @@ export function InspectorPanel({ fileId }: InspectorPanelProps): React.JSX.Eleme
       rowCount={allRows.length}
       rowHeight={ROW_HEIGHT}
       rowProps={{ items: allRows, onToggle: toggle }}
-      style={{ height: 400, width: '100%' }}
+      style={{ height: '100%', minHeight: 0, width: '100%' }}
     />
   );
 }

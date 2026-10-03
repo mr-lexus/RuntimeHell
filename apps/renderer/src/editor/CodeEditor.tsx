@@ -3,6 +3,7 @@ import * as monaco from 'monaco-editor';
 import type { AppSettings } from '@rh/protocol';
 import { getSelectionInfo, type SelectionInfo } from './selection-service';
 import { VimModeController, type LazyVimAction, type VimMode, type PendingHint } from './vim-mode';
+import { planPackageImport, type PackageImportController } from './package-import';
 
 export type AnalyzeType = 'ast' | 'bytecode' | 'optcode' | 'ir-graph' | 'deopts' | 'gc';
 
@@ -23,7 +24,8 @@ export interface CodeEditorProps {
   path: string;
   value: string;
   language: string;
-  onChange?: (value: string) => void;
+  onChange?: (value: string, source?: 'package-import') => void;
+  packageImportController?: PackageImportController;
   onSave?: (value: string) => void;
   onRun?: () => void;
   onFormatError?: (message: string) => void;
@@ -172,6 +174,28 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
       cursorStyle: editorSettings.cursorStyle
     });
     editorRef.current = editor;
+    let changeSource: 'package-import' | undefined;
+    const importController = propsRef.current.packageImportController;
+    const insertPackage: PackageImportController['insert'] = (path, info, example) => {
+      const model = editor.getModel();
+      if (!model || path !== propsRef.current.path) return { ok: false, message: 'The active file changed. Click Import again in the intended file.' };
+      const plan = planPackageImport(model.getValue(), path, info, example, model.getLanguageId());
+      if (!plan.ok) return plan;
+      const edits = plan.edits.map(({ offset, text }) => {
+        const position = model.getPositionAt(offset);
+        return { range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column), text, forceMoveMarkers: true };
+      });
+      editor.pushUndoStop();
+      changeSource = 'package-import';
+      try {
+        if (!editor.executeEdits('packages.import', edits)) return { ok: false, message: 'The editor rejected the edit. No import was inserted.' };
+      }
+      finally { changeSource = undefined; editor.pushUndoStop(); }
+      editor.revealPositionInCenterIfOutsideViewport(model.getPositionAt(plan.edits[0]?.offset ?? 0));
+      editor.focus();
+      return { ok: true, message: plan.message };
+    };
+    if (importController) importController.insert = insertPackage;
 
     const syncCurrentLineNumber = (): void => {
       currentLineNumberDecorationsRef.current = syncCurrentRelativeLineNumber(
@@ -231,7 +255,7 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     };
 
     editor.onDidChangeModelContent(() => {
-      propsRef.current.onChange?.(editor.getValue());
+      propsRef.current.onChange?.(editor.getValue(), changeSource);
     });
 
     // Expose scroll position for the line-aligned output column.
@@ -310,6 +334,7 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     });
 
     return () => {
+      if (importController?.insert === insertPackage) importController.insert = () => ({ ok: false, message: 'Open a source file first.' });
       if (scrollController?.scrollBy === scrollBy) scrollController.scrollBy = () => undefined;
       currentLineNumberDecorationsRef.current = editor.deltaDecorations(currentLineNumberDecorationsRef.current, []);
       editor.dispose();

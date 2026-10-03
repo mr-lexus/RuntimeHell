@@ -31,10 +31,10 @@ export const DEFAULT_SETTINGS: AppSettings = AppSettingsSchema.parse({
     smoothScrolling: true,
     stickyScroll: false,
     cursorStyle: 'line',
-    inlineInspector: true,
+    inlineInspector: false,
     vimMode: false
   },
-  layout: { drawerOpen: true, drawerRatio: 0.35, drawerTab: 'console', inlineOutputWidth: 320 },
+  layout: { drawerOpen: false, drawerRatio: 0.3, drawerTab: 'console', inlineOutputWidth: 280 },
   session: { tabs: [], activeRelPath: null }
 });
 

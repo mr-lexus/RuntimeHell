@@ -73,6 +73,30 @@
     var maxNodes = caps.maxNodes !== undefined ? caps.maxNodes : DEFAULT_CAPS.maxNodes;
     var maxString = caps.maxString !== undefined ? caps.maxString : DEFAULT_CAPS.maxString;
 
+    function propertyNode(owner, key, depth, ancestors, state, includePrototype) {
+      try {
+        var descriptor = Object.getOwnPropertyDescriptor(owner, key);
+        if (!descriptor) { state.nodeCount++; return { t: 'undefined' }; }
+        if ('value' in descriptor) return serializeValue(descriptor.value, depth, ancestors, state, includePrototype);
+        state.nodeCount++;
+        return { t: 'string', prim: descriptor.get && descriptor.set ? '[Getter/Setter]' : descriptor.get ? '[Getter]' : '[Setter]' };
+      } catch (_) { state.nodeCount++; return { t: 'string', prim: '<unavailable>' }; }
+    }
+
+    // Inspect data descriptors only: reading .constructor can itself run a getter.
+    function constructorLabel(value) {
+      try {
+        for (var current = value, level = 0; current !== null && level < maxDepth; current = Object.getPrototypeOf(current), level++) {
+          var descriptor = Object.getOwnPropertyDescriptor(current, 'constructor');
+          if (!descriptor) continue;
+          if (!('value' in descriptor) || typeof descriptor.value !== 'function') return undefined;
+          var name = Object.getOwnPropertyDescriptor(descriptor.value, 'name');
+          return name && typeof name.value === 'string' ? name.value : undefined;
+        }
+      } catch (_) { /* A proxy may refuse inspection. */ }
+      return undefined;
+    }
+
     function serializeValue(value, depth, ancestors, state, includePrototype) {
       if (state.nodeCount >= maxNodes) {
         return { t: 'object', prim: '<node cap reached>', truncated: true };
@@ -209,7 +233,7 @@
             arrNode.truncated = true;
             break;
           }
-          arrNode.children.push({ k: String(ai), node: serializeValue(value[ai], depth + 1, ancestors, state) });
+          arrNode.children.push({ k: String(ai), node: propertyNode(value, String(ai), depth + 1, ancestors, state) });
         }
         var arrayKeys;
         try {
@@ -224,13 +248,7 @@
             arrNode.truncated = true;
             break;
           }
-          var arrayChild;
-          try {
-            arrayChild = value[arrayKey];
-          } catch (e) {
-            arrayChild = '<threw>';
-          }
-          arrNode.children.push({ k: arrayKey, node: serializeValue(arrayChild, depth + 1, ancestors, state) });
+          arrNode.children.push({ k: arrayKey, node: propertyNode(value, arrayKey, depth + 1, ancestors, state) });
         }
         if (includePrototype !== false) appendPrototypeChain(arrNode, value, depth, ancestors, state);
         ancestors.pop();
@@ -275,12 +293,13 @@
       }
 
       // Plain objects / class instances.
-      var ctorName = value.constructor && value.constructor.name !== 'Object' ? value.constructor.name : undefined;
+      var ctorName = constructorLabel(value);
+      if (ctorName === 'Object') ctorName = undefined;
       var objNode = { t: 'object', label: ctorName, children: [] };
       ancestors.push(value);
       var keys;
       try {
-        keys = Object.keys(value);
+        keys = Reflect.ownKeys(value);
       } catch (e) {
         keys = [];
       }
@@ -290,14 +309,8 @@
           break;
         }
         var key = keys[ki];
-        var childVal;
-        try {
-          childVal = value[key];
-        } catch (e) {
-          childVal = '<threw>';
-        }
         state.nodeCount++;
-        objNode.children.push({ k: key, node: serializeValue(childVal, depth + 1, ancestors, state) });
+        objNode.children.push({ k: String(key), node: propertyNode(value, key, depth + 1, ancestors, state) });
       }
       if (includePrototype !== false) appendPrototypeChain(objNode, value, depth, ancestors, state);
       ancestors.pop();
@@ -347,8 +360,7 @@
         }
         var protoLabel;
         try {
-          var ctor = proto.constructor;
-          protoLabel = ctor && typeof ctor.name === 'string' && ctor.name ? ctor.name : undefined;
+          protoLabel = constructorLabel(proto);
         } catch (_) {
           protoLabel = undefined;
         }
@@ -358,7 +370,7 @@
 
         var protoKeys;
         try {
-          protoKeys = Object.getOwnPropertyNames(proto);
+          protoKeys = Reflect.ownKeys(proto);
         } catch (_) {
           protoKeys = [];
         }
@@ -370,14 +382,8 @@
             protoNode.truncated = true;
             break;
           }
-          var pVal;
-          try {
-            pVal = proto[pk];
-          } catch (e) {
-            pVal = '<threw>';
-          }
           state.nodeCount++;
-          protoNode.children.push({ k: pk, node: serializeValue(pVal, chainDepth + 2, ancestors, state, false) });
+          protoNode.children.push({ k: String(pk), node: propertyNode(proto, pk, chainDepth + 2, ancestors, state, false) });
         }
         ancestors.pop();
         current = proto;

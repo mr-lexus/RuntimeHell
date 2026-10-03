@@ -10,6 +10,7 @@ import type { RunEvent, RuntimeId, SerializedValue } from '@rh/protocol';
 import { detectSourceLanguage, type DetectedLanguage } from '../editor/language-detection';
 import { getActiveFile, type OpenFile } from './ui.js';
 import { useRuntimes } from './runtimes.js';
+import { valueForLine, type CapturedReport } from './line-results';
 
 export type RunPhase = 'idle' | 'running' | 'cancelling';
 
@@ -55,7 +56,7 @@ interface RunState {
   lastRuntimeId: RuntimeId | null;
   timeoutMs: number;
   lines: ConsoleLine[];
-  reports: { index: number; value: SerializedValue }[];
+  reports: CapturedReport[];
   inlineConsole: InlineConsoleEntry[];
   inlineByLine: Record<number, InlineConsoleEntry[]>;
   resultByLine: Record<number, SerializedValue>;
@@ -71,6 +72,7 @@ interface RunState {
   setLang: (lang: RunLang) => void;
   requestStart: () => Promise<void>;
   scheduleAutoRun: () => void;
+  cancelScheduledRun: () => void;
   requestCancel: () => Promise<void>;
   handleEvent: (e: RunEvent) => void;
   clearConsole: () => void;
@@ -91,10 +93,12 @@ function pushLine(lines: ConsoleLine[], stream: ConsoleLine['stream'], text: str
 function upsertReport(
   reports: RunState['reports'],
   index: number,
-  value: SerializedValue
+  value: SerializedValue,
+  line?: number
 ): RunState['reports'] {
   const others = reports.filter((r) => r.index !== index);
-  return [...others, { index, value }].sort((a, b) => a.index - b.index);
+  const sourceLine = line ?? reports.find((report) => report.index === index)?.line;
+  return [...others, { index, value, line: sourceLine }].sort((a, b) => a.index - b.index);
 }
 
 export const useRun = create<RunState>((set, get) => ({
@@ -189,6 +193,11 @@ export const useRun = create<RunState>((set, get) => ({
     }, AUTORUN_DEBOUNCE_MS);
   },
 
+  cancelScheduledRun: () => {
+    if (debounceTimer !== null) clearTimeout(debounceTimer);
+    debounceTimer = null;
+  },
+
   requestCancel: async () => {
     const { runId, phase } = get();
     if (phase !== 'running' || !runId) return;
@@ -231,10 +240,12 @@ export const useRun = create<RunState>((set, get) => ({
         break;
       }
       case 'result': {
-        const nextReports = upsertReport(state.reports, e.index, e.value);
+        const nextReports = upsertReport(state.reports, e.index, e.value, e.line);
         const nextByLine = { ...state.resultByLine };
-        if (typeof e.line === 'number' && e.line > 0) {
-          nextByLine[e.line] = e.value;
+        const line = nextReports.find((report) => report.index === e.index)?.line;
+        if (typeof line === 'number' && line > 0) {
+          const value = valueForLine(nextReports, line);
+          if (value) nextByLine[line] = value;
         }
         set({ reports: nextReports, resultByLine: nextByLine });
         break;

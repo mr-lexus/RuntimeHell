@@ -74,12 +74,12 @@ describe('ExecutionManager (composed path, real node)', () => {
     expect(stdoutText).toContain('active users: 1');
 
     // ResultCapture reported bindings and top-level expressions:
-    // idx0 users, idx1 active, idx2 console.log(...), idx3 sum(40,2).
+    // idx0 users, idx1 active, idx2 sum(40,2); console has its own frame.
     const results = emitted.filter((e) => e.type === 'result');
-    expect(results.length).toBeGreaterThanOrEqual(4);
-    const sumReport = results.find((e) => e.type === 'result' && e.index === 3);
+    expect(results.length).toBeGreaterThanOrEqual(3);
+    const sumReport = results.find((e) => e.type === 'result' && e.index === 2);
     if (sumReport === undefined || sumReport.type !== 'result') {
-      throw new Error('missing sum(40,2) capture at index 3');
+      throw new Error('missing sum(40,2) capture at index 2');
     }
     expect(sumReport.value.t).toBe('number');
     expect(sumReport.value.prim).toBe('42');
