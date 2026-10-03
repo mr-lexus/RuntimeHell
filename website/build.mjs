@@ -20,7 +20,7 @@ for (const [lang, c] of Object.entries(content)) {
   const prefix = lang === 'ru' ? '../' : './';
   const url = base + (lang === 'ru' ? 'ru/' : '');
   const picture = (name, alt, hero = false) => `<a class="screen-link" href="${prefix}assets/screens/${name}.png" data-lightbox aria-label="${escape(c.enlarge)}"><img src="${prefix}assets/screens/${name}.png" alt="${escape(alt)}" width="1600" height="1000" ${hero ? 'fetchpriority="high"' : 'loading="lazy"'} decoding="async"><span class="zoom" aria-hidden="true">↗</span></a>`;
-  const platformFiles = [`RuntimeHell-${version}-win-x64.exe`, `RuntimeHell-${version}-mac-arm64.dmg`, `RuntimeHell-${version}-mac-x64.dmg`, `RuntimeHell-${version}-linux-x64.AppImage`];
+  const platformFiles = [`RuntimeHell-${version}-win-x64.exe`, `RuntimeHell-${version}-mac-arm64.dmg`, `RuntimeHell-${version}-mac-x64.dmg`, `RuntimeHell-${version}-linux-x86_64.AppImage`];
   const html = `<!doctype html>
 <html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark light">
 <title>${escape(c.title)}</title><meta name="description" content="${escape(c.description)}"><link rel="canonical" href="${url}"><link rel="alternate" hreflang="en" href="${base}"><link rel="alternate" hreflang="ru" href="${base}ru/"><link rel="alternate" hreflang="x-default" href="${base}">

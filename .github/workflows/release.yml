@@ -101,8 +101,6 @@ jobs:
             dist-release/*.dmg
             dist-release/*.zip
             dist-release/*.blockmap
-            dist-release/latest*.yml
-            dist-release/latest*.yaml
           if-no-files-found: error
           retention-days: 14
 
@@ -133,15 +131,30 @@ jobs:
               -name '*.deb' -o \
               -name '*.dmg' -o \
               -name '*.zip' -o \
-              -name '*.blockmap' -o \
-              -name 'latest*.yml' -o \
-              -name 'latest*.yaml' \
+              -name '*.blockmap' \
             \) -print0
           )
           if ((${#assets[@]} == 0)); then
             echo 'No platform artifacts were downloaded' >&2
             exit 1
           fi
+          # Auto-update is not wired. Do not publish colliding per-arch channel YAMLs.
+          declare -A filenames=()
+          for asset in "${assets[@]}"; do
+            filename=$(basename "$asset")
+            if [[ -n "${filenames[$filename]:-}" ]]; then
+              echo "Duplicate release asset: $filename" >&2
+              exit 1
+            fi
+            filenames[$filename]=1
+          done
+          for platform in win-x64.exe linux-x86_64.AppImage linux-amd64.deb mac-x64.dmg mac-x64.zip mac-arm64.dmg mac-arm64.zip; do
+            filename="RuntimeHell-${TAG#v}-$platform"
+            if [[ -z "${filenames[$filename]:-}" ]]; then
+              echo "Missing installer: $filename" >&2
+              exit 1
+            fi
+          done
           channel=alpha
           if [[ "$TAG" == *-beta.* ]]; then channel=beta; fi
           if ! gh release view "$TAG" >/dev/null 2>&1; then

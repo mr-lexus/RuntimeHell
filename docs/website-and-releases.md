@@ -17,6 +17,8 @@ The static website lives in `website/`. `content.mjs` contains English and Russi
 4. The release workflow validates source, builds natively for Windows x64, Linux x64, macOS x64 and macOS arm64, runs native compatibility smoke tests and packages installers.
 5. Publish uploads into a draft, writes `SHA256SUMS.txt`, then makes the prerelease public only after uploads complete. Verify the final asset names, sizes and website download links.
 
+Publication requires all seven installer/archive formats and rejects duplicate asset names. Auto-update is not wired, so per-architecture channel YAMLs are deliberately excluded: both macOS jobs produce the same metadata filename. Linux artifact macros use `x86_64` for AppImage and `amd64` for DEB, not `x64`.
+
 Builds are unsigned and macOS is not notarized until signing credentials are deliberately configured. Beta is a maturity label, not a claim of signing, platform certification or security sandboxing.
 
 The documented `http-cache-semantics` audit exception in `pnpm-workspace.yaml` remains scoped to electron-builder's build-time downloader. Re-check upstream before each release; do not describe the audit as having zero advisories while that exception exists.

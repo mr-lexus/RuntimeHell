@@ -6,6 +6,10 @@ import { _electron as electron } from 'playwright';
 import assert from 'node:assert/strict';
 
 const root = resolve('website/dist');
+const { version } = JSON.parse(await readFile('package.json', 'utf8'));
+// electron-builder uses platform-specific architecture names in artifact macros.
+const expectedDownloads = ['win-x64.exe', 'mac-arm64.dmg', 'mac-x64.dmg', 'linux-x86_64.AppImage']
+  .map((platform) => `https://github.com/mr-lexus/RuntimeHell/releases/download/v${version}/RuntimeHell-${version}-${platform}`);
 const output = resolve('.rhbuild/website');
 await mkdir(output, { recursive: true });
 const server = createServer(async (request, response) => {
@@ -38,6 +42,7 @@ try {
       assert.equal(await page.locator('html').getAttribute('lang'), lang);
       assert.equal(await page.locator('h1').count(), 1);
       assert.equal(await page.locator('.download-card').count(), 4);
+      assert.deepEqual(await page.locator('.download-card').evaluateAll((links) => links.map((link) => link.href)), expectedDownloads);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${lang}/${width}: horizontal overflow`);
       for (const image of await page.locator('img[src]').all()) {
         await image.scrollIntoViewIfNeeded();
