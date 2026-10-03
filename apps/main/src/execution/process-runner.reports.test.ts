@@ -65,10 +65,10 @@ async function runProgram(transport: 'fd3' | 'stderr'): Promise<Collected> {
 function assertReportsShape(result: RunResult): void {
   expect(result.reports.length).toBe(4);
 
-  // index 0: object with throwing getter → <threw> string node (QA failure scenario)
+  // index 0: accessor is displayed without running potentially mutating code.
   const evil = result.reports.find((r) => r.index === 0)?.value;
   expect(evil?.children?.[0]?.k).toBe('broken');
-  expect(evil?.children?.[0]?.node.prim).toBe('<threw>');
+  expect(evil?.children?.[0]?.node.prim).toBe('[Getter]');
 
   // index 1: Map
   const map = result.reports.find((r) => r.index === 1)?.value;

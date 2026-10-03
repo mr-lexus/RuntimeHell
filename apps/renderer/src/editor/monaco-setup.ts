@@ -32,7 +32,10 @@ typescriptDefaults.setCompilerOptions({
   target: ScriptTarget.ESNext,
   jsx: JsxEmit.Preserve,
   allowNonTsExtensions: true,
-  allowJs: true,
+  // Anonymous models have no extension. The TS worker must fall back to TS;
+  // allowJs would classify them as JS and reject valid type annotations.
+  // JavaScript models use javascriptDefaults and their own worker below.
+  allowJs: false,
   moduleResolution: ModuleResolutionKind.NodeJs,
   module: ModuleKind.ESNext,
   lib: ['esnext', 'dom']

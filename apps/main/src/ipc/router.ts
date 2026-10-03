@@ -20,6 +20,7 @@ import {
   ListFilesRequestSchema,
   ListWorkspacesResponseSchema,
   PkgListRequestSchema,
+  PkgImportRequestSchema,
   PkgOpRequestSchema,
   PkgSearchRequestSchema,
   PingRequestSchema,
@@ -90,6 +91,10 @@ export function registerBinariesHandlers(register: Register, controller: Binarie
 
 /** Packages handlers bound to a service instance (todo 13). */
 export function registerPackageHandlers(register: Register, service: PackageService): void {
+  register(IPC.packagesImportInfo, async (payload) => {
+    const req = PkgImportRequestSchema.parse(payload);
+    return service.importInfo(req.workspaceId, req.name);
+  });
   register(IPC.packagesInstall, async (payload) => {
     const req = PkgOpRequestSchema.parse(payload);
     return service.install(req.workspaceId, req.name, req.versionRange, req.ignoreScripts, undefined, req.managedNodeVersion ?? null);

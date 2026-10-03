@@ -7,7 +7,7 @@ const normalizedTag = tag.replace(/^v/, '');
 if (!tag || normalizedTag !== version) {
   throw new Error(`release tag ${tag || '<missing>'} must match package version ${version}`);
 }
-if (!/-alpha(?:\.|$)/.test(version)) {
-  throw new Error(`release workflow is alpha-only; package version is ${version}`);
+if (!/^\d+\.\d+\.\d+-(alpha|beta)\.\d+$/.test(version)) {
+  throw new Error(`release workflow requires a numbered alpha/beta version; package version is ${version}`);
 }
-console.log(`Validated alpha release v${version}`);
+console.log(`Validated prerelease v${version}`);

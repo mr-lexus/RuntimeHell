@@ -915,6 +915,7 @@ const DEFAULT_RUNTIMES: readonly { id: RuntimeId; name: string }[] = [
  */
 export function RuntimesPanel(): React.JSX.Element {
   const state = useRuntimes();
+  const [query, setQuery] = useState('');
 
   // Collapse state persists across reloads. Default: installable runtimes
   // (node/deno/bun and supported engines) expanded, other cards collapsed.
@@ -942,9 +943,11 @@ export function RuntimesPanel(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const runtimes = state.catalog.filter((e) => e.category === 'runtime');
-  const engines = state.catalog.filter((e) => e.category === 'engine');
-  const polyfills = state.catalog.filter((e) => e.category === 'polyfill');
+  const needle = query.trim().toLowerCase();
+  const catalog = state.catalog.filter((entry) => `${entry.name} ${entry.id} ${entry.engine} ${entry.description} ${entry.category}`.toLowerCase().includes(needle));
+  const runtimes = catalog.filter((e) => e.category === 'runtime');
+  const engines = catalog.filter((e) => e.category === 'engine');
+  const polyfills = catalog.filter((e) => e.category === 'polyfill');
   const installable = runtimes.filter((e) => e.installable);
   const informational = runtimes.filter((e) => !e.installable);
   const installableEngines = engines.filter((e) => e.installable);
@@ -952,6 +955,8 @@ export function RuntimesPanel(): React.JSX.Element {
 
   return (
     <div style={{ fontSize: 12, color: 'var(--text)', paddingBottom: 8 }}>
+      <div className="rh-runtime-search"><input className="rh-panel-input" type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label="Search runtimes and engines" placeholder="Search runtimes, engines and polyfills…" /><span>{catalog.length} available</span></div>
+      {catalog.length === 0 && <p className="rh-empty-hint">No matches. Try a name such as Node, V8 or Bun.</p>}
       {state.notice !== null && (
         <div role="alert" style={{ color: 'var(--err)', marginBottom: 6, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
           {state.notice}
@@ -1008,7 +1013,7 @@ export function RuntimesPanel(): React.JSX.Element {
         ))}
       </div>
 
-      <div style={SECTION_TITLE}><RuntimeIcon glyph={ICONS.wrench} /> Engines</div>
+      {engines.length > 0 && <div style={SECTION_TITLE}><RuntimeIcon glyph={ICONS.wrench} /> Engines</div>}
       <div style={STACK}>
         {installableEngines.map((e) => (
           <EngineCard key={e.id} entry={e} collapsed={isCollapsed(e)} onToggle={() => toggleCollapsed(e)} />
@@ -1024,7 +1029,7 @@ export function RuntimesPanel(): React.JSX.Element {
         ))}
       </div>
 
-      <div style={SECTION_TITLE}><RuntimeIcon glyph={ICONS.ruler} /> Standards &amp; Polyfills</div>
+      {polyfills.length > 0 && <div style={SECTION_TITLE}><RuntimeIcon glyph={ICONS.ruler} /> Standards &amp; Polyfills</div>}
       <div style={STACK}>
         {polyfills.map((e) => (
           <PolyfillCard

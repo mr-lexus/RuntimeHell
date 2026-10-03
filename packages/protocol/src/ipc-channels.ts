@@ -49,6 +49,7 @@ export const IPC = {
   packagesRemove: 'packages:remove',
   packagesList: 'packages:list',
   packagesSearch: 'packages:search',
+  packagesImportInfo: 'packages:import-info',
   packagesEvent: 'packages:event', // main -> renderer stream
 
   // workspace files (minimal early surface; WorkspaceStore expands in todo 21)

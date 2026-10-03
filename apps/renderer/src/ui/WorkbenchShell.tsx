@@ -1,14 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { AppSettings, PerformanceCase, RuntimeId } from '@rh/protocol';
+import type { AppSettings, RuntimeId } from '@rh/protocol';
 import type { DrawerTab } from '../state/ui';
 import { CodeEditor } from '../editor/CodeEditor';
+import type { PackageImportController } from '../editor/package-import';
 import { LineOutputColumn } from '../panels/console/LineOutputColumn';
 import { ConsolePanel } from '../panels/console/ConsolePanel';
 import { InspectorPanel } from '../panels/inspector/InspectorPanel';
 import { AnalysisPanel } from '../panels/analysis/AnalysisPanel';
 import { PackagesPanel } from '../panels/packages/PackagesPanel';
 import { RuntimesPanel } from '../panels/runtimes/RuntimesPanel';
-import { PerformancePanel, PerformanceRunMatrixControl } from '../panels/performance/PerformancePanel';
+import { PerformancePanel } from '../panels/performance/PerformancePanel';
 import { BlockLoader, Button, InstrumentFrame, KeyboardHint, StatusIndicator } from './primitives';
 import { CommandPalette, type PaletteCommand } from './CommandPalette';
 import { SettingsView } from './SettingsView';
@@ -18,9 +19,12 @@ import type { SelectionInfo } from '../editor/selection-service';
 import type { AnalyzeType, EditorScrollController } from '../editor/CodeEditor';
 import type { LazyVimAction, VimMode } from '../editor/vim-mode';
 import { getLazyVimHelpGroups } from '../editor/lazyvim-keymaps';
-import { usePerformance } from '../state/performance';
 import { useRun, type RunLang } from '../state/run';
 import { APP_LOGO_URL } from '../branding';
+import { Icon } from './Icon';
+import { Dialog } from './Dialog';
+import { WorkspaceLayoutControls } from './WorkspaceLayoutControls';
+import { effectiveToolPosition, resizeToolRatio, WORKSPACE_PRESETS, workspacePreset } from './workspace-layout';
 
 interface FileLike { id: string; relPath: string; language: string; content: string; dirty: boolean; }
 
@@ -36,26 +40,6 @@ function languageModeIcon(mode: RunLang): string {
   return mode === 'auto' ? '✦' : mode === 'js' ? '\u{e781}' : '\u{e628}';
 }
 
-function livePerformanceCases(cases: readonly PerformanceCase[], files: readonly FileLike[]): PerformanceCase[] {
-  return cases.map((item) => {
-    const ref = item.sourceRef;
-    if (ref === undefined) return item;
-    const file = files.find((candidate) => (ref.fileId !== undefined && candidate.id === ref.fileId) || candidate.relPath === ref.relPath);
-    if (file === undefined || item.sourceMode !== 'selection') return file === undefined ? item : { ...item, body: file.content.trim(), sourceSnapshot: undefined };
-    const lines = file.content.split(/\r?\n/);
-    const start = Math.max(0, ref.startLine - 1);
-    const end = Math.min(lines.length - 1, ref.endLine - 1);
-    if (start > end || lines[start] === undefined) return item;
-    const selected = lines.slice(start, end + 1);
-    if (selected.length === 1) selected[0] = (selected[0] ?? '').slice(Math.max(0, ref.startCol - 1), Math.max(0, ref.endCol - 1));
-    else {
-      selected[0] = (selected[0] ?? '').slice(Math.max(0, ref.startCol - 1));
-      const last = selected.length - 1;
-      selected[last] = (selected[last] ?? '').slice(0, Math.max(0, ref.endCol - 1));
-    }
-    return { ...item, body: selected.join('\n').trim() || item.body, sourceSnapshot: undefined };
-  });
-}
 
 export interface WorkbenchShellProps {
   settings: AppSettings;
@@ -95,7 +79,7 @@ export interface WorkbenchShellProps {
   onRun: () => void;
   onSave: (content: string) => void;
   onSaveFile: (file: FileLike) => void;
-  onChange: (content: string) => void;
+  onChange: (content: string, source?: 'package-import') => void;
   onFormatError: (message: string) => void;
   onSelectionChanged: (info: SelectionInfo | null) => void;
   onScrollTop: (value: number) => void;
@@ -116,33 +100,14 @@ export interface WorkbenchShellProps {
 }
 
 const drawerItems: readonly { id: DrawerTab; label: string }[] = [
-  { id: 'console', label: 'console' },
-  { id: 'inspector', label: 'inspector' },
-  { id: 'analysis', label: 'analysis' },
-  { id: 'packages', label: 'packages' },
-  { id: 'runtimes', label: 'runtimes' },
-  { id: 'performance', label: 'performance' }
+  { id: 'console', label: 'Console' },
+  { id: 'inspector', label: 'Values' },
+  { id: 'analysis', label: 'Analysis' },
+  { id: 'performance', label: 'Performance' },
+  { id: 'packages', label: 'Packages' },
+  { id: 'runtimes', label: 'Runtimes' }
 ];
 
-function PerformanceHeaderControls({ files }: { files: readonly FileLike[] }): React.JSX.Element {
-  const state = usePerformance();
-  const setNumber = (key: 'samples' | 'iterationsPerSample', value: string): void => {
-    const limits = key === 'samples' ? { min: 3, max: 200 } : { min: 1, max: 10_000_000 };
-    state.setMeasurement({ [key]: Math.max(limits.min, Math.min(limits.max, Number(value) || limits.min)) });
-  };
-  return <div className="rh-perf-header-controls" aria-label="Performance measurement controls">
-    <PerformanceRunMatrixControl />
-    <div className="rh-perf-header-presets">{(['quick', 'reliable'] as const).map((preset) => <Button key={preset} title={preset === 'quick' ? '5 samples · 250 cycles' : '30 samples · 1,000 cycles'} onClick={() => state.applyPreset(preset)} disabled={state.running}>{preset}</Button>)}</div>
-    <label title="Number of measured samples">samples<input type="number" min={3} max={200} value={state.measurement.samples} disabled={state.running} onChange={(event) => setNumber('samples', event.target.value)} /></label>
-    <label title="Iterations per sample">cycles<input type="number" min={1} max={10_000_000} value={state.measurement.iterationsPerSample} disabled={state.running} onChange={(event) => setNumber('iterationsPerSample', event.target.value)} /></label>
-    <details className="rh-perf-header-advanced"><summary>advanced</summary><div>
-      <label>warmup<input type="number" min={0} max={10_000} value={state.measurement.warmupRounds} disabled={state.running} onChange={(event) => state.setMeasurement({ warmupRounds: Math.max(0, Math.min(10_000, Number(event.target.value) || 0)) })} /></label>
-      <label>timeout<input type="number" min={1_000} max={600_000} value={state.measurement.timeoutMs} disabled={state.running} onChange={(event) => state.setMeasurement({ timeoutMs: Math.max(1_000, Math.min(600_000, Number(event.target.value) || 1_000)) })} /></label>
-      <label>GC<select value={state.measurement.gcMode} disabled={state.running} onChange={(event) => state.setMeasurement({ gcMode: event.target.value as typeof state.measurement.gcMode })}><option value="runtime">runtime</option><option value="before-group">before group</option><option value="before-sample">before sample</option></select></label>
-    </div></details>
-    {state.running ? <Button variant="danger" onClick={() => void state.cancel()}>cancel</Button> : <Button variant="primary" onClick={() => void state.run(livePerformanceCases(state.cases, files))} disabled={state.cases.length === 0 || state.runTargets.length === 0}>run</Button>}
-  </div>;
-}
 
 const VIM_HELP_GROUPS = getLazyVimHelpGroups();
 
@@ -174,6 +139,16 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
   const [tabScrollState, setTabScrollState] = useState({ left: false, right: false });
   const [vimMode, setVimMode] = useState<VimMode>('normal');
   const [vimHelpOpen, setVimHelpOpen] = useState(false);
+  const [layoutOpen, setLayoutOpen] = useState(false);
+  const [toolMaximized, setToolMaximized] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  const [visitedTools, setVisitedTools] = useState<ReadonlySet<DrawerTab>>(new Set());
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [resizePreview, setResizePreview] = useState<number | null>(null);
+  const focusMode = props.settings.layout.focusMode;
+  const toolPosition = effectiveToolPosition(props.settings.layout.toolPosition, viewportWidth);
+  const toolsOpen = props.drawerOpen && !focusMode;
+  const toolRatio = resizePreview ?? (toolPosition === 'right' ? props.settings.layout.sideRatio : props.drawerRatio);
   const previousActiveFileId = useRef<string | null>(null);
   const lastActiveFileId = useRef<string | null>(props.activeFileId);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
@@ -181,6 +156,16 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
   const tabsRef = useRef<HTMLDivElement | null>(null);
   const dockContentRef = useRef<HTMLDivElement | null>(null);
   const editorScrollController = useRef<EditorScrollController>({ scrollBy: () => undefined });
+  const packageImportController = useRef<PackageImportController>({ insert: () => ({ ok: false, message: 'Open a source file first.' }) });
+  useEffect(() => {
+    const resize = (): void => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
+  useEffect(() => {
+    if (toolsOpen) setVisitedTools((previous) => previous.has(props.drawerTab) ? previous : new Set([...previous, props.drawerTab]));
+  }, [toolsOpen, props.drawerTab]);
+  useEffect(() => { if (!toolsOpen) setToolMaximized(false); }, [toolsOpen]);
   // A source slot owns its editor selection/context. Do not carry the
   // previous file's analysis selection into the newly selected tab.
   useEffect(() => {
@@ -286,6 +271,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (!(event.ctrlKey || event.metaKey) || props.files.length === 0) return;
+      if (document.querySelector('dialog[open], .rh-vim-help, .rh-tab-rename-popover')) return;
       const activeIndex = props.files.findIndex((file) => file.id === props.activeFileId);
       if (activeIndex === -1) return;
       const activeFile = props.files[activeIndex];
@@ -325,13 +311,14 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
   const statusKind = props.phase !== 'idle' ? 'running' : props.lastExit?.code === 0 ? 'ready' : props.lastExit?.code !== null && props.lastExit !== null ? 'error' : 'idle';
   const activeRuntimeLabel = props.activeRuntime ?? props.lastRuntimeId ?? 'node';
   const selectTab = (tab: DrawerTab): void => {
+    if (focusMode) props.onPatchSettings({ layout: { focusMode: false } });
     if (props.settingsViewActive) {
       props.onSetWorkspaceView('editor');
       props.onSetDrawerTab(tab);
       props.onSetDrawerOpen(true);
       return;
     }
-    if (props.drawerOpen && props.drawerTab === tab) props.onSetDrawerOpen(false);
+    if (toolsOpen && props.drawerTab === tab) props.onSetDrawerOpen(false);
     else { props.onSetDrawerTab(tab); props.onSetDrawerOpen(true); }
   };
   const theme = document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
@@ -390,8 +377,8 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
       case 'ui.toggleLineNumbers': props.onPatchSettings({ editor: { lineNumbers: props.settings.editor.lineNumbers === 'off' ? 'on' : 'off' } }); return;
       case 'ui.toggleTheme': props.onPatchSettings({ appearance: { theme: theme === 'light' ? 'dark' : 'light' } }); return;
       case 'ui.toggleSmoothScrolling': props.onPatchSettings({ editor: { smoothScrolling: !props.settings.editor.smoothScrolling } }); return;
-      case 'window.grow': props.onSetDrawerRatio(Math.max(.08, props.drawerRatio - .03)); return;
-      case 'window.shrink': props.onSetDrawerRatio(Math.min(.85, props.drawerRatio + .03)); return;
+      case 'window.grow': setToolRatio(toolRatio - .03); return;
+      case 'window.shrink': setToolRatio(toolRatio + .03); return;
       case 'tab.first': if (props.files[0]) props.onSetActive(props.files[0].id); return;
       case 'tab.last': { const last = props.files.at(-1); if (last) props.onSetActive(last.id); return; }
       case 'app.quit': if (typeof window.api?.windowClose === 'function') void window.api.windowClose(); return;
@@ -399,16 +386,38 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
       default: return;
     }
   };
+  const setToolRatio = (ratio: number): void => {
+    const bounded = resizeToolRatio(toolPosition, ratio);
+    if (toolPosition === 'right') props.onPatchSettings({ layout: { sideRatio: bounded } });
+    else props.onSetDrawerRatio(bounded);
+  };
+  const layoutCommands: PaletteCommand[] = [
+    ...WORKSPACE_PRESETS.map((preset) => ({ id: `layout-${preset.id}`, label: `${preset.label} layout`, category: 'Workspace', keywords: preset.description, run: () => props.onPatchSettings(workspacePreset(preset.id)) })),
+    { id: 'focus-mode', label: focusMode ? 'Exit focus mode' : 'Enter focus mode', category: 'Workspace', shortcut: 'Shift+F11', run: () => props.onPatchSettings({ layout: { focusMode: !focusMode } }) },
+    { id: 'layout-customize', label: 'Customize workspace layout', category: 'Workspace', run: () => setLayoutOpen(true) },
+    { id: 'tool-maximize', label: toolMaximized ? 'Restore editor and tools' : 'Expand current tool', category: 'Workspace', run: () => { props.onPatchSettings({ layout: { focusMode: false, drawerOpen: true } }); setToolMaximized(!toolMaximized); } },
+    { id: 'line-results', label: props.showOutputColumn ? 'Hide line results' : 'Show line results', category: 'Workspace', run: () => props.onSetOutputColumn(!props.showOutputColumn) }
+  ];
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent): void => {
+      if (document.querySelector('dialog[open], .rh-vim-help, .rh-tab-rename-popover')) return;
+      if (event.shiftKey && event.key === 'F11') { event.preventDefault(); props.onPatchSettings({ layout: { focusMode: !focusMode } }); }
+    };
+    window.addEventListener('keydown', keydown);
+    return () => window.removeEventListener('keydown', keydown);
+  }, [focusMode, props.onPatchSettings]);
   return (
-    <div className={`rh-app${isMac ? ' is-mac' : ''}`}>
+    <div className={`rh-app rh-workbench${isMac ? ' is-mac' : ''}${focusMode ? ' is-focus-mode' : ''}`}>
       <header className={`rh-titlebar${isMac ? ' is-mac' : ''}`}>
         <div className="rh-brand"><img className="rh-brand-logo" src={APP_LOGO_URL} alt="" /><span>RuntimeHell</span></div>
+        <button className="rh-command-trigger" onClick={props.onOpenPalette} title={`Search files and commands (${primaryShortcut('Shift+P')})`}><Icon name="search" /><span>Search files and commands</span><KeyboardHint>{primaryShortcut('Shift+P')}</KeyboardHint></button>
         <div className="rh-titlebar-actions">
           <div className="rh-titlebar-editor-controls" aria-label="Editor controls">
-          <Button variant="primary" className="rh-titlebar-run" onClick={props.onRun} disabled={!props.activeFile || props.phase !== 'idle'} aria-label={props.phase === 'idle' ? `Run source (${primaryShortcut('Enter')})` : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'} title={props.phase === 'idle' ? `Run source (${primaryShortcut('Enter')})` : props.phase === 'cancelling' ? 'Cancelling run' : 'Run in progress'}><span className="rh-action-marker" aria-hidden="true">{props.phase === 'idle' ? '▶' : <BlockLoader />}</span></Button>
+          <select className="rh-runtime-quick-select" aria-label="Run with runtime" value={props.activeRuntime} onChange={(event) => props.onPatchSettings({ prefs: { defaultRuntime: event.target.value as RuntimeId } })}><option value="node">Node.js</option><option value="deno">Deno</option><option value="bun">Bun</option><option value="browser">Chromium</option></select>
+          <Button variant={props.phase === 'idle' ? 'primary' : 'danger'} className="rh-titlebar-run" onClick={props.phase === 'idle' ? props.onRun : props.onCancel} disabled={!props.activeFile || props.phase === 'cancelling'} aria-label={props.phase === 'idle' ? `Run source (${primaryShortcut('Enter')})` : 'Stop run'} title={props.phase === 'idle' ? `Run source (${primaryShortcut('Enter')})` : 'Stop run'}><Icon name={props.phase === 'idle' ? 'play' : 'stop'} /><span>{props.phase === 'idle' ? 'Run' : props.phase === 'cancelling' ? 'Stopping' : 'Stop'}</span></Button>
           <div ref={languageMenuRef} className="rh-titlebar-language-picker">
             <button type="button" className="rh-titlebar-language-trigger" aria-label={`Language: ${selectedLanguage}${languageMode === 'auto' ? ' (Automatic)' : ''}`} title={`Language: ${selectedLanguage}${languageMode === 'auto' ? ' (Automatic)' : ''}`} aria-haspopup="menu" aria-expanded={languageMenuOpen} onClick={() => setLanguageMenuOpen((open) => !open)}>
-              <span className="rh-language-icon" aria-hidden="true">{displayLanguage === 'js' ? '\u{e781}' : '\u{e628}'}</span>
+              <span aria-hidden="true">{displayLanguage.toUpperCase()}</span><Icon name="chevron" size={12} />
             </button>
             {languageMenuOpen && <div className="rh-titlebar-language-menu" role="menu" aria-label="Select language">
               {(['auto', 'js', 'ts'] as const).map((item) => <button key={item} type="button" role="menuitemradio" className={`rh-titlebar-language-option ${languageMode === item ? 'is-selected' : ''}`} aria-checked={languageMode === item} onClick={() => { props.onSetLang(item); setLanguageMenuOpen(false); }}>
@@ -420,7 +429,9 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
           </div>
           <Button className="rh-titlebar-output" variant={props.showOutputColumn ? 'active' : 'ghost'} onClick={() => props.onSetOutputColumn(!props.showOutputColumn)} aria-pressed={props.showOutputColumn} aria-label={props.showOutputColumn ? 'Hide line output panel' : 'Show line output panel'} title={props.showOutputColumn ? 'Hide line output panel' : 'Show line output panel'}><svg className="rh-titlebar-output-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2.25 12c2.5-4 5.75-6 9.75-6s7.25 2 9.75 6c-2.5 4-5.75 6-9.75 6s-7.25-2-9.75-6Z" /><circle cx="12" cy="12" r="2.5" />{!props.showOutputColumn && <path d="m4 4 16 16" />}</svg></Button>
         </div>
-          <button className={`rh-top-settings ${props.settingsViewActive ? 'is-active' : ''}`} onClick={() => props.settingsViewActive ? props.onSetWorkspaceView('editor') : props.onOpenSettings()} aria-label={props.settingsViewActive ? 'Return to workspace' : 'Settings'} title={props.settingsViewActive ? 'Return to workspace' : `Settings (${primaryShortcut(',')})`}><span className="rh-top-settings-icon" aria-hidden="true">{props.settingsViewActive ? '\u{f02dc}' : '\u{f0493}'}</span></button>
+          <Button onClick={() => props.onPatchSettings({ layout: { focusMode: !focusMode } })} aria-label={focusMode ? 'Exit focus mode' : 'Enter focus mode'} title="Focus mode (Shift+F11)" aria-pressed={focusMode}><Icon name="focus" />{focusMode && <span>Exit focus</span>}</Button>
+          <Button onClick={() => setLayoutOpen(true)} aria-label="Customize layout" title="Customize layout"><Icon name="layout" /></Button>
+          <button className={`rh-top-settings ${props.settingsViewActive ? 'is-active' : ''}`} onClick={props.onOpenSettings} aria-label="Settings" title={`Settings (${primaryShortcut(',')})`}><Icon name="settings" /></button>
         </div>
         {!isMac && <div className="rh-window-controls" aria-label="Window controls">
           <button className="rh-window-control" aria-label="Minimize" title="Minimize" onClick={() => { if (typeof window.api?.windowMinimize === 'function') void window.api.windowMinimize(); }}><span className="rh-window-glyph rh-window-glyph-minimize" aria-hidden="true" /></button>
@@ -430,7 +441,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
       </header>
       <div className="rh-workspace">
         <main className={`rh-main ${props.settingsViewActive ? 'is-settings' : ''}`}>
-          {props.settingsViewActive ? <div className="rh-settings-region"><SettingsView settings={props.settings} onPatch={props.onPatchSettings} onResetAppearance={props.onResetAppearance} onResetEditor={props.onResetEditor} onResetAll={props.onResetAll} onClose={() => props.onSetWorkspaceView('editor')} /></div> : <>
+          <div ref={stageRef} className={`rh-workbench-stage is-${toolPosition}${toolsOpen ? ' has-tools' : ''}${toolMaximized ? ' is-tool-maximized' : ''}`} style={{ '--tool-size': `${Math.round(toolRatio * 100)}%` } as React.CSSProperties}>
             <InstrumentFrame index="SRC" title="SOURCE" metadata={props.activeFile ? `${selectedLanguage} / LIVE${props.settings.editor.vimMode ? ` / VIM ${vimMode.toUpperCase()}` : ''}` : 'NO SOURCE'} showHeader={false} state="active" className="rh-source-frame">
               <div className="rh-source-tabs-shell">
                 {tabScrollState.left && <button type="button" className="rh-tab-scroll-control" onClick={() => scrollTabs(-220)} aria-label="Scroll tabs left" title="Scroll tabs left">‹</button>}
@@ -485,34 +496,66 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
                 {tabScrollState.right && <button type="button" className="rh-tab-scroll-control" onClick={() => scrollTabs(220)} aria-label="Scroll tabs right" title="Scroll tabs right">›</button>}
               </div>
               <div className="rh-editor-region">
-                <div className="rh-editor-host">{props.activeFile ? <CodeEditor key={props.activeFile.id} path={props.activeFile.relPath} value={props.activeFile.content} language={editorLanguage} theme={theme === 'light' ? 'rh-light' : 'rh-dark'} fontSize={editorFontSize} editorSettings={props.settings.editor} vimMode={props.settings.editor.vimMode} onVimModeChange={setVimMode} onVimHelp={() => setVimHelpOpen(true)} onVimAction={handleVimAction} onChange={props.onChange} onSave={props.onSave} onRun={props.onRun} onFormatError={props.onFormatError} onSelectionChanged={(info) => { setSelection(info); props.onSelectionChanged(info); }} onScrollTop={props.onScrollTop} scrollController={editorScrollController.current} onLineCount={props.onLineCount} analyzeActions={props.analyzeActions} inlineOutputs={props.inlineByLine} inlineResults={props.resultByLine} onAnalyze={props.onAnalyze} /> : <div className="rh-empty-state"><div className="rh-empty-mark">◇</div><strong>No source open</strong><span>Open or create a source slot to begin.</span></div>}</div>
-                {props.activeFile && props.showOutputColumn && <div className="rh-inline-output"><LineOutputColumn fileId={props.activeFile.id} lineCount={props.lineCount} scrollTop={props.scrollTop} lineHeight={editorLineHeight} allowExpand scrollController={editorScrollController.current} /></div>}
+                <div className="rh-editor-host">{props.activeFile ? <CodeEditor key={props.activeFile.id} path={props.activeFile.relPath} value={props.activeFile.content} language={editorLanguage} theme={theme === 'light' ? 'rh-light' : 'rh-dark'} fontSize={editorFontSize} editorSettings={props.settings.editor} vimMode={props.settings.editor.vimMode} onVimModeChange={setVimMode} onVimHelp={() => setVimHelpOpen(true)} onVimAction={handleVimAction} onChange={props.onChange} onSave={props.onSave} onRun={props.onRun} onFormatError={props.onFormatError} onSelectionChanged={(info) => { setSelection(info); props.onSelectionChanged(info); }} onScrollTop={props.onScrollTop} packageImportController={packageImportController.current} scrollController={editorScrollController.current} onLineCount={props.onLineCount} analyzeActions={props.analyzeActions} inlineOutputs={props.inlineByLine} inlineResults={props.resultByLine} onAnalyze={props.onAnalyze} /> : <div className="rh-empty-state"><div className="rh-empty-mark">◇</div><strong>No source open</strong><span>Open or create a source slot to begin.</span></div>}</div>
+                {props.activeFile && props.showOutputColumn && !focusMode && <div className="rh-inline-output"><LineOutputColumn fileId={props.activeFile.id} lineCount={props.lineCount} scrollTop={props.scrollTop} lineHeight={editorLineHeight} allowExpand scrollController={editorScrollController.current} /></div>}
               </div>
             </InstrumentFrame>
-          </>}
-          {!props.settingsViewActive && <>
-            <div className="rh-dock-resizer" role="separator" aria-orientation="horizontal" tabIndex={0} aria-label="Resize bottom dock" onMouseDown={(event) => { event.preventDefault(); const startY = event.clientY; const startRatio = props.drawerRatio; const move = (moveEvent: MouseEvent): void => props.onSetDrawerRatio(Math.min(.85, Math.max(.08, startRatio + (startY - moveEvent.clientY) / Math.max(1, window.innerHeight)))); const up = (): void => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); }; window.addEventListener('mousemove', move); window.addEventListener('mouseup', up); }} onKeyDown={(event) => { if (event.key === 'ArrowUp') props.onSetDrawerRatio(Math.min(.85, props.drawerRatio + .03)); if (event.key === 'ArrowDown') props.onSetDrawerRatio(Math.max(.08, props.drawerRatio - .03)); }} />
-            <InstrumentFrame index="TOOLS" title={props.drawerTab.toUpperCase()} titleSuffix={props.drawerTab === 'performance' && <><details className="rh-perf-help">
-              <summary aria-label="How to use Performance" title="How to use Performance">i</summary>
-              <div><strong>Compare code samples</strong><span>1. Add files or selections as cases.</span><span>2. Configure runtimes and profiles in the run matrix.</span><span>3. Run every case across the selected matrix.</span></div>
-            </details><PerformanceHeaderControls files={props.files}/> </>} state={props.drawerOpen ? 'active' : 'idle'} className={`rh-dock ${props.drawerOpen ? '' : 'is-collapsed'}`} style={{ height: `${Math.round(props.drawerRatio * 100)}%` }} actions={<><div className="rh-dock-tabs" role="tablist" aria-label="Tool windows">{drawerItems.map((item) => <button key={item.id} className={`rh-dock-tab ${props.drawerTab === item.id ? 'is-active' : ''}`} role="tab" aria-label={item.id} aria-selected={props.drawerTab === item.id} onClick={() => selectTab(item.id)}>{item.label}</button>)}</div><Button onClick={() => props.onSetDrawerOpen(!props.drawerOpen)} aria-label={props.drawerOpen ? 'Collapse bottom dock' : 'Expand bottom dock'}>{props.drawerOpen ? 'collapse' : 'expand'}</Button></>}>
-            <div className="rh-dock-body"><div ref={dockContentRef} className={`rh-dock-content ${props.drawerTab === 'analysis' ? 'is-analysis' : ''} ${props.drawerTab === 'console' ? 'is-console' : ''}`}>{props.drawerTab === 'console' && <ConsolePanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}{props.drawerTab === 'inspector' && <InspectorPanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}{props.drawerTab === 'analysis' && <AnalysisPanel code={props.activeFile?.content ?? ''} selection={selection} lang={props.lang} onLoadDemo={props.onLoadAnalysisDemo} />}{props.drawerTab === 'packages' && <PackagesPanel />}{props.drawerTab === 'runtimes' && <RuntimesPanel />}{props.drawerTab === 'performance' && <PerformancePanel activeFile={props.activeFile} selection={selection} />}</div></div>
-            </InstrumentFrame>
-          </>}
-          <footer className="rh-statusbar">
+            {toolsOpen && !toolMaximized && <div className="rh-dock-resizer" role="separator" aria-orientation={toolPosition === 'right' ? 'vertical' : 'horizontal'} tabIndex={0} aria-label="Resize tool panel" aria-valuenow={Math.round(toolRatio * 100)} aria-valuemin={toolPosition === 'right' ? 25 : 8} aria-valuemax={toolPosition === 'right' ? 65 : 85} onPointerDown={(event) => {
+              event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
+            }} onPointerMove={(event) => {
+              if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+              const rect = stageRef.current?.getBoundingClientRect();
+              if (rect) setResizePreview(resizeToolRatio(toolPosition, toolPosition === 'right' ? (rect.right - event.clientX) / rect.width : (rect.bottom - event.clientY) / rect.height));
+            }} onPointerUp={(event) => {
+              if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+              event.currentTarget.releasePointerCapture(event.pointerId);
+              if (resizePreview !== null) setToolRatio(resizePreview);
+              setResizePreview(null);
+            }} onLostPointerCapture={() => setResizePreview(null)} onDoubleClick={() => setToolRatio(toolPosition === 'right' ? .4 : .3)} onKeyDown={(event) => {
+              const grow = toolPosition === 'right' ? 'ArrowLeft' : 'ArrowUp';
+              const shrink = toolPosition === 'right' ? 'ArrowRight' : 'ArrowDown';
+              if (event.key === grow || event.key === shrink) { event.preventDefault(); setToolRatio(toolRatio + (event.key === grow ? .03 : -.03)); }
+            }} />}
+            <section className={`rh-dock ${toolsOpen ? '' : 'is-collapsed'}`} aria-label="Developer tools">
+              <div className="rh-tool-strip">
+                <div className="rh-dock-tabs" role="tablist" aria-label="Tool windows">{drawerItems.map((item, index) => <button key={item.id} id={`tool-tab-${item.id}`} className={`rh-dock-tab ${toolsOpen && props.drawerTab === item.id ? 'is-active' : ''}`} role="tab" aria-label={item.id} title={item.label} aria-controls={`tool-panel-${item.id}`} aria-selected={toolsOpen && props.drawerTab === item.id} tabIndex={props.drawerTab === item.id ? 0 : -1} onKeyDown={(event) => {
+                  const offset = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+                  const next = event.key === 'Home' ? drawerItems[0] : event.key === 'End' ? drawerItems.at(-1) : offset ? drawerItems[(index + offset + drawerItems.length) % drawerItems.length] : undefined;
+                  if (next) { event.preventDefault(); props.onSetDrawerTab(next.id); document.getElementById(`tool-tab-${next.id}`)?.focus(); }
+                }} onClick={() => selectTab(item.id)}><Icon name={item.id} /><span>{item.label}</span></button>)}</div>
+                <div className="rh-tool-strip-actions">
+                  {toolsOpen && <Button aria-label={toolMaximized ? 'Restore tool panel' : 'Maximize tool panel'} title={toolMaximized ? 'Restore editor and tools' : 'Expand tool to workspace'} onClick={() => setToolMaximized(!toolMaximized)}><Icon name={toolMaximized ? 'restore' : 'expand'} size={14} /></Button>}
+                  <Button aria-label={toolsOpen ? 'Collapse bottom dock' : 'Expand bottom dock'} title={toolsOpen ? 'Hide tools' : 'Show tools'} onClick={() => { props.onPatchSettings({ layout: { focusMode: false } }); props.onSetDrawerOpen(!toolsOpen); }}><Icon name={toolsOpen ? 'close' : 'chevron'} size={14} /></Button>
+                </div>
+              </div>
+              <div className="rh-dock-body" ref={dockContentRef} hidden={!toolsOpen}>
+                {drawerItems.map((item) => <div key={item.id} id={`tool-panel-${item.id}`} role="tabpanel" aria-labelledby={`tool-tab-${item.id}`} hidden={props.drawerTab !== item.id} className={`rh-dock-content is-${item.id}`}>
+                  {(visitedTools.has(item.id) || (toolsOpen && props.drawerTab === item.id)) && <>
+                    {item.id === 'console' && <ConsolePanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}
+                    {item.id === 'inspector' && <InspectorPanel key={props.activeFileId ?? 'none'} fileId={props.activeFileId} />}
+                    {item.id === 'analysis' && <AnalysisPanel active={toolsOpen && props.drawerTab === 'analysis'} code={props.activeFile?.content ?? ''} selection={selection} lang={props.lang} onLoadDemo={props.onLoadAnalysisDemo} onManageEngines={() => props.onSetDrawerTab('runtimes')} />}
+                    {item.id === 'packages' && <PackagesPanel activeFile={props.activeFile} importController={packageImportController.current} />}
+                    {item.id === 'runtimes' && <RuntimesPanel />}
+                    {item.id === 'performance' && <PerformancePanel active={toolsOpen && props.drawerTab === 'performance'} activeFile={props.activeFile} selection={selection} />}
+                  </>}
+                </div>)}
+              </div>
+            </section>
+          </div>
+          {props.settings.layout.showStatusBar && !focusMode && <footer className="rh-statusbar">
             <StatusIndicator status={statusKind} label={props.phase === 'idle' ? (props.lastExit ? `exit ${props.lastExit.code ?? '—'} · ${props.lastExit.durationMs}ms` : 'ready') : props.phase} />
-            <span className="rh-status-source" title={props.activeFile?.relPath ?? 'No source open'}>source {props.activeFile?.relPath ?? '—'}</span>
             {props.status !== 'ready' && <span className="rh-status-message" role="status" title={props.status}>{props.status}</span>}
-            <span className="rh-status-separator">/</span>
             <button className="rh-status-action" onClick={() => { props.onSetDrawerTab('runtimes'); props.onSetDrawerOpen(true); }} aria-label="Open runtime selector">runtime {activeRuntimeLabel.toUpperCase()} {props.runtimeVersion ? `v${props.runtimeVersion}` : 'version —'}</button>
             <button className={`rh-status-action ${props.autoRun ? 'is-active' : ''}`} onClick={() => props.onSetAutoRun(!props.autoRun)} aria-pressed={props.autoRun}>auto-run {props.autoRun ? 'on' : 'off'}</button>
             <span className="rh-status-types">types {props.ataStatus === 'loading' ? <><BlockLoader /> loading</> : props.ataStatus === 'ready' ? 'ready' : 'offline'}</span>
             {props.settings.editor.vimMode && <span className="rh-status-vim" title="LazyVim mode">-- {vimMode.toUpperCase()} --</span>}
-            <span className="rh-statusbar-right"><span>engine {props.lastRuntimeId ? props.lastRuntimeId.toUpperCase() : '—'}</span></span>
-          </footer>
+            <span className="rh-statusbar-right"><span>{props.lineCount} lines</span><span>{selectedLanguage}</span><button className="rh-status-action" onClick={props.onOpenPalette}>All commands <KeyboardHint>F1</KeyboardHint></button></span>
+          </footer>}
         </main>
       </div>
-      {props.paletteOpen && <CommandPalette commands={props.commands} onClose={props.onClosePalette} />}
+      {props.settingsViewActive && <Dialog label="Settings" className="rh-settings-dialog" onClose={() => props.onSetWorkspaceView('editor')}><SettingsView settings={props.settings} onPatch={props.onPatchSettings} onResetAppearance={props.onResetAppearance} onResetEditor={props.onResetEditor} onResetAll={props.onResetAll} onClose={() => props.onSetWorkspaceView('editor')} /></Dialog>}
+      {layoutOpen && <Dialog label="Workspace layout" className="rh-layout-dialog" onClose={() => setLayoutOpen(false)}><header className="rh-dialog-heading"><div><h2>Make room for your work</h2><p>Start with a layout, then make it yours.</p></div><Button aria-label="Close layout settings" onClick={() => setLayoutOpen(false)}><Icon name="close" /></Button></header><WorkspaceLayoutControls settings={props.settings} onPatch={props.onPatchSettings} /></Dialog>}
+      {props.paletteOpen && <CommandPalette commands={[...props.commands, ...layoutCommands]} onClose={props.onClosePalette} />}
       {tabContextMenu && contextFile && <div className="rh-tab-context-menu" style={{ left: tabContextMenu.x, top: tabContextMenu.y }} role="menu" aria-label={`Actions for ${contextFile.relPath}`} onMouseDown={(event) => event.stopPropagation()}>
         <div className="rh-tab-context-heading"><span className="rh-tab-context-index">{String(props.files.findIndex((file) => file.id === contextFile.id) + 1).padStart(2, '0')}</span><span title={contextFile.relPath}>{contextFile.relPath}</span></div>
         <button type="button" role="menuitem" onClick={() => {

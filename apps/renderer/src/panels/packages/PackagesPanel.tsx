@@ -2,6 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import type { PkgSearchRow } from '@rh/protocol';
 import { usePackages, useDebouncedSearch } from '../../state/packages';
 import { BlockLoader } from '../../ui/primitives';
+import type { PackageImportController } from '../../editor/package-import';
+
+interface ImportActions {
+  onImport: (name: string) => void;
+  importDisabled: boolean;
+  importing: string | null;
+}
+
+function ImportButton({ name, onImport, importDisabled, importing }: ImportActions & { name: string }): React.JSX.Element {
+  return <button style={btn(importDisabled)} disabled={importDisabled} aria-label={`Import ${name}`} title="Insert into the active source file as one undoable edit" onClick={() => onImport(name)}>{importing === name ? 'Reading…' : 'Import'}</button>;
+}
 
 const MONO = "'JetBrainsMono Nerd Font Mono', 'Cascadia Mono', Consolas, monospace";
 const HOVER_BG = 'rgba(255,255,255,0.04)';
@@ -20,6 +31,7 @@ const SECTION_TITLE: React.CSSProperties = {
 
 const ROW: React.CSSProperties = {
   display: 'flex',
+  flexWrap: 'wrap',
   gap: 8,
   alignItems: 'center',
   padding: '4px 6px',
@@ -123,7 +135,7 @@ function npmUrl(name: string): string {
 
 /* ── installed package row with inline version picker ──────────────────── */
 
-function InstalledRow({ name, range }: { name: string; range: string }): React.JSX.Element {
+function InstalledRow({ name, range, ...importActions }: { name: string; range: string } & ImportActions): React.JSX.Element {
   const busy = usePackages((s) => s.busy);
   const meta = usePackages((s) => s.meta[name]);
   const latest = usePackages((s) => s.outdated[name]);
@@ -175,7 +187,8 @@ function InstalledRow({ name, range }: { name: string; range: string }): React.J
             ↑ {latest}
           </button>
         )}
-        <button style={btn(busy)} disabled={busy} title={`remove ${name}`} onClick={() => void remove(name)}>
+        <ImportButton name={name} {...importActions} />
+        <button style={btn(busy || importActions.importing !== null)} disabled={busy || importActions.importing !== null} title={`remove ${name}`} onClick={() => void remove(name)}>
           remove
         </button>
       </div>
@@ -220,7 +233,7 @@ function InstalledRow({ name, range }: { name: string; range: string }): React.J
 
 /* ── registry search result row ────────────────────────────────────────── */
 
-function SearchResultRow({ row }: { row: PkgSearchRow }): React.JSX.Element {
+function SearchResultRow({ row, ...importActions }: { row: PkgSearchRow } & ImportActions): React.JSX.Element {
   const busy = usePackages((s) => s.busy);
   const installedRange = usePackages((s) => s.installed[row.name]);
   const install = usePackages((s) => s.install);
@@ -249,7 +262,8 @@ function SearchResultRow({ row }: { row: PkgSearchRow }): React.JSX.Element {
           <span style={{ color: 'var(--ok)', fontSize: 11 }} title="installed version range">
             {installedRange}
           </span>
-          <button style={btn(busy)} disabled={busy} onClick={() => void remove(row.name)}>
+          <ImportButton name={row.name} {...importActions} />
+          <button style={btn(busy || importActions.importing !== null)} disabled={busy || importActions.importing !== null} onClick={() => void remove(row.name)}>
             remove
           </button>
         </>
@@ -329,7 +343,15 @@ function NpmLog({ log }: { log: string[] }): React.JSX.Element {
  * version input fed by fetchMeta), and a collapsible verbatim npm log with
  * stderr/failure lines highlighted.
  */
-export function PackagesPanel(): React.JSX.Element {
+export function PackagesPanel({ activeFile, importController }: { activeFile: { id: string; relPath: string } | null; importController: PackageImportController }): React.JSX.Element {
+  const activeFileRef = useRef(activeFile);
+  activeFileRef.current = activeFile;
+  const alive = useRef(true);
+  const importingRef = useRef(false);
+  const [importing, setImporting] = useState<string | null>(null);
+  const [includeExample, setIncludeExample] = useState(true);
+  const [importNotice, setImportNotice] = useState<{ ok: boolean; message: string } | null>(null);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const installed = usePackages((s) => s.installed);
   const results = usePackages((s) => s.results);
   const searching = usePackages((s) => s.searching);
@@ -369,6 +391,36 @@ export function PackagesPanel(): React.JSX.Element {
 
   const names = namesKey === '' ? [] : namesKey.split('\n');
   const queryActive = query.trim() !== '';
+  const canImport = activeFile !== null && /\.(?:[cm]?[jt]s|[jt]sx)$/i.test(activeFile.relPath) && !/\.d\.[cm]?ts$/i.test(activeFile.relPath);
+  const importPackage = async (name: string): Promise<void> => {
+    const file = activeFileRef.current;
+    if (!file || importingRef.current || usePackages.getState().busy) return;
+    const range = usePackages.getState().installed[name];
+    importingRef.current = true;
+    setImporting(name);
+    setImportNotice(null);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const response = await Promise.race([
+        window.api.pkgImportInfo('default', name),
+        new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('Reading package metadata timed out. Try again.')), 15000); })
+      ]);
+      if (!alive.current) return;
+      if (file.id !== activeFileRef.current?.id || file.relPath !== activeFileRef.current.relPath) throw new Error('The active file changed. Click Import again in the intended file.');
+      if (usePackages.getState().busy || range !== usePackages.getState().installed[name]) throw new Error('The installed package changed. Wait for package operations to finish and try again.');
+      if (!response.ok) throw new Error(response.message);
+      const result = importController.insert(file.relPath, response.info, includeExample);
+      const note = result.ok ? ` Installed version: ${response.info.version}. Review the import before running.` : '';
+      setImportNotice({ ...result, message: result.message + note + (result.ok && includeExample && !response.info.example ? ' No suitable README example was found.' : '') });
+    } catch (error) {
+      if (alive.current) setImportNotice({ ok: false, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      clearTimeout(timer);
+      importingRef.current = false;
+      if (alive.current) setImporting(null);
+    }
+  };
+  const importActions: ImportActions = { onImport: (name) => void importPackage(name), importing, importDisabled: busy || importing !== null || !canImport };
 
   return (
     <div
@@ -383,6 +435,11 @@ export function PackagesPanel(): React.JSX.Element {
       }}
     >
       <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="search npm…" style={SEARCH_INPUT} />
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px', color: 'var(--text-dim)', fontSize: 11 }}>
+        <span>{canImport ? `Import into ${activeFile?.relPath}` : 'Open a JS/TS source file to insert imports.'}</span>
+        <label><input type="checkbox" checked={includeExample} disabled={importing !== null} onChange={(event) => setIncludeExample(event.target.checked)} /> Include commented README example, when available</label>
+      </div>
+      {importNotice && <div role={importNotice.ok ? 'status' : 'alert'} style={{ color: importNotice.ok ? 'var(--ok)' : 'var(--warn)', fontSize: 11, lineHeight: 1.5 }}>{importNotice.message}</div>}
       {busy && <div className="rh-loading-state"><BlockLoader label="updating workspace packages" /></div>}
 
       <div style={{ flex: 1, overflow: 'auto', minHeight: 60 }}>
@@ -393,7 +450,7 @@ export function PackagesPanel(): React.JSX.Element {
               <div style={{ color: 'var(--text-faint)', fontSize: 11 }}>no packages match “{query.trim()}”</div>
             )}
             {results.map((row) => (
-              <SearchResultRow key={row.name} row={row} />
+              <SearchResultRow key={row.name} row={row} {...importActions} />
             ))}
           </>
         )}
@@ -403,7 +460,7 @@ export function PackagesPanel(): React.JSX.Element {
         </div>
         {names.length === 0 && <div style={{ color: 'var(--text-faint)', fontSize: 11 }}>no dependencies yet</div>}
         {names.map((name) => (
-          <InstalledRow key={name} name={name} range={installed[name] ?? ''} />
+          <InstalledRow key={name} name={name} range={installed[name] ?? ''} {...importActions} />
         ))}
       </div>
 

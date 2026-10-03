@@ -92,6 +92,27 @@ export function buildBrowserScript(source: string): string {
     const index = Number(key);
     return key !== '' && Number.isInteger(index) && index >= 0 && index < 4294967295 && String(index) === key;
   }
+  function propertyNode(owner, key, depth, ancestors, state, includePrototype) {
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+      if (!descriptor) { state.nodes++; return { t: 'undefined' }; }
+      if ('value' in descriptor) return serialize(descriptor.value, depth, ancestors, state, includePrototype);
+      state.nodes++;
+      return { t: 'string', prim: descriptor.get && descriptor.set ? '[Getter/Setter]' : descriptor.get ? '[Getter]' : '[Setter]' };
+    } catch (_) { state.nodes++; return { t: 'string', prim: '<unavailable>' }; }
+  }
+  function constructorLabel(value) {
+    try {
+      for (let current = value, level = 0; current !== null && level < 20; current = Object.getPrototypeOf(current), level++) {
+        const descriptor = Object.getOwnPropertyDescriptor(current, 'constructor');
+        if (!descriptor) continue;
+        if (!('value' in descriptor) || typeof descriptor.value !== 'function') return undefined;
+        const name = Object.getOwnPropertyDescriptor(descriptor.value, 'name');
+        return name && typeof name.value === 'string' ? name.value : undefined;
+      }
+    } catch (_) {}
+    return undefined;
+  }
   function appendPrototypeChain(target, value, depth, ancestors, state) {
     let current = value;
     let currentTarget = target;
@@ -114,27 +135,19 @@ export function buildBrowserScript(source: string): string {
 
       let protoLabel;
       try {
-        const descriptor = Object.getOwnPropertyDescriptor(proto, 'constructor');
-        const ctor = descriptor && 'value' in descriptor ? descriptor.value : undefined;
-        protoLabel = typeof ctor?.name === 'string' && ctor.name ? ctor.name : undefined;
+        protoLabel = constructorLabel(proto);
       } catch (_) {}
       const protoNode = { t: 'object', label: protoLabel, children: [] };
       state.nodes++;
       currentTarget.children.push({ k: '[[Prototype]]', node: protoNode });
 
       let protoKeys = [];
-      try { protoKeys = Object.getOwnPropertyNames(proto); } catch (_) {}
+      try { protoKeys = Reflect.ownKeys(proto); } catch (_) {}
       ancestors.push(proto);
       for (const key of protoKeys.slice(0, 200)) {
         if (skip.has(key)) continue;
         if (state.nodes >= 5000) { protoNode.truncated = true; break; }
-        let child;
-        try {
-          const descriptor = Object.getOwnPropertyDescriptor(proto, key);
-          if (descriptor && 'value' in descriptor) child = descriptor.value;
-          else if (descriptor) child = descriptor.get && descriptor.set ? '[Getter/Setter]' : descriptor.get ? '[Getter]' : '[Setter]';
-        } catch (_) { child = '<threw>'; }
-        protoNode.children.push({ k: key, node: serialize(child, chainDepth + 2, ancestors, state, false) });
+        protoNode.children.push({ k: String(key), node: propertyNode(proto, key, chainDepth + 2, ancestors, state, false) });
       }
       ancestors.pop();
       current = proto;
@@ -243,7 +256,7 @@ export function buildBrowserScript(source: string): string {
     if (Array.isArray(value)) {
       const node = { t: 'array', size: value.length, children: [] };
       ancestors.push(value);
-      for (let i = 0; i < value.length && state.nodes < 5000; i++) node.children.push({ k: String(i), node: serialize(value[i], depth + 1, ancestors, state) });
+      for (let i = 0; i < value.length && state.nodes < 5000; i++) node.children.push({ k: String(i), node: propertyNode(value, String(i), depth + 1, ancestors, state) });
       let arrayKeys = [];
       try { arrayKeys = Object.keys(value); } catch (_) {}
       for (const key of arrayKeys) {
@@ -251,24 +264,21 @@ export function buildBrowserScript(source: string): string {
           if (state.nodes >= 5000) node.truncated = true;
           continue;
         }
-        let child;
-        try { child = value[key]; } catch (_) { child = '<threw>'; }
-        node.children.push({ k: key, node: serialize(child, depth + 1, ancestors, state) });
+        node.children.push({ k: key, node: propertyNode(value, key, depth + 1, ancestors, state) });
       }
       if (includePrototype !== false) appendPrototypeChain(node, value, depth, ancestors, state);
       ancestors.pop();
       if (node.children.length < value.length) node.truncated = true;
       return node;
     }
-    const node = { t: 'object', label: value.constructor?.name && value.constructor.name !== 'Object' ? value.constructor.name : undefined, children: [] };
+    const label = constructorLabel(value);
+    const node = { t: 'object', label: label === 'Object' ? undefined : label, children: [] };
     ancestors.push(value);
     let keys = [];
-    try { keys = Object.keys(value); } catch (_) {}
+    try { keys = Reflect.ownKeys(value); } catch (_) {}
     for (const key of keys) {
       if (state.nodes >= 5000) { node.truncated = true; break; }
-      let child;
-      try { child = value[key]; } catch (_) { child = '<threw>'; }
-      node.children.push({ k: key, node: serialize(child, depth + 1, ancestors, state) });
+      node.children.push({ k: String(key), node: propertyNode(value, key, depth + 1, ancestors, state) });
     }
     if (includePrototype !== false) appendPrototypeChain(node, value, depth, ancestors, state);
     ancestors.pop();
@@ -279,7 +289,7 @@ export function buildBrowserScript(source: string): string {
     report(index, value, line) {
       try {
         emit({ kind: 'result', index, phase: 'immediate', value: serializeRoot(value), ...(typeof line === 'number' ? { line } : {}) });
-        if (value && typeof value.then === 'function') {
+        if (value instanceof Promise) {
           Promise.resolve(value).then(
             (resolved) => emit({ kind: 'result', index, phase: 'fulfilled', value: serializeRoot(resolved), ...(typeof line === 'number' ? { line } : {}) }),
             (error) => emit({ kind: 'result', index, phase: 'rejected', value: serializeRoot(error), ...(typeof line === 'number' ? { line } : {}) })

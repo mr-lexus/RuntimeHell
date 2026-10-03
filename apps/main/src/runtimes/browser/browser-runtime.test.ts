@@ -3,6 +3,29 @@ import { describe, expect, it } from 'vitest';
 import { buildBrowserScript } from './browser-runtime.js';
 
 describe('embedded browser runtime page shim', () => {
+  it('inspects hidden/symbol properties without invoking own, constructor or then getters', () => {
+    const messages: string[] = [];
+    const write = (...args: unknown[]): void => { messages.push(args.map(String).join(' ')); };
+    runInNewContext(buildBrowserScript(`
+      let reads = 0;
+      const parent = { get inherited() { reads++; return 1; } };
+      const value = Object.create(parent, {
+        hidden: { value: 42 },
+        constructor: { get() { reads++; throw Error('unsafe'); } },
+        then: { get() { reads++; return null; } }
+      });
+      value[Symbol.for('token')] = 7;
+      __rh.report(0, value, 1);
+      __rh.report(1, reads, 2);
+    `), { console: { log: write }, setTimeout, clearTimeout, setInterval, clearInterval, addEventListener: () => undefined });
+    const frames = messages.filter((message) => message.startsWith('__RH_BROWSER__')).map((message) => JSON.parse(message.slice('__RH_BROWSER__'.length)) as { kind: string; index?: number; value?: import('@rh/protocol').SerializedValue });
+    const value = frames.find((frame) => frame.index === 0)?.value;
+    expect(value?.children).toContainEqual({ k: 'hidden', node: { t: 'number', prim: '42' } });
+    expect(value?.children).toContainEqual({ k: 'Symbol(token)', node: { t: 'number', prim: '7' } });
+    expect(value?.children).toContainEqual({ k: 'then', node: { t: 'string', prim: '[Getter]' } });
+    expect(frames.find((frame) => frame.index === 1)?.value).toEqual({ t: 'number', prim: '0' });
+    expect(frames.some((frame) => frame.kind === 'error')).toBe(false);
+  });
   it('captures browser globals, results, console calls, and timers', async () => {
     const messages: string[] = [];
     const pageConsole = {

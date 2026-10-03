@@ -74,6 +74,24 @@ function consoleFrames(stderr: string): ConsoleFrame[] {
 }
 
 describe('capture prelude (executed under real node)', () => {
+  it('captures unlogged objects, hidden/symbol properties and inert accessors', async () => {
+    const captured = injectCapture([
+      'let reads = 0;',
+      'const parent = { get inherited() { reads++; return 3; } };',
+      'const obj = Object.create(parent, { hidden: { value: 42 }, computed: { enumerable: true, get() { reads++; return 2; } } });',
+      'obj[Symbol.for("token")] = 7;',
+      'obj;',
+      'reads;'
+    ].join('\n'));
+    expect(captured.ok).toBe(true);
+    if (!captured.ok) return;
+    const frames = reportFrames((await runProgram(captured.code)).stderr);
+    const value = frames.find((frame) => frame.line === 5)?.value;
+    expect(value?.children).toContainEqual({ k: 'hidden', node: { t: 'number', prim: '42' } });
+    expect(value?.children).toContainEqual({ k: 'Symbol(token)', node: { t: 'number', prim: '7' } });
+    expect(value?.children).toContainEqual({ k: 'computed', node: { t: 'string', prim: '[Getter]' } });
+    expect(frames.find((frame) => frame.line === 6)?.value).toEqual({ t: 'number', prim: '0' });
+  });
   it('emits __RH__ report frames that parse with the standard parser', async () => {
     const { stderr } = await runProgram('__rh.report(0, { a: 1, b: [1, 2] }, 1);\n');
     const frames = reportFrames(stderr);
@@ -181,7 +199,8 @@ describe('capture prelude (executed under real node)', () => {
 
     const { stderr } = await runProgram(captured.code);
     const frames = reportFrames(stderr);
-    // idx0 = x binding (line 1), idx1 = the replaced console call (line 2).
+    // Only the x binding reports a value; console has its own frame.
+    expect(frames).toHaveLength(1);
     expect(frames.find((f) => f.index === 0)?.value).toEqual({ t: 'number', prim: '2' });
     expect(frames.find((f) => f.index === 0)?.line).toBe(1);
 

@@ -19,16 +19,18 @@ export const DEFAULT_RENDERER_SETTINGS: AppSettings = {
     smoothScrolling: true,
     stickyScroll: false,
     cursorStyle: 'line',
-    inlineInspector: true,
+    inlineInspector: false,
     vimMode: false
   },
-  layout: { drawerOpen: true, drawerRatio: 0.35, drawerTab: 'console', inlineOutputWidth: 320 },
+  layout: { drawerOpen: false, drawerRatio: 0.3, drawerTab: 'console', inlineOutputWidth: 280, toolPosition: 'bottom', sideRatio: 0.4, focusMode: false, showStatusBar: true },
   session: { tabs: [], activeRelPath: null }
 };
 
 interface SettingsState {
   settings: AppSettings;
   hydrated: boolean;
+  saveStatus: 'idle' | 'saving' | 'saved' | 'error';
+  saveError: string | null;
   hydrate: () => Promise<void>;
   patch: (patch: SettingsPatch) => Promise<void>;
   resetAppearance: () => Promise<void>;
@@ -57,6 +59,8 @@ let localPatchRevision = 0;
 export const useSettings = create<SettingsState>((set, get) => ({
   settings: DEFAULT_RENDERER_SETTINGS,
   hydrated: false,
+  saveStatus: 'idle',
+  saveError: null,
   hydrate: async () => {
     if (get().hydrated) return;
     const remote = await window.api?.settingsGet().catch(() => undefined);
@@ -72,7 +76,7 @@ export const useSettings = create<SettingsState>((set, get) => ({
   },
   patch: async (patch) => {
     const revision = ++localPatchRevision;
-    set((state) => ({ settings: {
+    set((state) => ({ saveStatus: 'saving', saveError: null, settings: {
       ...state.settings,
       prefs: { ...state.settings.prefs, ...patch.prefs },
       appearance: { ...state.settings.appearance, ...patch.appearance },
@@ -82,13 +86,18 @@ export const useSettings = create<SettingsState>((set, get) => ({
     } }));
 
     const request = patchQueue.then(async () => {
-      const next = await window.api?.settingsSet(patch).catch(() => undefined);
-      if (next && revision === localPatchRevision) set({ settings: next });
+      try {
+        const next = await window.api?.settingsSet(patch);
+        if (!next) throw new Error('Settings service is unavailable');
+        if (revision === localPatchRevision) set({ settings: next, saveStatus: 'saved', saveError: null });
+      } catch (error) {
+        if (revision === localPatchRevision) set({ saveStatus: 'error', saveError: error instanceof Error ? error.message : 'Could not save preferences' });
+      }
     });
     patchQueue = request.catch(() => undefined);
     await request;
   },
   resetAppearance: async () => get().patch({ appearance: DEFAULT_RENDERER_SETTINGS.appearance }),
   resetEditor: async () => get().patch({ editor: DEFAULT_RENDERER_SETTINGS.editor }),
-  resetAll: async () => get().patch({ appearance: DEFAULT_RENDERER_SETTINGS.appearance, editor: DEFAULT_RENDERER_SETTINGS.editor })
+  resetAll: async () => get().patch({ appearance: DEFAULT_RENDERER_SETTINGS.appearance, editor: DEFAULT_RENDERER_SETTINGS.editor, layout: DEFAULT_RENDERER_SETTINGS.layout, prefs: DEFAULT_RENDERER_SETTINGS.prefs })
 }));

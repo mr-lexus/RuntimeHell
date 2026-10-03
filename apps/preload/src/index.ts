@@ -27,6 +27,8 @@ import {
   BinariesListRequestSchema,
   BinariesListResponseSchema,
   PkgListRequestSchema,
+  PkgImportRequestSchema,
+  PkgImportResponseSchema,
   PkgListResponseSchema,
   PkgEventSchema,
   PkgOpRequestSchema,
@@ -199,6 +201,9 @@ const api = {
     };
   },
   // --- packages panel (todo 13) ---------------------------------------------
+  pkgImportInfo: async (workspaceId: string, name: string): Promise<import('@rh/protocol').PkgImportResponse> => {
+    return PkgImportResponseSchema.parse(await ipcRenderer.invoke(IPC.packagesImportInfo, PkgImportRequestSchema.parse({ workspaceId, name })));
+  },
   pkgInstall: async (req: { workspaceId: string; name: string; versionRange?: string; managedNodeVersion?: string; ignoreScripts?: boolean }): Promise<PkgOpResponse> => {
     return PkgOpResponseSchema.parse(await ipcRenderer.invoke(IPC.packagesInstall, PkgOpRequestSchema.parse(req)));
   },

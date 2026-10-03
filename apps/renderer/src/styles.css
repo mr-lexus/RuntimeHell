@@ -249,9 +249,6 @@ button { border-radius: 0; }
 .rh-palette-shortcut { color: var(--text-faint); font-size: 9px; }
 
 /* Bring legacy panel internals into the canonical instrument palette. */
-.rh-dock-body [style*="borderRadius"], .rh-dock-body [style*="border-radius"] { border-radius: 0 !important; }
-.rh-dock-body input, .rh-dock-body select, .rh-dock-body textarea { font-family: inherit !important; border-radius: 0 !important; }
-.rh-dock-body button { border-radius: 0 !important; }
 .rh-dock-body pre { background: color-mix(in srgb, var(--bg-raised) 90%, transparent) !important; border-color: var(--separator) !important; }
 .rh-panel-input { height: var(--control-height); padding: 0 7px; color: var(--text); background: var(--bg-raised); border: 1px solid var(--frame-normal); font-family: inherit; }
 .rh-analysis-panel [style*="border"] { border-color: var(--frame-weak) !important; }
@@ -321,7 +318,6 @@ button { border-radius: 0; }
 @media (max-width: 980px) { .rh-title-status .rh-secondary-meta { display: none; } .rh-settings-appearance { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .rh-workspace { padding-inline: 4px; gap: 5px; } .rh-settings-heading { align-items: stretch; flex-direction: column; gap: 10px; } .rh-settings-heading-actions { justify-content: flex-start; } .rh-settings-layout { grid-template-columns: 1fr; gap: 7px; } .rh-settings-nav { position: sticky; z-index: 4; top: -1px; flex-direction: row; overflow-x: auto; padding: 3px 0; background: color-mix(in srgb, var(--bg-shell) 94%, transparent); border-bottom: 1px solid var(--separator); } .rh-settings-nav-label { display: none; } .rh-settings-category { grid-template-columns: 23px minmax(max-content, 1fr); min-width: max-content; min-height: 36px; padding: 4px 7px; } .rh-settings-category small { display: none; } .rh-settings-category.is-active::before { left: 7px; right: 7px; top: auto; bottom: -1px; width: auto; height: 2px; } .rh-settings-lower { grid-template-columns: 1fr; } .rh-setting-row { grid-template-columns: minmax(82px, .36fr) minmax(0, 1fr); } }
 @media (max-width: 560px) { .rh-brand > span:last-child, .rh-context { display: none; } .rh-titlebar { gap: 6px; padding-inline: 7px; } .rh-top-settings { width: 28px; padding: 0; overflow: hidden; font-size: 0; } .rh-title-status { gap: 4px; } .rh-inline-output { display: none; } }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
 
 /* Keep the session strip legible at every width: controls occupy their own
    columns and the runtime readout may ellipsize instead of covering them. */
@@ -1175,31 +1171,16 @@ html[data-motion='reduced'] *::after {
   animation-duration: .01ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: .01ms !important;
+  scroll-behavior: auto !important;
 }
 @media (prefers-reduced-motion: reduce) {
-  html[data-motion='system'] *,
-  html[data-motion='system'] *::before,
-  html[data-motion='system'] *::after {
+  html:not([data-motion='full']) *,
+  html:not([data-motion='full']) *::before,
+  html:not([data-motion='full']) *::after {
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: .01ms !important;
-  }
-}
-/* A live loader is status feedback, not decoration. Keep its short cycle
-   visible even when structural motion is reduced so a pending operation never
-   looks like a frozen progress bar. */
-html[data-motion='reduced'] .rh-block-loader-track,
-html[data-motion='reduced'] .rh-bar-loader-fill.is-indeterminate,
-html[data-motion='system'] .rh-block-loader-track,
-html[data-motion='system'] .rh-bar-loader-fill.is-indeterminate {
-  animation-duration: var(--rh-loader-duration, var(--rh-bar-duration, 1200ms)) !important;
-  animation-iteration-count: infinite !important;
-}
-@media (prefers-reduced-motion: reduce) {
-  html[data-motion='system'] .rh-block-loader-track,
-  html[data-motion='system'] .rh-bar-loader-fill.is-indeterminate {
-    animation-duration: var(--rh-loader-duration, var(--rh-bar-duration, 1200ms)) !important;
-    animation-iteration-count: infinite !important;
+    scroll-behavior: auto !important;
   }
 }
 .rh-block-loader,
@@ -1269,13 +1250,6 @@ html[data-motion='system'] .rh-bar-loader-fill.is-indeterminate {
 .rh-perf-settings label { display: grid; gap: 3px; color: var(--text-faint); font-size: 9px; }
 .rh-perf-presets { display: flex; flex-wrap: wrap; gap: 4px; }
 .rh-perf-isolation { grid-column: 1 / -1; color: var(--text-faint); font-size: 9px; }
-.rh-perf-progress { display: grid; gap: 7px; margin-bottom: 8px; padding: 9px; border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--separator)); background: color-mix(in srgb, var(--accent) 7%, transparent); }
-.rh-perf-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-dim); font-size: 10px; }
-.rh-perf-progress-heading > span { color: var(--text-faint); white-space: nowrap; }
-.rh-perf-progress-track { width: 100%; height: 10px; overflow: hidden; background: color-mix(in srgb, var(--bg) 88%, var(--separator)); border: 1px solid var(--frame-normal); }
-.rh-perf-progress-track span { display: block; height: 100%; min-width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-strong)); box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 50%, transparent); transition: width 160ms ease-out; }
-.rh-perf-progress-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--text-faint); font-size: 9px; }
-.rh-perf-progress-meta strong { color: var(--accent-strong); }
 .rh-perf-muted { padding: 8px 0; color: var(--text-faint); font-size: 11px; }
 .rh-perf-error { display: grid; grid-template-columns: minmax(120px, .35fr) 1fr; gap: 8px; padding: 6px 0; color: var(--err); border-bottom: 1px solid var(--separator); }
 .rh-perf-error span { white-space: pre-wrap; }

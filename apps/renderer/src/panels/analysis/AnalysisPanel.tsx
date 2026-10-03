@@ -79,7 +79,7 @@ function describeFunction(f: ScannedFunction): string {
  * capability-aware actions. The selected engine gates the buttons; the
  * backend probe re-verifies before spawning.
  */
-export function AnalysisPanel({ code, selection, lang, onLoadDemo }: { code: string; selection: SelectionInfo | null; lang: 'js' | 'ts'; onLoadDemo: () => void }): React.JSX.Element {
+export function AnalysisPanel({ code, selection, lang, onLoadDemo, onManageEngines, active = true }: { code: string; selection: SelectionInfo | null; lang: 'js' | 'ts'; onLoadDemo: () => void; onManageEngines?: () => void; active?: boolean }): React.JSX.Element {
   const state = useAnalysis();
   const [showWrapper, setShowWrapper] = useState(false);
   const [selectedFunction, setSelectedFunction] = useState<ScannedFunction | null>(null);
@@ -88,9 +88,9 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo }: { code: str
   const caps = selected?.capabilities ?? null;
 
   useEffect(() => {
-    void state.refreshEngines();
+    if (active) void state.refreshEngines();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [active]);
 
   // Code changed → re-scan happened; drop the selection if its span vanished.
   useEffect(() => {
@@ -251,7 +251,9 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo }: { code: str
 
       <div className="rh-analysis-results">
         {selectedAnalysisType === null && (
-          <div className="rh-analysis-empty-tab">Select an analysis tab to run it. Run all keeps the results available here without stacking six scroll areas.</div>
+          <div className="rh-analysis-empty-tab">
+            {selected?.binaryPath == null ? <><strong>Choose an engine to get started</strong><p>Engine analysis needs a compatible binary. Install one or import your own in Runtimes.</p>{onManageEngines && <button className="rh-analysis-action" onClick={onManageEngines}>Manage engines</button>}</> : <><strong>Explore what your engine does</strong><p>Choose an analysis above. Use the function selector to focus on one part of your code, or load a demo.</p></>}
+          </div>
         )}
         {selectedAnalysisType !== null && [selectedAnalysisType].map((type) => {
           const t = state.types[type];

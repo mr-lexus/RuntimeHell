@@ -17,6 +17,7 @@ import { workspaceRoot } from '../workspace/files.js';
 import { managedRuntimeDir } from '../runtimes/runtime-resolver.js';
 import { lookupCommand } from '../runtimes/runtime-detection.js';
 import { executableName, isWindows, managedRuntimeExecutablePath } from '../platform.js';
+import { inspectPackageImport } from './package-import.js';
 
 export interface PackageServiceDeps {
   readonly emit: (event: PkgEvent) => void;
@@ -269,6 +270,10 @@ export class PackageService {
 
   async list(workspaceId: string): Promise<Record<string, string>> {
     return readDependencies(this.workspace(workspaceId));
+  }
+
+  importInfo(workspaceId: string, name: string): Promise<import('@rh/protocol').PkgImportResponse> {
+    return inspectPackageImport(this.workspace(workspaceId), name);
   }
 
   /**

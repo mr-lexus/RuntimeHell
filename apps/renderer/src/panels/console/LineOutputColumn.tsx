@@ -295,6 +295,11 @@ function TreeChild({ k, node, inMap }: { k: string; node: SerializedValue; inMap
   return (
     <div style={{ padding: '1px 0 1px 14px' }}>
       <div
+        role="button"
+        tabIndex={0}
+        aria-label={`Toggle ${k}`}
+        aria-expanded={open}
+        onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setOpen((value) => !value); } }}
         onClick={() => setOpen((o) => !o)}
         style={{ cursor: 'pointer', whiteSpace: 'pre-wrap', wordBreak: 'break-word', borderRadius: 2 }}
         onMouseEnter={(e) => { e.currentTarget.style.background = C.hover; }}
@@ -344,6 +349,7 @@ interface RowOut {
 
 function isExpandable(v: SerializedValue | null): boolean {
   if (!v) return false;
+  if ((v.children?.length ?? 0) > 0) return true;
   return v.t === 'object' || v.t === 'array' || v.t === 'map' || v.t === 'set' ||
     v.t === 'error' || v.t === 'typedarray' ||
     ((v.t === 'function' || v.t === 'class') && (v.children?.length ?? 0) > 0);
@@ -389,6 +395,11 @@ function OutputRow({ out, ln, canExpand, expanded, onToggle, lineHeight }: {
       {/* ── collapsed one-liner ── */}
       <div
         data-inspector-oneliner={ln}
+        role={hasExpand ? 'button' : undefined}
+        tabIndex={hasExpand ? 0 : undefined}
+        aria-label={hasExpand ? `Inspect values on line ${ln}` : undefined}
+        aria-expanded={hasExpand ? expanded : undefined}
+        onKeyDown={(event) => { if (hasExpand && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onToggle(); } }}
         onClick={() => hasExpand && onToggle()}
         style={{
           height: lineHeight,
@@ -520,7 +531,7 @@ export function LineOutputColumn({
 
   useEffect(() => {
     setExpandedLine(null);
-  }, [inlineByLine, resultByLine]);
+  }, [fileId, runFileId]);
 
   /* click outside closes expanded row */
   useEffect(() => {
@@ -550,7 +561,7 @@ export function LineOutputColumn({
     }
     for (const [ls, v] of Object.entries(resultByLine)) {
       const ln = Number(ls);
-      if (!Number.isFinite(ln) || v.t === 'undefined') continue;
+      if (!Number.isFinite(ln)) continue;
       map[ln] ??= { logs: [], result: null, primary: null };
       map[ln].result = v;
     }

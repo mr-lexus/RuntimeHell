@@ -3,8 +3,35 @@
  */
 import { describe, expect, it } from 'vitest';
 import { injectCapture } from './result-capture.js';
+import { runInNewContext } from 'node:vm';
 
 describe('injectCapture', () => {
+  it('captures destructured bindings without repeating initializer/default/key evaluation', () => {
+    const out = injectCapture('let calls = 0;\nconst { [++calls]: item = ++calls, ...rest } = { 1: { answer: 42 }, other: 7 };\nconst [first, , ...tail] = [item, 2, 3];\ncalls;');
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    const reports: { value: unknown; line: number }[] = [];
+    runInNewContext(out.code, { __rh: { report: (_index: number, value: unknown, line: number) => { reports.push({ value, line }); return value; } } });
+    expect(reports.filter((report) => report.line === 2).map((report) => report.value)).toEqual([{ answer: 42 }, { other: 7 }]);
+    expect(reports.at(-1)?.value).toBe(1);
+    expect(reports.filter((report) => report.line === 3).map((report) => report.value)).toEqual([{ answer: 42 }, [3]]);
+  });
+
+  it('captures exported bindings but never reads erased TypeScript declarations', () => {
+    const out = injectCapture('export const obj = { answer: 42 };\ndeclare const external: number;\nexport declare let absent: string;');
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.reportCount).toBe(1);
+    expect(out.code).toContain('__rh.report(0, obj, 1)');
+  });
+
+  it('does not add a fake undefined result for a console statement', () => {
+    const out = injectCapture('const obj = { answer: 42 }; console.log(obj);');
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.reportCount).toBe(1);
+    expect(out.code).toContain('__rh.console(1, "log", [obj])');
+  });
   it('wraps top-level expression statements in order', () => {
     const out = injectCapture("foo();\nbar(1);\n");
     expect(out.ok).toBe(true);
