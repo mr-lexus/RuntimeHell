@@ -160,7 +160,10 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     const { fileId, tabModels, value, language } = propsRef.current;
     let tab = tabModels.get(fileId);
     if (!tab) {
-      tab = { model: monaco.editor.createModel(value, language), viewState: null };
+      // ATA installs declarations under file:///node_modules. Keep the model
+      // on that virtual filesystem and let the language picker set JS or TS.
+      const uri = monaco.Uri.file(`/tabs/${encodeURIComponent(fileId)}/source`);
+      tab = { model: monaco.editor.createModel(value, language, uri), viewState: null };
       tabModels.set(fileId, tab);
     }
     const editor = monaco.editor.create(containerRef.current, {

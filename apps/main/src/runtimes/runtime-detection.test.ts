@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { detectSystemRuntime, nvmRoot, nvmSymlink, parseNvmVersions, parseRuntimeVersionOutput } from './runtime-detection.js';
-import { executableName, isWindows } from '../platform.js';
+import { executableName, isWindows, sameFilesystemPath } from '../platform.js';
 import { join } from 'node:path';
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -22,7 +22,9 @@ it.runIf(isWindows())('finds the native runtime on PATH when an npm command shim
     await copyFile(process.execPath, exePath);
     process.env['USERPROFILE'] = profile;
     process.env['PATH'] = [profile, native, join(process.env['SystemRoot']!, 'System32')].join(';');
-    expect(await detectSystemRuntime('bun')).toMatchObject({ exePath, version: process.versions.node });
+    const detected = await detectSystemRuntime('bun');
+    expect(detected?.version).toBe(process.versions.node);
+    expect(detected && await sameFilesystemPath(detected.exePath, exePath)).toBe(true);
   } finally {
     if (originalPath !== undefined) process.env['PATH'] = originalPath;
     else delete process.env['PATH'];

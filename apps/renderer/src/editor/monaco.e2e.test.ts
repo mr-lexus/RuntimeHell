@@ -290,6 +290,28 @@ describe.skipIf(!existsSync(mainEntry))('monaco e2e (built app)', () => {
     }
   }, 60000);
 
+  it('checks an imported function against its acquired declaration', async () => {
+    const { page } = await launchApp();
+    const responses = new Map<string, string>([
+      ['/v1/package/resolve/npm/rh-types-fixture@latest', JSON.stringify({ version: '1.0.0' })],
+      ['/v1/package/npm/rh-types-fixture@1.0.0/flat', JSON.stringify({ files: [{ name: '/index.d.ts' }] })],
+      ['/npm/rh-types-fixture@1.0.0/package.json', JSON.stringify({ types: 'index.d.ts' })],
+      ['/npm/rh-types-fixture@1.0.0/index.d.ts', 'export function twice(value: number): number;'],
+    ]);
+    await page.context().route(/^https:\/\/(?:data\.jsdelivr\.com|cdn\.jsdelivr\.net)\//, async (route) => {
+      const body = responses.get(new URL(route.request().url()).pathname);
+      await route.fulfill({ status: body ? 200 : 404, headers: { 'access-control-allow-origin': '*' }, body });
+    });
+    await page.evaluate(() => {
+      const editor = (window as unknown as { __rh_editor: { setValue: (value: string) => void } }).__rh_editor;
+      editor.setValue('import { twice } from "rh-types-fixture";\ntwice("wrong");');
+    });
+    await expect.poll(() => page.evaluate(() => {
+      const monaco = (window as unknown as { __rh_monaco: typeof import('monaco-editor') }).__rh_monaco;
+      return monaco.editor.getModelMarkers({}).map((marker) => marker.code);
+    }), { timeout: 8000 }).toEqual(['2345']);
+  }, 30000);
+
   it('boots, pings main, and surfaces TS diagnostics for a type error', async () => {
     const { app, page } = await launchApp();
     try {
