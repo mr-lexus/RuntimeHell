@@ -57,6 +57,15 @@ describe('SentinelLineSplitter', () => {
     expect(c.text).toEqual(['no trailing newline']);
   });
 
+  it('preserves unterminated user stderr when a capture frame follows on the same line', () => {
+    const c = collect();
+    c.feed('prefix __RH__ is literal:__RH__{"i":1,"phase":"immediate"}\n');
+    c.feed('next__RH_CONSOLE__{"line":1,"level":"log","text":"value"}\n');
+    c.end();
+    expect(c.text.join('')).toBe('prefix __RH__ is literal:next');
+    expect(c.sentinels).toEqual(['{"i":1,"phase":"immediate"}', '{"line":1,"level":"log","text":"value"}']);
+  });
+
   it('surfaces malformed sentinel payloads as text (debuggable, never dropped)', () => {
     const c = collect();
     c.feed('__RH__{not json}\n');

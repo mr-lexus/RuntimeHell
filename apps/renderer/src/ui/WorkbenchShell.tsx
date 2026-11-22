@@ -16,17 +16,18 @@ import { SettingsView } from './SettingsView';
 import type { AtaStatus } from '../editor/ata';
 import { primaryShortcut } from '../platform-ui';
 import type { SelectionInfo } from '../editor/selection-service';
-import type { AnalyzeType, EditorScrollController } from '../editor/CodeEditor';
+import type { AnalyzeType, EditorScrollController, EditorTabModel } from '../editor/CodeEditor';
 import type { LazyVimAction, VimMode } from '../editor/vim-mode';
 import { getLazyVimHelpGroups } from '../editor/lazyvim-keymaps';
 import { useRun, type RunLang } from '../state/run';
+import { usePackages } from '../state/packages';
 import { APP_LOGO_URL } from '../branding';
 import { Icon } from './Icon';
 import { Dialog } from './Dialog';
 import { WorkspaceLayoutControls } from './WorkspaceLayoutControls';
 import { effectiveToolPosition, resizeToolRatio, WORKSPACE_PRESETS, workspacePreset } from './workspace-layout';
 
-interface FileLike { id: string; relPath: string; language: string; content: string; dirty: boolean; }
+interface FileLike { id: string; workspaceId?: string; relPath: string; language: string; content: string; dirty: boolean; }
 
 function languageLabel(lang: 'js' | 'ts'): 'JavaScript' | 'TypeScript' {
   return lang === 'js' ? 'JavaScript' : 'TypeScript';
@@ -59,6 +60,7 @@ export interface WorkbenchShellProps {
   lang: 'js' | 'ts';
   ataStatus: AtaStatus;
   status: string;
+  saveError?: string;
   lineCount: number;
   scrollTop: number;
   inlineByLine: Record<number, { text: string; level: string }[]>;
@@ -74,7 +76,7 @@ export interface WorkbenchShellProps {
   onSetActive: (id: string) => void;
   onCloseFile: (id: string) => void;
   onMoveFile: (id: string, targetId: string, after: boolean) => void;
-  onRenameFile: (id: string, relPath: string) => void;
+  onRenameFile: (id: string, relPath: string) => Promise<string | null>;
   onCreateTab: () => void;
   onRun: () => void;
   onSave: (content: string) => void;
@@ -120,9 +122,13 @@ interface TabContextMenuState {
 interface TabRenameState {
   fileId: string;
   value: string;
+  error?: string;
+  saving?: boolean;
 }
 
 export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
+  const workspaceId = props.activeFile?.workspaceId ?? 'default';
+  useLayoutEffect(() => { void usePackages.getState().selectWorkspace(workspaceId); }, [workspaceId]);
   const languageMode = useRun((state) => state.lang);
   // Automatic displays the language resolved for the active file; explicit
   // modes remain stable even when the user changes tabs.
@@ -156,6 +162,19 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
   const tabsRef = useRef<HTMLDivElement | null>(null);
   const dockContentRef = useRef<HTMLDivElement | null>(null);
   const editorScrollController = useRef<EditorScrollController>({ scrollBy: () => undefined });
+  const tabModels = useRef(new Map<string, EditorTabModel>());
+  useEffect(() => {
+    const openIds = new Set(props.files.map((file) => file.id));
+    for (const [id, tab] of tabModels.current) {
+      if (openIds.has(id)) continue;
+      tab.model.dispose();
+      tabModels.current.delete(id);
+    }
+  }, [props.files]);
+  useEffect(() => {
+    const models = tabModels.current;
+    return () => { for (const tab of models.values()) tab.model.dispose(); models.clear(); };
+  }, []);
   const packageImportController = useRef<PackageImportController>({ insert: () => ({ ok: false, message: 'Open a source file first.' }) });
   useEffect(() => {
     const resize = (): void => setViewportWidth(window.innerWidth);
@@ -169,7 +188,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
   // A source slot owns its editor selection/context. Do not carry the
   // previous file's analysis selection into the newly selected tab.
   useEffect(() => {
-    setSelection(null);
+    if (props.activeFileId === null) setSelection(null);
     if (lastActiveFileId.current !== null && lastActiveFileId.current !== props.activeFileId) previousActiveFileId.current = lastActiveFileId.current;
     lastActiveFileId.current = props.activeFileId;
   }, [props.activeFileId]);
@@ -330,14 +349,17 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
     setTabContextMenu(null);
     setTabRename({ fileId: file.id, value: file.relPath });
   };
-  const commitRename = (): void => {
-    if (!tabRename) return;
+  const commitRename = async (): Promise<void> => {
+    if (!tabRename || tabRename.saving) return;
     const nextPath = tabRename.value.trim();
     const file = props.files.find((item) => item.id === tabRename.fileId);
-    if (file && nextPath !== '' && nextPath !== file.relPath && !props.files.some((item) => item.id !== file.id && item.relPath.toLowerCase() === nextPath.toLowerCase())) {
-      props.onRenameFile(file.id, nextPath);
+    if (!file || !nextPath || nextPath === file.relPath) {
+      setTabRename(null);
+      return;
     }
-    setTabRename(null);
+    setTabRename({ ...tabRename, saving: true, error: undefined });
+    const error = await props.onRenameFile(file.id, nextPath);
+    setTabRename((current) => current?.fileId !== file.id ? current : error ? { ...current, saving: false, error } : null);
   };
   const closeOtherTabs = (fileId: string): void => {
     for (const file of props.files) if (file.id !== fileId) props.onCloseFile(file.id);
@@ -410,6 +432,8 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
     <div className={`rh-app rh-workbench${isMac ? ' is-mac' : ''}${focusMode ? ' is-focus-mode' : ''}`}>
       <header className={`rh-titlebar${isMac ? ' is-mac' : ''}`}>
         <div className="rh-brand"><img className="rh-brand-logo" src={APP_LOGO_URL} alt="" /><span>RuntimeHell</span></div>
+        {props.saveError && (focusMode || !props.settings.layout.showStatusBar) &&
+          <span className="rh-status-message" role="alert" title={props.saveError}>{props.saveError}</span>}
         <button className="rh-command-trigger" onClick={props.onOpenPalette} title={`Search files and commands (${primaryShortcut('Shift+P')})`}><Icon name="search" /><span>Search files and commands</span><KeyboardHint>{primaryShortcut('Shift+P')}</KeyboardHint></button>
         <div className="rh-titlebar-actions">
           <div className="rh-titlebar-editor-controls" aria-label="Editor controls">
@@ -496,7 +520,7 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
                 {tabScrollState.right && <button type="button" className="rh-tab-scroll-control" onClick={() => scrollTabs(220)} aria-label="Scroll tabs right" title="Scroll tabs right">›</button>}
               </div>
               <div className="rh-editor-region">
-                <div className="rh-editor-host">{props.activeFile ? <CodeEditor key={props.activeFile.id} path={props.activeFile.relPath} value={props.activeFile.content} language={editorLanguage} theme={theme === 'light' ? 'rh-light' : 'rh-dark'} fontSize={editorFontSize} editorSettings={props.settings.editor} vimMode={props.settings.editor.vimMode} onVimModeChange={setVimMode} onVimHelp={() => setVimHelpOpen(true)} onVimAction={handleVimAction} onChange={props.onChange} onSave={props.onSave} onRun={props.onRun} onFormatError={props.onFormatError} onSelectionChanged={(info) => { setSelection(info); props.onSelectionChanged(info); }} onScrollTop={props.onScrollTop} packageImportController={packageImportController.current} scrollController={editorScrollController.current} onLineCount={props.onLineCount} analyzeActions={props.analyzeActions} inlineOutputs={props.inlineByLine} inlineResults={props.resultByLine} onAnalyze={props.onAnalyze} /> : <div className="rh-empty-state"><div className="rh-empty-mark">◇</div><strong>No source open</strong><span>Open or create a source slot to begin.</span></div>}</div>
+                <div className="rh-editor-host">{props.activeFile ? <CodeEditor key={props.activeFile.id} fileId={props.activeFile.id} tabModels={tabModels.current} path={props.activeFile.relPath} value={props.activeFile.content} language={editorLanguage} theme={theme === 'light' ? 'rh-light' : 'rh-dark'} fontSize={editorFontSize} editorSettings={props.settings.editor} vimMode={props.settings.editor.vimMode} onVimModeChange={setVimMode} onVimHelp={() => setVimHelpOpen(true)} onVimAction={handleVimAction} onChange={props.onChange} onSave={props.onSave} onRun={props.onRun} onFormatError={props.onFormatError} onSelectionChanged={(info) => { setSelection(info); props.onSelectionChanged(info); }} onScrollTop={props.onScrollTop} packageImportController={packageImportController.current} scrollController={editorScrollController.current} onLineCount={props.onLineCount} analyzeActions={props.analyzeActions} inlineOutputs={props.inlineByLine} inlineResults={props.resultByLine} onAnalyze={props.onAnalyze} /> : <div className="rh-empty-state"><div className="rh-empty-mark">◇</div><strong>No source open</strong><span>Open or create a source slot to begin.</span></div>}</div>
                 {props.activeFile && props.showOutputColumn && !focusMode && <div className="rh-inline-output"><LineOutputColumn fileId={props.activeFile.id} lineCount={props.lineCount} scrollTop={props.scrollTop} lineHeight={editorLineHeight} allowExpand scrollController={editorScrollController.current} /></div>}
               </div>
             </InstrumentFrame>
@@ -573,8 +597,9 @@ export function WorkbenchShell(props: WorkbenchShellProps): React.JSX.Element {
         <button type="button" role="menuitem" onClick={() => { for (const file of props.files) props.onCloseFile(file.id); setTabContextMenu(null); }}>Close all tabs</button>
       </div>}
       {tabRename && <div className="rh-tab-rename-popover" role="dialog" aria-label="Rename tab" onMouseDown={(event) => event.stopPropagation()}>
-        <label><span>Rename source tab</span><input ref={renameInputRef} value={tabRename.value} onChange={(event) => setTabRename((state) => state ? { ...state, value: event.target.value } : state)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); commitRename(); } }} /></label>
-        <div><Button onClick={() => setTabRename(null)}>cancel</Button><Button variant="primary" onClick={commitRename}>rename</Button></div>
+        <label><span>Rename source tab</span><input ref={renameInputRef} value={tabRename.value} disabled={tabRename.saving} onChange={(event) => setTabRename((state) => state ? { ...state, value: event.target.value, error: undefined } : state)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void commitRename(); } }} /></label>
+        {tabRename.error && <p role="alert">{tabRename.error}</p>}
+        <div><Button onClick={() => setTabRename(null)}>cancel</Button><Button variant="primary" disabled={tabRename.saving} onClick={() => void commitRename()}>rename</Button></div>
       </div>}
       {vimHelpOpen && <div className="rh-vim-help-backdrop" onClick={() => setVimHelpOpen(false)} role="presentation">
         <div className="rh-vim-help" role="dialog" aria-label="Vim keybindings" onClick={(event) => event.stopPropagation()}>

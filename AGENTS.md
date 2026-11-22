@@ -15,7 +15,7 @@ Use Context7 whenever work depends on current third-party library/framework/CLI 
 ## Project snapshot
 
 - Windows-first Electron desktop app for running JS/TS across Node.js, Deno, Bun, and an embedded Chromium lane, with engine analysis for V8, SpiderMonkey, and JavaScriptCore.
-- pnpm workspace (`pnpm@11.22.0`); do not use npm or yarn to modify dependencies.
+- pnpm workspace (use the version pinned in `package.json`); do not use npm or yarn to modify dependencies.
 - Strict TypeScript, React + Zustand + Monaco in the renderer, Zod contracts at process boundaries, Vitest tests colocated with source.
 - Build stack: Electron + electron-vite/Vite. Generated output is under `out/`.
 - User code and downloaded binaries are untrusted. Read `docs/threat-model.md` before changing execution, filesystem, IPC, package-install, or binary-download behavior.
@@ -103,7 +103,7 @@ pnpm build
 - `*.net.test.ts` suites require real downloads/binaries and are gated by `RH_NET_TESTS=1`; do not enable them unless the task needs network verification.
 - `pnpm gen-fixtures` intentionally runs network-backed fixture generation and may replace golden files. Use only for parser fixture work and review resulting diffs.
 - `apps/renderer/src/editor/monaco.e2e.test.ts` needs a built app and skips when `out/main/index.js` is absent.
-- `node scripts/e2e-vertical-slice.mjs` exercises an isolated built app. `node scripts/e2e-runtime-switch.mjs` expects the dev renderer at port `5189` and suitable runtimes installed.
+- `node scripts/e2e-vertical-slice.mjs` exercises an isolated built app. `node scripts/e2e-runtime-switch.mjs` tests the built app in a temporary profile with Node.js and Bun on PATH.
 - If dependency links are stale or modules declared in package manifests cannot be resolved, run `pnpm install` before diagnosing source errors. Report any gate that could not run and its exact reason.
 
 ## Efficient task patterns

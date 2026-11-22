@@ -46,7 +46,7 @@ export class SpiderMonkeyAdapter implements EngineAdapter {
       return;
     }
     const binaryPath = description.binaryPath;
-    const caps = await this.registry.capabilities(binaryPath);
+    const caps = description.capabilities;
     const engineVersion = description.version ?? 'unknown';
     const runIsolated = trackedProcessIsolation(ctx, req.requestId);
 
@@ -71,7 +71,7 @@ export class SpiderMonkeyAdapter implements EngineAdapter {
       let code = req.code;
       if (req.lang === 'ts') {
         try {
-          const { transform } = await import('esbuild');
+          const { transform } = await import('../../transpile/esbuild.js');
           code = (await transform(req.code, { loader: 'ts', format: 'esm', target: 'esnext' })).code;
         } catch (err) {
           ctx.emit({

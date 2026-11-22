@@ -16,6 +16,7 @@ import type { AnalysisContext, EngineAdapter, EngineDescription } from '../engin
 import { trackedProcessIsolation } from '../../execution/isolation.js';
 import type { EngineRegistry } from '../registry.js';
 import { cacheRoot } from '../../binaries/paths.js';
+import { jscSupportPath } from './jsc-probe.js';
 
 const TYPE_ENV: Partial<Record<'bytecode' | 'deopts' | 'gc', Record<string, string>>> = {
   bytecode: { JSC_dumpGeneratedBytecodes: 'true' },
@@ -26,7 +27,7 @@ const TYPE_ENV: Partial<Record<'bytecode' | 'deopts' | 'gc', Record<string, stri
 export class JavaScriptCoreAdapter implements EngineAdapter {
   readonly id = 'javascriptcore' as const;
   /** Directory containing the WebKitRequirements bin64 DLLs (optional). */
-  pathPrepend?: string;
+  pathPrepend = jscSupportPath();
 
   constructor(private readonly registry: EngineRegistry) {}
 
@@ -51,11 +52,12 @@ export class JavaScriptCoreAdapter implements EngineAdapter {
     const binaryPath = description.binaryPath;
     const engineVersion = description.version ?? 'unknown';
     const runIsolated = trackedProcessIsolation(ctx, req.requestId);
+    const available = { bytecode: description.capabilities.bytecodeDump, deopts: description.capabilities.deoptTrace, gc: description.capabilities.gcLog };
 
     for (const analysisType of req.analysisTypes) {
       if (!ctx.isLive(req.requestId)) break;
       const env = TYPE_ENV[analysisType as 'bytecode' | 'deopts' | 'gc'];
-      if (env === undefined) {
+      if (env === undefined || !available[analysisType as keyof typeof available]) {
         ctx.emit({
           t: 'unsupported',
           requestId: req.requestId,
@@ -73,7 +75,7 @@ export class JavaScriptCoreAdapter implements EngineAdapter {
       let code = req.code;
       if (req.lang === 'ts') {
         try {
-          const { transform } = await import('esbuild');
+          const { transform } = await import('../../transpile/esbuild.js');
           code = (await transform(req.code, { loader: 'ts', format: 'esm', target: 'esnext' })).code;
         } catch (err) {
           ctx.emit({

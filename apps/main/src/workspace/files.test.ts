@@ -25,6 +25,16 @@ afterEach(async () => {
 });
 
 describe('workspace file containment', () => {
+  it('publishes a new name once without replacing an existing file', async () => {
+    const target = { workspaceId: 'default', relPath: 'target.ts', createOnly: true } as const;
+    const attempts = await Promise.allSettled(['first', 'second'].map((content) => saveFile({ ...target, content })));
+    expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1);
+    const winningContent = attempts[0]?.status === 'fulfilled' ? 'first' : 'second';
+    await expect(saveFile({ ...target, content: 'third' })).rejects.toThrow(/already exists/i);
+    await expect(readFile(target)).resolves.toEqual({ ok: true, content: winningContent });
+    await expect(listFiles({ workspaceId: 'default' })).resolves.toMatchObject({ files: [{ relPath: 'target.ts' }] });
+  });
+
   it('writes, reads, and lists regular nested files', async () => {
     await saveFile({ workspaceId: 'default', relPath: 'src/index.ts', content: 'export {};' });
     await expect(readFile({ workspaceId: 'default', relPath: 'src/index.ts' })).resolves.toEqual({ ok: true, content: 'export {};' });

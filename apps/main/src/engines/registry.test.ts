@@ -107,6 +107,30 @@ function writeManifest(entries: Record<string, unknown>[]): Promise<void> {
 }
 
 describe('EngineRegistry', () => {
+  it('uses the native shell capabilities for SpiderMonkey and JavaScriptCore', async () => {
+    process.env['RH_CACHE_ROOT'] = dir;
+    try {
+      const engines = [{ id: 'spidermonkey', exe: 'js' }, { id: 'javascriptcore', exe: 'jsc' }];
+      await writeManifest(engines.map(({ id }) => ({
+        kind: 'engine', id, platform: 'win64', arch: 'x64', version: '1',
+        url: 'https://example.test/shell.zip', sha256: 'a'.repeat(64), installedPath: dir
+      })));
+      for (const { exe } of engines) await fakeBinary(executableName(exe));
+      const execute: ExecuteBinary = async (exe, args) => {
+        if (exe === join(dir, executableName('jsc')) && args.includes('--options')) {
+          return { code: 0, stdout: '', stderr: '   dumpGeneratedBytecodes=false\n   logGC=0' };
+        }
+        const script = await import('node:fs/promises').then((fs) => fs.readFile(args.at(-1)!, 'utf8'));
+        const stdout = script.includes('Reflect.parse') ? '[RH_AST_OK]' : '[RH_PROBE_OK]';
+        return { code: 0, stdout, stderr: '' };
+      };
+      const registry = new EngineRegistry({ execute });
+      expect((await registry.describe('spidermonkey')).capabilities).toMatchObject({ astDump: true, bytecodeDump: false, gcLog: false });
+      expect((await registry.describe('javascriptcore')).capabilities).toMatchObject({ bytecodeDump: true, gcLog: true, deoptTrace: false, irGraphDump: false });
+    } finally {
+      delete process.env['RH_CACHE_ROOT'];
+    }
+  });
   it('describes installed engines with cached capabilities keyed by hash', async () => {
     process.env['RH_CACHE_ROOT'] = dir;
     await writeManifest([

@@ -16,7 +16,7 @@
     "esbuild": "^0.28.2",
     "mitata": "^1.0.34",
     "yauzl": "^3.4.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/babel__generator": "^7.27.0",

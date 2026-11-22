@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import {
   AppSettingsSchema,
+  ReadFileRequestSchema,
   SettingsPatchSchema,
   type AppSettings,
   type SettingsPatch
@@ -51,17 +52,23 @@ type LegacySettings = {
 function legacyToV2(raw: LegacySettings): AppSettings {
   const prefs = raw.prefs ?? {};
   const session = raw.session ?? {};
+  const timeout = AppSettingsSchema.shape.prefs.shape.timeoutMs.safeParse(
+    typeof prefs.timeoutMs === 'number' ? Math.round(prefs.timeoutMs) : undefined
+  );
   return {
     ...DEFAULT_SETTINGS,
     prefs: {
       ...DEFAULT_SETTINGS.prefs,
-      timeoutMs: typeof prefs.timeoutMs === 'number' && prefs.timeoutMs > 0 ? Math.round(prefs.timeoutMs) : DEFAULT_SETTINGS.prefs.timeoutMs,
+      timeoutMs: timeout.success ? timeout.data : DEFAULT_SETTINGS.prefs.timeoutMs,
       autorun: typeof prefs.autorun === 'boolean' ? prefs.autorun : DEFAULT_SETTINGS.prefs.autorun,
       ignoreScripts: typeof prefs.ignoreScripts === 'boolean' ? prefs.ignoreScripts : DEFAULT_SETTINGS.prefs.ignoreScripts
     },
     session: {
       tabs: Array.isArray(session.tabs)
-        ? (session.tabs as AppSettings['session']['tabs']).filter((tab) => typeof tab?.workspaceId === 'string' && typeof tab?.relPath === 'string')
+        ? session.tabs.flatMap((tab: unknown) => {
+            const parsed = ReadFileRequestSchema.safeParse(tab);
+            return parsed.success ? [parsed.data] : [];
+          })
         : [],
       activeRelPath: typeof session.activeRelPath === 'string' ? session.activeRelPath : null
     }
@@ -80,7 +87,8 @@ export async function loadSettings(path = settingsPath()): Promise<{ settings: A
   let rawText: string;
   try {
     rawText = await fs.readFile(path, 'utf8');
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     return { settings: DEFAULT_SETTINGS, corruptBackupPath: null };
   }
   try {

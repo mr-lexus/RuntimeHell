@@ -137,27 +137,17 @@ export class SentinelLineSplitter {
   }
 
   private route(line: string, terminated: boolean): void {
-    if (line.startsWith(CONSOLE_SENTINEL)) {
-      const payload = line.slice(CONSOLE_SENTINEL.length);
-      if (parseConsoleFrame(payload) === null) {
-        this.handlers.onText(terminated ? line + '\n' : line);
-        return;
-      }
-      if (this.handlers.onConsole) this.handlers.onConsole(payload);
+    // A capture frame can follow process.stderr.write() without a newline.
+    // Consume only a valid frame suffix, preserving all preceding user text.
+    for (const marker of line.matchAll(/__RH(?:_CONSOLE)?__(?=\s*\{)/g)) {
+      const payload = line.slice(marker.index + marker[0].length);
+      const consoleFrame = marker[0] === CONSOLE_SENTINEL;
+      if ((consoleFrame ? parseConsoleFrame(payload) : parseReportFrame(payload)) === null) continue;
+      if (marker.index > 0) this.handlers.onText(line.slice(0, marker.index));
+      if (consoleFrame && this.handlers.onConsole) this.handlers.onConsole(payload);
       else this.handlers.onSentinel(payload);
       return;
     }
-    if (!line.startsWith(SENTINEL_PREFIX)) {
-      this.handlers.onText(terminated ? line + '\n' : line);
-      return;
-    }
-    const payload = line.slice(SENTINEL_PREFIX.length);
-    // Unparseable sentinel lines are surfaced as text instead of dropped so
-    // protocol bugs remain debuggable in the console.
-    if (parseReportFrame(payload) === null) {
-      this.handlers.onText(terminated ? line + '\n' : line);
-      return;
-    }
-    this.handlers.onSentinel(payload);
+    this.handlers.onText(terminated ? line + '\n' : line);
   }
 }

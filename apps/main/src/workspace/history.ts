@@ -19,10 +19,8 @@ function historyPath(workspaceId: string): string {
 export async function appendHistory(workspaceId: string, record: HistoryRecord): Promise<void> {
   const capped = HistoryRecordSchema.parse({
     ...record,
-    contentSnapshot:
-      record.contentSnapshot.length > MAX_SNAPSHOT_CHARS
-        ? record.contentSnapshot.slice(0, MAX_SNAPSHOT_CHARS)
-        : record.contentSnapshot
+    contentSnapshot: record.contentSnapshot.slice(0, MAX_SNAPSHOT_CHARS),
+    snapshotTruncated: record.snapshotTruncated === true || record.contentSnapshot.length > MAX_SNAPSHOT_CHARS
   });
   const records = await readHistory(workspaceId);
   records.push(capped);
@@ -43,7 +41,12 @@ export async function readHistory(workspaceId: string): Promise<HistoryRecord[]>
     if (line.trim() === '') continue;
     try {
       const parsed = HistoryRecordSchema.safeParse(JSON.parse(line));
-      if (parsed.success) out.push(parsed.data);
+      if (parsed.success) {
+        const record = parsed.data;
+        // Older records did not distinguish an exact-limit snapshot from a clipped one.
+        record.snapshotTruncated ??= record.contentSnapshot.length === MAX_SNAPSHOT_CHARS;
+        out.push(record);
+      }
     } catch {
       /* corrupt line skipped — history is best-effort */
     }

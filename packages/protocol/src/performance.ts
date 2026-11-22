@@ -7,6 +7,13 @@ export const PerformanceTargetRefSchema = z.object({
 }).strict();
 export type PerformanceTargetRef = z.infer<typeof PerformanceTargetRefSchema>;
 
+/** Unpinned references also match concrete installations from older saved experiments. */
+export function performanceTargetMatches(left: PerformanceTargetRef | undefined, right: PerformanceTargetRef): boolean {
+  if (!left || left.source !== right.source || left.id !== right.id) return false;
+  const matches = (a?: string, b?: string): boolean => !a || !b || a === 'auto' || b === 'auto' || a === b;
+  return matches(left.version, right.version) && matches(left.provenance, right.provenance);
+}
+
 export const PerformanceProfileRefSchema = z.object({ id: z.string().min(1), label: z.string().min(1).optional() }).strict();
 export type PerformanceProfileRef = z.infer<typeof PerformanceProfileRefSchema>;
 export const PerformanceTargetSelectionSchema = z.object({

@@ -8,6 +8,8 @@ files:
   - package.json
 asar: true
 asarUnpack:
+  - node_modules/esbuild/**
+  - node_modules/@esbuild/**
   - out/main/templates/**
   - out/main/mitata/**
 artifactName: ${productName}-${version}-${os}-${arch}.${ext}

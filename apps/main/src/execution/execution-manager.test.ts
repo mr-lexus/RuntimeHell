@@ -132,6 +132,17 @@ describe('ExecutionManager', () => {
     expect(second).toEqual({ ok: false, stage: 'active', activeRunId: 'run-1' });
   });
 
+  it('reserves the workspace before asynchronous preparation and releases it after a failed start', async () => {
+    const runner = new FakeRunner();
+    const { manager } = makeManager(runner, { exePath: 'C:/node/node.exe', version: '24' });
+    const invalidStart = manager.start({ ...REQ, content: 'const =;' });
+    const overlapping = await manager.start(REQ);
+    expect(overlapping).toMatchObject({ ok: false, stage: 'active' });
+    expect(await invalidStart).toMatchObject({ ok: false, stage: 'transform' });
+    expect(await manager.start(REQ)).toMatchObject({ ok: true });
+    expect(runner.handles).toHaveLength(1);
+  });
+
   it('returns structured transform failures without spawning', async () => {
     const runner = new FakeRunner();
     const { manager } = makeManager(runner, { exePath: 'C:/node/node.exe', version: '1' });

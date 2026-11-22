@@ -6,7 +6,7 @@
  * main process additionally enforces single-flight per workspace.
  */
 import { create } from 'zustand';
-import type { RunEvent, RuntimeId, SerializedValue } from '@rh/protocol';
+import type { RunEvent, RunStartResponse, RuntimeId, SerializedValue } from '@rh/protocol';
 import { detectSourceLanguage, type DetectedLanguage } from '../editor/language-detection';
 import { getActiveFile, type OpenFile } from './ui.js';
 import { useRuntimes } from './runtimes.js';
@@ -18,6 +18,7 @@ export interface ConsoleLine {
   readonly seq: number;
   readonly stream: 'stdout' | 'stderr';
   readonly text: string;
+  readonly partial?: boolean;
 }
 
 const MAX_LINES = 2000;
@@ -85,9 +86,34 @@ function api(): Window['api'] | null {
   return typeof window !== 'undefined' && window.api ? window.api : null;
 }
 
+async function cancelActiveRun(runId: string): Promise<void> {
+  let notice: string;
+  try {
+    if ((await api()?.cancelRun(runId))?.ok) return;
+    notice = 'Could not cancel the run';
+  } catch (error) {
+    notice = error instanceof Error ? error.message : String(error);
+  }
+  if (useRun.getState().runId === runId) useRun.setState({ phase: 'running', notice });
+}
+
 function pushLine(lines: ConsoleLine[], stream: ConsoleLine['stream'], text: string): ConsoleLine[] {
   const next = [...lines, { seq: ++seqCounter, stream, text }];
   return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next;
+}
+
+function appendOutput(lines: ConsoleLine[], stream: ConsoleLine['stream'], chunk: string): ConsoleLine[] {
+  if (!chunk) return lines;
+  const next = [...lines];
+  const previous = next.at(-1);
+  const partial = previous?.stream === stream && previous.partial ? next.pop() : undefined;
+  const parts = ((partial?.text ?? '') + chunk).split('\n');
+  const tail = parts.pop()!;
+  for (const [i, text] of parts.entries()) {
+    next.push({ seq: i === 0 && partial ? partial.seq : ++seqCounter, stream, text: text.replace(/\r$/, '') });
+  }
+  if (tail) next.push({ seq: parts.length === 0 && partial ? partial.seq : ++seqCounter, stream, text: tail, partial: true });
+  return next.slice(-MAX_LINES);
 }
 
 function upsertReport(
@@ -148,19 +174,21 @@ export const useRun = create<RunState>((set, get) => ({
     set({ phase: 'running', runId: null, runFileId: file.id, lines: [], reports: [], inlineConsole: [], inlineByLine: {}, resultByLine: {}, lastExit: null, notice: null, pendingEvents: [] });
     const rt = useRuntimes.getState();
     const language = resolveRunLanguage(get().lang, file);
-    const response = await bridge.startRun({
-      workspaceId: 'default',
-      relPath: file.relPath,
-      content: file.content,
-      timeoutMs: get().timeoutMs,
-      // Active runtime dispatch (node/deno/bun); version = per-runtime selection,
-      // falls back to system/newest-managed resolution in main when undefined.
-      runtimeId: rt.activeRuntime,
-      runtimeVersion: rt.selected[rt.activeRuntime] ?? undefined,
-      // The protocol receives a concrete language; Automatic is resolved from
-      // the latest source snapshot immediately before the IPC call.
-      lang: language
-    });
+    let response: RunStartResponse;
+    try {
+      response = await bridge.startRun({
+        workspaceId: file.workspaceId ?? 'default',
+        relPath: file.relPath,
+        content: file.content,
+        timeoutMs: get().timeoutMs,
+        runtimeId: rt.activeRuntime,
+        runtimeVersion: rt.selected[rt.activeRuntime] ?? undefined,
+        lang: language
+      });
+    } catch (error) {
+      set({ phase: 'idle', pendingEvents: [], notice: error instanceof Error ? error.message : String(error) });
+      return;
+    }
     if (!response.ok) {
       set({ phase: 'idle', pendingEvents: [] });
       if (response.stage === 'transform' || response.stage === 'transpile') {
@@ -176,12 +204,16 @@ export const useRun = create<RunState>((set, get) => ({
       }
       return;
     }
+    const stopRequested = get().phase === 'cancelling';
     const pendingEvents = get().pendingEvents.filter((event) => event.runId === response.runId);
     set({ runId: response.runId, runtimeVersion: response.runtimeVersion, lastRuntimeId: rt.activeRuntime, pendingEvents: [] });
     // Replay in arrival order after correlation is established. This prevents
     // a short browser run from losing its console/result/exit events while the
     // renderer is still awaiting the startRun IPC response.
     for (const event of pendingEvents) get().handleEvent(event);
+    if (stopRequested && get().runId === response.runId) {
+      await cancelActiveRun(response.runId);
+    }
   },
 
   scheduleAutoRun: () => {
@@ -200,15 +232,15 @@ export const useRun = create<RunState>((set, get) => ({
 
   requestCancel: async () => {
     const { runId, phase } = get();
-    if (phase !== 'running' || !runId) return;
+    if (phase !== 'running') return;
     set({ phase: 'cancelling' });
-    await api()?.cancelRun(runId);
+    if (runId !== null) await cancelActiveRun(runId);
   },
 
   handleEvent: (e) => {
     const state = get();
     if (state.runId !== e.runId) {
-      if (state.runId === null && state.phase === 'running') {
+      if (state.runId === null && state.phase !== 'idle') {
         const pending = state.pendingEvents.length >= 256
           ? [...state.pendingEvents.slice(-255), e]
           : [...state.pendingEvents, e];
@@ -218,10 +250,8 @@ export const useRun = create<RunState>((set, get) => ({
     }
     switch (e.type) {
       case 'stdout':
-        set({ lines: pushLine(state.lines, 'stdout', e.data.replace(/\n$/, '')) });
-        break;
       case 'stderr':
-        set({ lines: pushLine(state.lines, 'stderr', e.data.replace(/\n$/, '')) });
+        set({ lines: appendOutput(state.lines, e.type, e.data) });
         break;
       case 'console': {
         const entry: InlineConsoleEntry = {
@@ -261,7 +291,7 @@ export const useRun = create<RunState>((set, get) => ({
         // Keep the correlation id until the matching exit event arrives; the
         // runner emits both for process/browser failures and exit carries the
         // final duration/code for the status bar.
-        set({ lines: pushLine(state.lines, 'stderr', `[runner error] ${e.message}`), phase: 'idle' });
+        set({ lines: pushLine(state.lines, 'stderr', `[runner error] ${e.message}`) });
         break;
     }
   },

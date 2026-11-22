@@ -9,7 +9,8 @@ import type {
   PerformanceTargetOption,
   PerformanceTargetSelection
 } from '@rh/protocol';
-import { MAX_PERFORMANCE_TARGETS, PerformanceTargetSelectionSchema } from '@rh/protocol';
+import { MAX_PERFORMANCE_TARGETS, PerformanceTargetSelectionSchema, performanceTargetMatches } from '@rh/protocol';
+import { getActiveFile } from './ui';
 
 type PerformanceProgressPhase = 'resolving' | 'preparing' | 'warmup' | 'measurement';
 
@@ -118,12 +119,6 @@ function requestId(): string {
   return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `perf-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function targetRefMatches(left: PerformanceTargetRef | undefined, right: PerformanceTargetRef): boolean {
-  if (left === undefined) return false;
-  if (left.source !== right.source || left.id !== right.id) return false;
-  return left.version === undefined || right.version === undefined || left.version === right.version || left.version === 'system' || left.version === 'auto' || right.version === 'system' || right.version === 'auto';
-}
-
 function naturalProfile(target: PerformanceTargetOption): string | undefined {
   return target.profiles.find((profile) => profile.id === 'natural' && profile.available)?.id
     ?? target.profiles.find((profile) => profile.available)?.id;
@@ -189,7 +184,7 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
         if (first && natural) selectedProfiles[performanceTargetKey(first)] = [natural.id];
       }
       const available = catalog.targets.filter((target) => target.available);
-      const resolveTarget = (ref: PerformanceTargetRef): PerformanceTargetOption | undefined => available.find((target) => targetRefMatches(ref, target.ref));
+      const resolveTarget = (ref: PerformanceTargetRef): PerformanceTargetOption | undefined => available.find((target) => performanceTargetMatches(ref, target.ref));
       const configured = get().runTargets.flatMap((selection) => {
         const target = resolveTarget(selection.target);
         if (!target) return [];
@@ -248,7 +243,7 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
     if (get().running) return;
     const item = get().cases.find((candidate) => candidate.id === id);
     if (!item?.target) return;
-    const target = get().catalog?.targets.find((candidate) => targetRefMatches(item.target, candidate.ref));
+    const target = get().catalog?.targets.find((candidate) => performanceTargetMatches(item.target, candidate.ref));
     const profile = target?.profiles.find((candidate) => candidate.id === profileId && candidate.available);
     if (!target || !profile) return;
     const current = item.profileIds ?? [naturalProfile(target) ?? profileId];
@@ -319,7 +314,7 @@ export const usePerformance = create<PerformanceState>((set, get) => ({
     set({ ...emptyRun, running: true, requestId: id, startedAt: Date.now(), cases, progress: 'Checking runtime capabilities…', progressPhase: 'resolving', totalGroups });
     try {
       const response = await window.api.performanceStart({
-        requestId: id, workspaceId: 'default', name: 'Performance experiment', setup: '', cases, targets,
+        requestId: id, workspaceId: getActiveFile()?.workspaceId ?? 'default', name: 'Performance experiment', setup: '', cases, targets,
         measurement: state.measurement, isolation: { mode: 'target-profile' }
       });
       if (get().requestId === id) set({ totalGroups: response.totalGroups });

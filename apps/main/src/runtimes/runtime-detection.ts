@@ -146,7 +146,7 @@ export async function detectExecutable(id: string, candidates: string[]): Promis
 }
 
 export function detectSystemRuntime(id: 'node' | 'deno' | 'bun'): Promise<DetectedRuntime | null> {
-  return detectExecutable(id, [id, ...commonRuntimeCandidates(id)]);
+  return detectExecutable(id, [executableName(id), ...commonRuntimeCandidates(id)]);
 }
 
 /** GUI-launched Electron apps may not inherit the user's shell PATH. Keep

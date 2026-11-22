@@ -121,4 +121,25 @@ describe('AnalysisManager (thin dispatcher)', () => {
     expect(await h.manager.cancel('nope-0000001')).toBe(false);
     expect(h.events.length).toBe(0);
   });
+
+  it('streams an unexpected adapter failure to the accepted request', async () => {
+    const h = makeManager(async () => { throw new Error('probe failed'); });
+    await h.manager.start(REQ);
+    expect(h.events).toContainEqual({ t: 'error', requestId: REQ.requestId, message: 'probe failed' });
+    expect(await h.manager.cancel(REQ.requestId)).toBe(false);
+  });
+
+  it('emits only cancelled if the adapter finishes while its kill hook is pending', async () => {
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => { finish = resolve; });
+    const h = makeManager(async (req, ctx) => {
+      ctx.registerCancel(async () => { finish(); await finished; });
+      await finished;
+      ctx.emit({ t: 'done', requestId: req.requestId });
+    });
+    const running = h.manager.start(REQ);
+    await h.manager.cancel(REQ.requestId);
+    await running;
+    expect(h.events).toEqual([{ t: 'cancelled', requestId: REQ.requestId }]);
+  });
 });

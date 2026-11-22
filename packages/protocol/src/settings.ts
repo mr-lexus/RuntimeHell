@@ -146,7 +146,8 @@ export const AppSettingsSchema = z
     session: z
       .object({
         tabs: z.array(SessionTabSchema),
-        activeRelPath: z.string().nullable()
+        activeRelPath: z.string().nullable(),
+        activeWorkspaceId: z.string().min(1).nullable().optional()
       })
       .strict()
   })

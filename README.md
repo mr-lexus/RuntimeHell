@@ -21,13 +21,13 @@ RuntimeHell is a Windows-first desktop playground for developers who want to run
 
 ## Beta downloads
 
-**[Visit the product website](https://mr-lexus.github.io/RuntimeHell/)** · **[Download 0.1.0-beta.1](https://github.com/mr-lexus/RuntimeHell/releases/tag/v0.1.0-beta.1)**
+**[Visit the product website](https://mr-lexus.github.io/RuntimeHell/)** · **[Download 0.1.0-beta.2](https://github.com/mr-lexus/RuntimeHell/releases/tag/v0.1.0-beta.2)**
 
 Native GitHub Actions builds provide Windows x64 (NSIS), macOS Intel/Apple Silicon (DMG/ZIP), and Linux x64 (AppImage/DEB). Each release includes SHA-256 checksums. Builds are currently unsigned and macOS packages are not notarized.
 
 ### Release pipeline
 
-Pushing a version tag such as `v0.1.0-beta.1` starts the release workflow. It validates the version, runs lint/typecheck/tests, builds on native Windows, Linux, and macOS runners, then uploads all installers to a draft before publishing the prerelease. The regular [CI workflow](.github/workflows/ci.yml) also checks pushes and pull requests.
+Pushing a version tag such as `v0.1.0-beta.2` starts the release workflow. It validates the version, runs lint/typecheck/tests, builds on native Windows, Linux, and macOS runners, then uploads all installers to a draft before publishing the prerelease. The regular [CI workflow](.github/workflows/ci.yml) also checks pushes and pull requests.
 
 | Platform | Runner | Artifacts |
 | --- | --- | --- |

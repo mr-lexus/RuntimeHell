@@ -80,7 +80,16 @@ export async function saveFile(req: SaveFileRequest): Promise<unknown> {
   const tmp = `${abs}.rh-save-${randomUUID()}.tmp`;
   try {
     await fs.writeFile(tmp, req.content, 'utf8');
-    await fs.rename(tmp, abs);
+    if (req.createOnly) {
+      // Link the complete staged file only if the destination is still free.
+      try { await fs.link(tmp, abs); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error(`File already exists: ${req.relPath}`);
+        throw error;
+      }
+    } else {
+      await fs.rename(tmp, abs);
+    }
   } finally {
     await fs.rm(tmp, { force: true });
   }

@@ -42,7 +42,7 @@ export interface ExecutionManagerDeps {
   /** Event delivery into the renderer. */
   readonly emit: (event: RunEvent) => void;
   /** History recorder (todo 21); injected so tests stay filesystem-free. */
-  readonly recordRun?: (record: HistoryRecord & { workspaceId: string }) => void;
+  readonly recordRun?: (workspaceId: string, record: HistoryRecord) => Promise<void>;
 }
 
 interface RunnerLike {
@@ -53,7 +53,6 @@ interface RunnerLike {
 interface ActiveRun {
   readonly runId: string;
   readonly handle: RunHandle;
-  readonly unsubscribe: () => void;
 }
 
 type RuntimeResolver = (runtimeId: RuntimeId, requestedVersion?: string) => Promise<ResolvedRuntime | null>;
@@ -127,6 +126,7 @@ export class ExecutionManager {
   private readonly resolveRuntime: RuntimeResolver;
   private readonly activeByWorkspace = new Map<string, ActiveRun>();
   private readonly activeByRunId = new Map<string, ActiveRun>();
+  private readonly preparing = new Set<string>();
 
   constructor(private readonly deps: ExecutionManagerDeps) {
     this.runner = deps.createRunner?.() ?? new ProcessRunner();
@@ -141,7 +141,16 @@ export class ExecutionManager {
   async start(req: RunStartRequest): Promise<RunStartResponse> {
     const existing = this.activeByWorkspace.get(req.workspaceId);
     if (existing) return { ok: false, stage: 'active', activeRunId: existing.runId };
+    if (this.preparing.has(req.workspaceId)) return { ok: false, stage: 'active' };
+    this.preparing.add(req.workspaceId);
+    try {
+      return await this.prepareRun(req);
+    } finally {
+      this.preparing.delete(req.workspaceId);
+    }
+  }
 
+  private async prepareRun(req: RunStartRequest): Promise<RunStartResponse> {
     // Runtime dispatch: runtimeId defaults to 'node' so pre-runtime-switching
     // renderers behave exactly as before.
     const runtimeId: RuntimeId = req.runtimeId ?? 'node';
@@ -248,7 +257,7 @@ export class ExecutionManager {
     // Subscribe AFTER spawn: the runner emits asynchronously (IO ticks), never
     // synchronously inside run(), and every event is filtered to THIS run so
     // concurrent workspaces sharing the runner cannot cross-talk.
-    const unsubscribe = selectedRunner.onEvent((event) => {
+    const unsubscribe = selectedRunner.onEvent(async (event) => {
       if (event.runId !== handle.runId) return;
       if (event.type === 'stderr') {
         // User stderr only: protocol frames were split out by the runner's
@@ -256,36 +265,33 @@ export class ExecutionManager {
         remapper.push(event.data);
         return;
       }
-      this.deps.emit(event);
       if (event.type === 'exit') {
+        unsubscribe();
+        this.activeByRunId.delete(handle.runId);
         remapper.flush();
-        const run = this.activeByRunId.get(handle.runId);
-        if (run) {
-          this.activeByRunId.delete(handle.runId);
-          this.activeByWorkspace.delete(req.workspaceId);
-          run.unsubscribe();
-        }
+        await remapper.settle();
         // History ring (todo 21): request snapshot + result summary.
         try {
-          this.deps.recordRun?.({
-            workspaceId: req.workspaceId,
+          await this.deps.recordRun?.(req.workspaceId, {
             runId: handle.runId,
             startedAt: new Date(startedAt).toISOString(),
             finishedAt: new Date().toISOString(),
             relPath: req.relPath,
             contentSnapshot: req.content,
-            status: event.killedBy === 'timeout' ? 'timeout' : event.killedBy === 'user' ? 'cancelled' : 'completed',
+            status: (await handle.result).status,
             exitCode: event.code,
             durationMs: event.durationMs,
             killedBy: event.killedBy
           });
-        } catch {
-          /* history is best-effort */
+        } catch (error) {
+          this.deps.emit({ type: 'error', runId: handle.runId, message: `Failed to save run history: ${error instanceof Error ? error.message : String(error)}` });
         }
+        this.activeByWorkspace.delete(req.workspaceId);
       }
+      this.deps.emit(event);
     });
 
-    const active: ActiveRun = { runId: handle.runId, handle, unsubscribe };
+    const active: ActiveRun = { runId: handle.runId, handle };
     this.activeByRunId.set(handle.runId, active);
     this.activeByWorkspace.set(req.workspaceId, active);
 

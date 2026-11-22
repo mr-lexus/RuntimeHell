@@ -1,9 +1,9 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
-import type { AnalysisType, EngineCapabilities } from '@rh/protocol';
+import type { AnalysisType } from '@rh/protocol';
 import { useRef } from 'react';
 import type { SelectionInfo } from '../../editor/selection-service';
 import { scanFunctions, type ScannedFunction } from '../../editor/scan-functions';
-import { ANALYSIS_ALL_TYPES, useAnalysis, type AnalysisEngineId, type TypeState } from '../../state/analysis';
+import { ANALYSIS_ALL_TYPES, CAPABILITY_FOR_TYPE, useAnalysis, type AnalysisEngineId, type TypeState } from '../../state/analysis';
 import { hasAnalysisNormalizer, ResultViewer, ResultViewerTabs, type DrawerTab } from './ResultViewer';
 import { ANALYSIS_ACTION_ICON, ANALYSIS_HELP, ANALYSIS_ICON } from './analysis-help';
 import { BlockLoader } from '../../ui/primitives';
@@ -15,18 +15,6 @@ const TYPE_LABEL: Record<AnalysisType, string> = {
   'ir-graph': 'IR graph',
   deopts: 'Deopts',
   gc: 'GC'
-};
-
-// Protocol capability names are intentionally descriptive, while the panel
-// actions use compact analysis ids. Keep the mapping explicit so an engine
-// that lacks (for example) bytecodeDump is disabled before a request is sent.
-const CAPABILITY_FOR_TYPE: Record<AnalysisType, keyof Omit<EngineCapabilities, 'notes'>> = {
-  ast: 'astDump',
-  bytecode: 'bytecodeDump',
-  optcode: 'optCodeDisasm',
-  'ir-graph': 'irGraphDump',
-  deopts: 'deoptTrace',
-  gc: 'gcLog'
 };
 
 function AnalysisInfo({ type }: { type: AnalysisType }): React.JSX.Element {
@@ -108,7 +96,7 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo, onManageEngin
   // selector reruns only what the user previously selected. No selection is
   // an idle state: it displays no results and triggers no analysis.
   const [lastAnalysisTypes, setLastAnalysisTypes] = useState<AnalysisType[]>([]);
-  const [selectedAnalysisType, setSelectedAnalysisType] = useState<AnalysisType | null>(null);
+  const selectedAnalysisType = state.selectedAnalysisType;
   const [resultTab, setResultTab] = useState<DrawerTab>('normalized');
   const previousSelectedFunctionRef = useRef<ScannedFunction | null>(selectedFunction);
 
@@ -170,7 +158,8 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo, onManageEngin
         <button
           className="rh-analysis-action"
           onClick={() => {
-            setSelectedAnalysisType((current) => current ?? ANALYSIS_ALL_TYPES.find((type) => caps?.[CAPABILITY_FOR_TYPE[type]] === true) ?? null);
+            const firstSupported = ANALYSIS_ALL_TYPES.find((type) => caps?.[CAPABILITY_FOR_TYPE[type]] === true);
+            if (selectedAnalysisType === null && firstSupported) state.selectType(firstSupported);
             setResultTab('normalized');
             runAnalysis([...ANALYSIS_ALL_TYPES]);
           }}
@@ -215,7 +204,7 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo, onManageEngin
               title={tooltip}
               disabled={state.requestId !== null || !supported}
               onClick={() => {
-                setSelectedAnalysisType(type);
+                state.selectType(type);
                 if (t.status !== 'done') {
                   setResultTab('normalized');
                   runAnalysis([type]);
@@ -268,7 +257,7 @@ export function AnalysisPanel({ code, selection, lang, onLoadDemo, onManageEngin
                   <ResultViewerTabs
                     tab={resultTab}
                     onChange={setResultTab}
-                    hasNormalizer={hasAnalysisNormalizer(type)}
+                    hasNormalizer={hasAnalysisNormalizer(type, t.result.engine)}
                     artifactCount={t.result.artifacts.length}
                   />
                 )}

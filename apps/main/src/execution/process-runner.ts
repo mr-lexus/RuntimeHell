@@ -93,7 +93,7 @@ export class ProcessRunner {
 
   /** Coalescing stream pump: batches chunks ≥16ms to keep IPC cheap. */
   private makePump(runId: string, type: 'stdout' | 'stderr'): {
-    push: (chunk: Buffer) => void;
+    push: (chunk: string) => void;
     flush: () => void;
     dispose: () => void;
   } {
@@ -108,7 +108,7 @@ export class ProcessRunner {
     timer = null;
     return {
       push: (chunk) => {
-        buffer += chunk.toString('utf8');
+        buffer += chunk;
         if (timer === null) {
           timer = setTimeout(() => {
             timer = null;
@@ -176,7 +176,7 @@ export class ProcessRunner {
     const stderrRouter = new SentinelLineSplitter({
       onSentinel: handleFrameJson,
       onConsole: handleConsoleJson,
-      onText: (text) => stderrPump.push(Buffer.from(text, 'utf8'))
+      onText: stderrPump.push
     });
     let fd3Router: SentinelLineSplitter | null = null;
 
@@ -256,13 +256,13 @@ export class ProcessRunner {
         });
       }
 
-      child.stdout?.on('data', (c: Buffer) => stdoutPump.push(c));
+      child.stdout?.setEncoding('utf8').on('data', stdoutPump.push);
       // stderr carries user output AND sentinel frames; the router separates them.
-      child.stderr?.on('data', (c: Buffer) => stderrRouter.push(c.toString('utf8')));
+      child.stderr?.setEncoding('utf8').on('data', (chunk: string) => stderrRouter.push(chunk));
       if (options.reportTransport === 'fd3') {
         fd3Router = new SentinelLineSplitter({ onSentinel: handleFrameJson, onConsole: handleConsoleJson, onText: () => undefined });
         const fd3 = child.stdio[3];
-        fd3?.on('data', (c: Buffer) => fd3Router?.push(c.toString('utf8')));
+        if (fd3 && 'setEncoding' in fd3) fd3.setEncoding('utf8').on('data', (chunk: string) => fd3Router?.push(chunk));
       }
       child.on('error', (err: NodeJS.ErrnoException) => {
         stdoutPump.dispose();
@@ -273,7 +273,7 @@ export class ProcessRunner {
       child.on('close', (code, signal) => {
         stdoutPump.dispose();
         stderrPump.dispose();
-        finish(cancelled === 'timeout' ? 'timeout' : cancelled === 'user' ? 'cancelled' : 'completed', code, signal);
+        finish(cancelled === 'timeout' ? 'timeout' : cancelled === 'user' ? 'cancelled' : code === 0 ? 'completed' : 'crashed', code, signal);
       });
 
       // Timeout watchdog.

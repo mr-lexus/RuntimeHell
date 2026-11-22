@@ -7,17 +7,34 @@
  */
 import { join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, rmdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { _electron, type ElectronApplication, type Page } from 'playwright';
 
 const mainEntry = resolve(process.cwd(), 'out/main/index.js');
+let currentProfile: string | undefined;
+let currentApp: ElectronApplication | undefined;
+let processExited: Promise<void> | undefined;
 
-async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
+afterEach(async () => {
+  const profile = currentProfile;
+  try {
+    await currentApp?.close();
+    await processExited;
+  } finally {
+    currentApp = undefined;
+    currentProfile = undefined;
+    processExited = undefined;
+    if (profile) await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
+});
+
+async function launchApp(): Promise<{ app: ElectronApplication; page: Page; profile: string }> {
   const t0 = Date.now();
   const step = (m: string): void => console.log(`[e2e-monaco +${Date.now() - t0}ms] ${m}`);
   const profile = await mkdtemp(join(tmpdir(), 'rh-monaco-'));
+  currentProfile = profile;
   const app = await _electron.launch({
     args: [mainEntry, `--user-data-dir=${join(profile, 'chromium')}`],
     env: {
@@ -26,16 +43,25 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
       XDG_CONFIG_HOME: join(profile, 'config'), RH_CACHE_ROOT: join(profile, 'cache')
     }
   });
+  currentApp = app;
+  const child = app.process();
+  processExited = child.exitCode !== null || child.signalCode !== null
+    ? Promise.resolve()
+    : new Promise<void>((resolve) => { child.once('exit', () => resolve()); });
+  app.once('close', () => { if (currentApp === app) currentApp = undefined; });
   step('launched');
-  app.process().stdout?.on('data', (c: Buffer) => {
+  child.stdout?.on('data', (c: Buffer) => {
     const text = c.toString().trim();
     if (text !== '') step(`main.out: ${text.slice(0, 200)}`);
   });
-  app.process().stderr?.on('data', (c: Buffer) => {
+  child.stderr?.on('data', (c: Buffer) => {
     const text = c.toString().trim();
     if (text !== '') step(`main.err: ${text.slice(0, 300)}`);
   });
   const page = await app.firstWindow();
+  // Electron handles beforeunload in the main process. Chromium reports a
+  // dialog to Playwright even though there is no browser dialog to dismiss.
+  page.on('dialog', (dialog) => { if (dialog.type() !== 'beforeunload') void dialog.dismiss(); });
   step('firstWindow');
   await page.waitForSelector('#root', { timeout: 20000 });
   step('#root');
@@ -45,10 +71,173 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
     timeout: 20000
   });
   step('editor-hook');
-  return { app, page };
+  return { app, page, profile };
 }
 
 describe.skipIf(!existsSync(mainEntry))('monaco e2e (built app)', () => {
+  it('reports a conflicting rename and leaves the closed target untouched', async () => {
+    const { app, page } = await launchApp();
+    try {
+      await page.evaluate(() => window.api.saveFile({ workspaceId: 'default', relPath: 'taken.ts', content: 'already saved' }));
+      await page.locator('[data-file-id="default:entry.ts"]').click({ button: 'right' });
+      await page.getByRole('menuitem', { name: 'Rename…' }).click();
+      const dialog = page.getByRole('dialog', { name: 'Rename tab' });
+      await dialog.getByRole('textbox').fill('taken.ts');
+      await dialog.getByRole('textbox').press('Enter');
+      await dialog.getByRole('alert').filter({ hasText: /already exists/i }).waitFor();
+      expect(await page.evaluate(() => window.api.readFile({ workspaceId: 'default', relPath: 'taken.ts' }))).toEqual({ ok: true, content: 'already saved' });
+      await dialog.getByRole('textbox').fill('available.ts');
+      await dialog.getByRole('textbox').press('Enter');
+      await page.getByRole('button', { name: 'Close available.ts', exact: true }).waitFor();
+      expect(await page.evaluate(() => window.api.readFile({ workspaceId: 'default', relPath: 'available.ts' }))).toMatchObject({ ok: true, content: expect.stringContaining('const values') });
+    } finally { await app.close(); }
+  }, 60000);
+
+  it.each(['retry', 'discard'])('lets the user %s a failed settings write before closing', async (choice) => {
+    const { app, page, profile } = await launchApp();
+    const config = process.platform === 'darwin' ? join(profile, 'Library', 'Application Support') : join(profile, 'config');
+    const settingsPath = join(config, 'RuntimeHell', 'settings.json');
+    let blocked = false;
+    try {
+      await page.evaluate(() => window.api.settingsSet({}));
+      await rename(settingsPath, `${settingsPath}.bak`);
+      await mkdir(settingsPath);
+      blocked = true;
+      await page.getByRole('button', { name: 'auto-run off', exact: true }).click();
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+      const dialog = page.getByRole('dialog', { name: 'Settings could not be saved' });
+      await dialog.waitFor({ timeout: 5000 });
+      if (choice === 'retry') {
+        await rmdir(settingsPath);
+        await rename(`${settingsPath}.bak`, settingsPath);
+        blocked = false;
+      }
+      const closed = page.waitForEvent('close', { timeout: 8000 });
+      await dialog.getByRole('button', { name: choice === 'retry' ? 'Retry save' : 'Continue without saving settings' }).click();
+      await closed;
+      const path = blocked ? `${settingsPath}.bak` : settingsPath;
+      expect(JSON.parse(await readFile(path, 'utf8')).prefs.autorun).toBe(choice === 'retry');
+    } finally {
+      if (blocked) {
+        await rmdir(settingsPath);
+        await rename(`${settingsPath}.bak`, settingsPath);
+      }
+      await currentApp?.close();
+    }
+  }, 60000);
+
+  it('restores later tabs after a bad entry and remembers which workspace owns the active file', async () => {
+    const { app, page } = await launchApp();
+    try {
+      await page.evaluate(async () => {
+        const tabs = ['first', 'second'].map((workspaceId) => ({ workspaceId, relPath: 'same.ts' }));
+        for (const tab of tabs) await window.api.saveFile({ ...tab, content: tab.workspaceId });
+        await window.api.settingsSet({
+          session: { tabs: [{ workspaceId: 'old invalid id', relPath: 'invalid.ts' }, ...tabs], activeRelPath: 'same.ts' }
+        });
+      });
+      await page.reload();
+      await page.locator('[data-file-id="first:same.ts"].is-active').waitFor({ timeout: 8000 });
+      await page.locator('[data-file-id="second:same.ts"]').click();
+      await expect.poll(() => page.evaluate(async () => (await window.api.settingsGet()).session.activeWorkspaceId), { timeout: 5000 }).toBe('second');
+      await page.reload();
+      await page.locator('[data-file-id="second:same.ts"].is-active').waitFor({ timeout: 8000 });
+      expect(await page.evaluate(() => (window as unknown as { __rh_editor: { getValue(): string } }).__rh_editor.getValue())).toBe('second');
+    } finally {
+      await app.close();
+    }
+  }, 60000);
+
+  it('restores the cursor and undo history when returning to an open tab', async () => {
+    const { app, page } = await launchApp();
+    try {
+      await page.evaluate(() => {
+        const editor = (window as unknown as { __rh_editor: { setValue(value: string): void; setSelection(a: number, b: number, c: number, d: number): void } }).__rh_editor;
+        editor.setValue('alpha\nbeta');
+        editor.setSelection(2, 2, 2, 2);
+      });
+      await page.keyboard.type('X');
+      await page.getByRole('button', { name: 'New tab', exact: true }).click();
+      await page.locator('[data-file-id="default:untitled-2.ts"].is-active').waitFor();
+      await page.locator('[data-file-id="default:entry.ts"]').click();
+      const cursor = await page.evaluate(() => {
+        const editor = (window as unknown as { __rh_monaco: { editor: { getEditors(): { focus(): void; getPosition(): unknown }[] } } }).__rh_monaco.editor.getEditors()[0]!;
+        editor.focus();
+        return editor.getPosition();
+      });
+      expect(cursor).toMatchObject({ lineNumber: 2, column: 3 });
+      await page.keyboard.press('ControlOrMeta+z');
+      expect(await page.evaluate(() => (window as unknown as { __rh_editor: { getValue(): string } }).__rh_editor.getValue())).toBe('alpha\nbeta');
+      await page.getByRole('button', { name: 'Close entry.ts', exact: true }).click();
+      await expect.poll(() => page.evaluate(() => {
+        const monaco = (window as unknown as { __rh_monaco: { editor: { getModels(): { getValue(): string }[] } } }).__rh_monaco;
+        return monaco.editor.getModels().some((model) => model.getValue() === 'alpha\nbeta');
+      }), { timeout: 5000 }).toBe(false);
+    } finally {
+      await app.close();
+    }
+  }, 60000);
+
+  it('writes the last edit before reload and native window close', async () => {
+    const { app, page, profile } = await launchApp();
+    const entry = join(profile, 'RuntimeHell', 'workspaces', 'default', 'entry.ts');
+    let writeBlocked = false;
+    try {
+      await page.locator('.monaco-editor').first().click();
+      await page.evaluate(() => {
+        (window as unknown as { __rh_editor: { setValue: (value: string) => void } }).__rh_editor.setValue('const beforeReload = 1;');
+      });
+      const reload = page.waitForEvent('load', { timeout: 15000 });
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.reload());
+      await reload;
+      await page.waitForFunction(() => Boolean((window as unknown as Record<string, unknown>).__rh_editor));
+      expect(await page.evaluate(() => (window as unknown as { __rh_editor: { getValue: () => string } }).__rh_editor.getValue())).toBe('const beforeReload = 1;');
+      await page.locator('.monaco-editor').first().click();
+
+      await rename(entry, `${entry}.bak`);
+      await mkdir(entry);
+      writeBlocked = true;
+      await page.evaluate(() => {
+        (window as unknown as { __rh_editor: { setValue: (value: string) => void } }).__rh_editor.setValue('const beforeClose = 2;');
+        void window.api.windowClose();
+      });
+      await page.getByRole('status').filter({ hasText: 'Could not save entry.ts' }).waitFor();
+      expect(await page.evaluate(() => (window as unknown as { __rh_editor: { getValue: () => string } }).__rh_editor.getValue())).toBe('const beforeClose = 2;');
+      await rmdir(entry);
+      writeBlocked = false;
+      const closed = page.waitForEvent('close', { timeout: 10000 });
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+      await closed;
+      expect(await readFile(entry, 'utf8')).toBe('const beforeClose = 2;');
+    } finally {
+      if (writeBlocked) await rmdir(entry);
+      await currentApp?.close();
+    }
+  }, 60000);
+
+  it('saves edits when switching away and closing a tab before autosave', async () => {
+    const { app, page } = await launchApp();
+    try {
+      const edit = (value: string) => page.evaluate((source) => {
+        const editor = (window as unknown as { __rh_editor: { setValue: (value: string) => void } }).__rh_editor;
+        editor.setValue(source);
+      }, value);
+      const read = (relPath: string) => page.evaluate((path) => window.api.readFile({ workspaceId: 'default', relPath: path }), relPath);
+      await edit('const retained = 1;');
+      await page.getByRole('button', { name: 'New tab', exact: true }).click();
+      await expect.poll(() => read('entry.ts'), { timeout: 5000 }).toEqual({ ok: true, content: 'const retained = 1;' });
+
+      await edit('const retained = 2;');
+      await page.getByRole('button', { name: 'Close untitled-2.ts', exact: true }).click();
+      await expect.poll(() => read('untitled-2.ts'), { timeout: 5000 }).toEqual({ ok: true, content: 'const retained = 2;' });
+      await page.getByRole('button', { name: 'New tab', exact: true }).click();
+      await page.getByRole('button', { name: 'Close untitled-3.ts', exact: true }).waitFor();
+      await expect.poll(() => read('untitled-3.ts'), { timeout: 5000 }).toMatchObject({ ok: true, content: expect.stringContaining('hello from tab 3') });
+    } finally {
+      await app.close();
+    }
+  }, 60000);
+
   it('runs Vim text objects, macros, and the LazyVim help mapping', async () => {
     const { app, page } = await launchApp();
     const originalVimMode = await page.evaluate(async () => (await window.api.settingsGet()).editor.vimMode);
@@ -104,6 +293,10 @@ describe.skipIf(!existsSync(mainEntry))('monaco e2e (built app)', () => {
   it('boots, pings main, and surfaces TS diagnostics for a type error', async () => {
     const { app, page } = await launchApp();
     try {
+      const policy = await page.evaluate(() =>
+        document.querySelector<HTMLMetaElement>('meta[http-equiv="Content-Security-Policy"]')?.content);
+      expect(policy?.split(/;\s*/)).toContain("script-src 'self'");
+
       // IPC round-trip through the sandboxed preload bridge.
       const pong = await page.evaluate(async () => {
         const res = (await window.api.ping(Date.now())) as { pong: boolean };

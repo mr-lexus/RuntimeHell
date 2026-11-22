@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PerformanceCatalogResponse, PerformanceRunResult, PerformanceStartResponse } from '@rh/protocol';
 import { usePerformance } from './performance';
+import { useUi } from './ui';
 
+vi.hoisted(() => vi.stubGlobal('localStorage', { getItem: () => null }));
 const requestId = 'perf-progress-1234';
 const target = { source: 'runtime' as const, id: 'node' };
 const catalog: PerformanceCatalogResponse = { targets: [{ ref: target, label: 'Node.js', available: true, reason: null, runtimeId: 'node', runtimeVersion: '24', engineId: 'v8', profiles: [{ id: 'natural', label: 'Default', description: '', available: true, classification: 'stable' }] }] };
@@ -47,6 +49,15 @@ describe('performance progress state', () => {
       progressPhase: 'measurement',
       activeGroupId: 'node:natural'
     });
+  });
+
+  it('runs a comparison in the active file workspace', async () => {
+    const performanceStart = vi.fn().mockResolvedValue({ totalGroups: 1 });
+    vi.stubGlobal('window', { api: { performanceStart } });
+    useUi.getState().openFile({ id: 'project:index.js', workspaceId: 'project', relPath: 'index.js', language: 'js', content: '1', dirty: false });
+    usePerformance.setState({ running: false, requestId: null });
+    await usePerformance.getState().run();
+    expect(performanceStart).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'project' }));
   });
 
   it('ignores events from an older experiment and finalizes non-cancelled progress', () => {
@@ -140,6 +151,18 @@ describe('performance progress state', () => {
     usePerformance.setState({ running: false, catalog, errors: { 'run-1': 'run failed' }, outcome: 'partial' });
     await usePerformance.getState().refreshCatalog(true);
     expect(usePerformance.getState()).toMatchObject({ catalog, loadingCatalog: false, outcome: 'partial', errors: { catalog: 'probe failed', 'run-1': 'run failed' } });
+  });
+
+  it('restores the selected version and installation source on catalog refresh', async () => {
+    const options = [
+      { ...target, version: 'system', provenance: 'system' },
+      { ...target, version: '24', provenance: 'managed' },
+      { ...target, version: '24', provenance: 'nvm' }
+    ].map((ref) => ({ ...catalog.targets[0]!, ref }));
+    vi.stubGlobal('window', { api: { performanceCatalog: async () => ({ targets: options }) } });
+    usePerformance.setState({ running: false, runTargets: options.slice(1).map(({ ref }) => ({ target: ref, profiles: [{ id: 'natural' }] })) });
+    await usePerformance.getState().refreshCatalog(true);
+    expect(usePerformance.getState().runTargets.map((selection) => selection.target.provenance)).toEqual(['managed', 'nvm']);
   });
 
   it('times out stalled discovery and permits retry', async () => {

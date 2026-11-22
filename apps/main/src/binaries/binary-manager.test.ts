@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { access, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { downloadTo, extractZipArchive, installArtifact, validateTarListings } from './binary-manager.js';
+import { extractWebKitShell } from './jsc-archive.js';
 import { hostArch, hostPlatform } from '../platform.js';
 
 let sandbox = '';
@@ -125,6 +126,70 @@ describe('safe tar extraction preflight', () => {
 });
 
 describe('streaming downloads', () => {
+  it('aborts sibling WebKit ranges and stops progress when opening the archive fails', async () => {
+    // The ZIP footer spans two cached pages, so yauzl requests both at once.
+    const pageBytes = 512 * 1024;
+    const size = pageBytes + 42;
+    const headers = { etag: '"fixture"', 'content-length': String(size) };
+    const originalFetch = globalThis.fetch;
+    let releaseRange!: () => void;
+    const rangePending = new Promise<void>((resolve) => { releaseRange = resolve; });
+    const rangeSignals: AbortSignal[] = [];
+    const progress: number[] = [];
+    globalThis.fetch = async (_url, init) => {
+      if (init?.method === 'HEAD') return new Response(null, { headers });
+      if (new Headers(init?.headers).get('range') === `bytes=0-${pageBytes - 1}`) return new Response(null, { status: 412 });
+      if (init?.signal) rangeSignals.push(init.signal);
+      await rangePending; // Simulate response bytes already queued when the caller aborts.
+      return new Response(Buffer.alloc(42), { status: 206, headers: { ...headers, 'content-range': `bytes ${pageBytes}-${size - 1}/${size}` } });
+    };
+    try {
+      await expect(extractWebKitShell('https://fixture.test/archive.zip', sandbox, (received) => progress.push(received)))
+        .rejects.toThrow(/HTTP 412/);
+      releaseRange();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(rangeSignals.map((signal) => signal.aborted)).toEqual([true]);
+      expect(progress).toEqual([]);
+    } finally {
+      releaseRange();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it.each([false, true])('installs a bounded WebKit payload only from a consistent archive (changed=%s)', async (changed) => {
+    // A tiny release ZIP with bin/jsc.exe, bin/JavaScriptCore.dll and bin/test.pdb.
+    const bytes = Buffer.from('UEsDBBQAAAAIANi5dl3iqzi0DAAAAAoAAAALAAAAYmluL2pzYy5leGUrSS0uUSjOSM3JAQBQSwMEFAAAAAgA2Ll2XUjPsQgOAAAADAAAABYAAABiaW4vSmF2YVNjcmlwdENvcmUuZGxsK0ktLlHIyUwqSiyqBABQSwMEFAAAAAgA2Ll2XeLWiA0IAAAABgAAAAwAAABiaW4vdGVzdC5wZGLLTM/LL0oFAFBLAQIUABQAAAAIANi5dl3iqzi0DAAAAAoAAAALAAAAAAAAAAAAAACAAQAAAABiaW4vanNjLmV4ZVBLAQIUABQAAAAIANi5dl1Iz7EIDgAAAAwAAAAWAAAAAAAAAAAAAACAATUAAABiaW4vSmF2YVNjcmlwdENvcmUuZGxsUEsBAhQAFAAAAAgA2Ll2XeLWiA0IAAAABgAAAAwAAAAAAAAAAAAAAIABdwAAAGJpbi90ZXN0LnBkYlBLBQYAAAAAAwADALcAAACpAAAAAAA=', 'base64');
+    const originalFetch = globalThis.fetch;
+    const originalCache = process.env['RH_CACHE_ROOT'];
+    globalThis.fetch = async (_url, init) => {
+      const headers = { etag: '"archive"', 'content-length': String(bytes.length) };
+      if (init?.method === 'HEAD') return new Response(null, { headers });
+      const requestHeaders = new Headers(init?.headers);
+      if (requestHeaders.get('if-match') !== '"archive"' || changed) return new Response(null, { status: 412 });
+      expect(requestHeaders.get('range')).toBe(`bytes=0-${bytes.length - 1}`);
+      return new Response(bytes, { status: 206, headers: { ...headers, 'content-range': `bytes 0-${bytes.length - 1}/${bytes.length}` } });
+    };
+    process.env['RH_CACHE_ROOT'] = sandbox;
+    try {
+      const url = 'https://s3-us-west-2.amazonaws.com/archives.webkit.org/win-x86_64-release/123@main.zip';
+      const install = installArtifact({
+        archive: 'webkit-jsc', entry: { kind: 'engine', id: 'javascriptcore', platform: 'win64', arch: 'x64', version: '123', url, sha256: '', license: 'test', source: 'official-dist', customBuildRequired: false },
+        source: { url }
+      });
+      if (changed) {
+        await expect(install).rejects.toThrow();
+        await expect(access(join(sandbox, 'manifest.json'))).rejects.toThrow();
+      } else {
+        const entry = await install;
+        expect((await readdir(entry.installedPath!)).sort()).toEqual(['JavaScriptCore.dll', 'jsc.exe']);
+        expect(await readFile(join(entry.installedPath!, 'jsc.exe'), 'utf8')).toBe('test shell');
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalCache === undefined) delete process.env['RH_CACHE_ROOT'];
+      else process.env['RH_CACHE_ROOT'] = originalCache;
+    }
+  });
   it('streams chunks to disk while calculating the checksum and progress', async () => {
     const originalFetch = globalThis.fetch;
     const chunks = [Buffer.from('runtime-'), Buffer.from('archive')];

@@ -1,4 +1,5 @@
 /** Real product screenshots in a disposable profile. No mocked results. */
+import { firstTestWindow } from './electron-test-window.mjs';
 import { _electron as electron } from 'playwright';
 import { mkdtemp, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,7 +11,7 @@ const output = resolve('website/assets/screens');
 await mkdir(output, { recursive: true });
 const app = await electron.launch({ args: [resolve('out/main/index.js'), `--user-data-dir=${join(profile, 'chromium')}`], env: { ...process.env, USERPROFILE: profile, HOME: profile, APPDATA: join(profile, 'config'), LOCALAPPDATA: join(profile, 'local'), XDG_CONFIG_HOME: join(profile, 'config'), RH_CACHE_ROOT: join(profile, 'cache') } });
 try {
-  const page = await app.firstWindow();
+  const page = await firstTestWindow(app);
   await page.waitForFunction(() => Boolean(window.__rh_editor), null, { timeout: 30000 });
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.evaluate(() => window.api.settingsSet({ editor: { fontSize: 17, minimap: false, inlineInspector: true }, appearance: { motion: 'reduced' }, layout: { drawerOpen: false, showStatusBar: true } }));

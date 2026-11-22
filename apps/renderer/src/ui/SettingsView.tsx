@@ -105,7 +105,7 @@ export function SettingsView({ settings, onPatch, onResetAppearance, onResetEdit
       <span role={saveStatus === 'error' ? 'alert' : 'status'} title={saveError ?? undefined} className={saveStatus === 'error' ? 'rh-save-error' : ''}>
         {saveStatus === 'saved' && <Icon name="check" size={13} />}
         {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'error' ? 'Changes could not be saved.' : saveStatus === 'saved' ? 'Saved on this device' : 'Preferences are stored locally'}
-        {saveStatus === 'error' && <Button onClick={() => onPatch({ prefs: settings.prefs, appearance: settings.appearance, editor: settings.editor, layout: settings.layout, session: settings.session })}>Retry save</Button>}
+        {saveStatus === 'error' && <Button onClick={() => onPatch({})}>Retry save</Button>}
       </span>
       {resetPending ? <span>Reset preferences? <Button variant="danger" onClick={() => { onResetAll(); setResetPending(false); }}>Reset</Button><Button onClick={() => setResetPending(false)}>Cancel</Button></span> : <Button onClick={() => setResetPending(true)}>Reset preferences…</Button>}
     </footer>

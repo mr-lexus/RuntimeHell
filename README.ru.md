@@ -21,13 +21,13 @@ RuntimeHell — Windows-first приложение для разработчик
 
 ## Загрузки бета-версии
 
-**[Сайт проекта](https://mr-lexus.github.io/RuntimeHell/ru/)** · **[Скачать 0.1.0-beta.1](https://github.com/mr-lexus/RuntimeHell/releases/tag/v0.1.0-beta.1)**
+**[Сайт проекта](https://mr-lexus.github.io/RuntimeHell/ru/)** · **[Скачать 0.1.0-beta.2](https://github.com/mr-lexus/RuntimeHell/releases/tag/v0.1.0-beta.2)**
 
 GitHub Actions собирает приложение на нативных runner'ах: Windows x64 (NSIS), macOS Intel и Apple Silicon (DMG/ZIP), Linux x64 (AppImage/DEB). В релиз включены контрольные суммы SHA-256. Сборки пока не подписываются, macOS — без notarization.
 
 ### Процесс релиза
 
-Отправка тега, например `v0.1.0-beta.1`, запускает release-workflow. Он проверяет версию, выполняет lint/typecheck/тесты, собирает приложение на Windows, Linux и macOS, загружает установщики в черновик и только после этого публикует prerelease. Обычный [CI-workflow](.github/workflows/ci.yml) также проверяет push и pull request'ы.
+Отправка тега, например `v0.1.0-beta.2`, запускает release-workflow. Он проверяет версию, выполняет lint/typecheck/тесты, собирает приложение на Windows, Linux и macOS, загружает установщики в черновик и только после этого публикует prerelease. Обычный [CI-workflow](.github/workflows/ci.yml) также проверяет push и pull request'ы.
 
 | Платформа | Runner | Артефакты |
 | --- | --- | --- |

@@ -1,34 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { resolveLatestJscRevisions } from './jsc-source.js';
 
-describe('JavaScriptCore source resolution', () => {
-  it('uses the injected fetch implementation for every discovery request', async () => {
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url.endsWith('/builders')) {
-        return new Response(JSON.stringify({
-          builders: [{ builderid: 7, name: 'WinCairo WKL-Release-Build' }]
-        }));
-      }
-      if (url.includes('/builds?')) {
-        return new Response(JSON.stringify({
-          builds: [{ number: 10, properties: { got_revision: 'abcdef' } }]
-        }));
-      }
-      if (url.endsWith('/commits/abcdef')) {
-        return new Response(JSON.stringify({
-          commit: { message: 'Build update\n\nCanonical link: https://commits.webkit.org/123456@main' }
-        }));
-      }
-      return new Response('not found', { status: 404 });
-    });
-
-    await expect(resolveLatestJscRevisions(fetchImpl as typeof fetch)).resolves.toEqual([
-      {
-        url: 'https://s3-us-west-2.amazonaws.com/archives.webkit.org/wincairo-x86_64-release/123456@main.zip',
-        revision: '123456'
-      }
-    ]);
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
+it('resolves published main revisions from the Windows release builder', async () => {
+  const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+    if (!String(url).includes('/builders/Windows-64-bit-Release-Build/builds?')) return new Response(null, { status: 404 });
+    const builds = ['327569@main', 'bad/revision', '327568@main', '327568@main'].map((revision) => ({
+      properties: { archive_revision: [revision, 'Unknown'] }
+    }));
+    return Response.json({ builds });
   });
+  expect(await resolveLatestJscRevisions(fetchImpl)).toEqual(['327569', '327568'].map((revision) => ({
+    revision, url: `https://s3-us-west-2.amazonaws.com/archives.webkit.org/win-x86_64-release/${revision}@main.zip`
+  })));
 });

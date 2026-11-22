@@ -58,9 +58,8 @@ export function resolveEngineArtifact(engineId: EngineId, platform: Platform, ar
       if (platform === 'win64' && arch === 'x64') return { kind: 'sm-shell', enabled: true };
       return { kind: 'sm-shell', enabled: false, customBuildRequired: true, reason: 'managed SpiderMonkey download currently targets win64/x64' };
     case 'javascriptcore':
-      // jsvu win64 build REQUIRES WebKitRequirements bin64 DLLs (evidence 3).
       if (platform === 'win64' && arch === 'x64') {
-        return { kind: 'jsc-shell', enabled: true, requiresSupport: 'webkit-requirements' };
+        return { kind: 'jsc-shell', enabled: true };
       }
       return { kind: 'jsc-shell', enabled: false, customBuildRequired: true, reason: 'managed JSC download currently targets win64/x64' };
     case 'quickjs':

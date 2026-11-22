@@ -14,7 +14,7 @@ function settingsWithEditor(editorPatch: Partial<AppSettings['editor']>): AppSet
 }
 
 function resetStore(): void {
-  useSettings.setState({ settings: settingsWithEditor({}), hydrated: true, saveStatus: 'idle', saveError: null });
+  useSettings.setState({ settings: settingsWithEditor({}), hydrated: true, saveStatus: 'idle', saveError: null, failedPatch: null });
 }
 
 describe('settings patching', () => {
@@ -25,7 +25,8 @@ describe('settings patching', () => {
     await useSettings.getState().patch({ editor: { fontSize: 16 } });
     expect(useSettings.getState()).toMatchObject({ saveStatus: 'error', saveError: 'Disk is read-only' });
     expect(useSettings.getState().settings.editor.fontSize).toBe(16);
-    await useSettings.getState().patch({ editor: { fontSize: 16 } });
+    await useSettings.getState().patch({});
+    expect(settingsSet).toHaveBeenLastCalledWith(expect.objectContaining({ editor: { fontSize: 16 } }));
     expect(useSettings.getState()).toMatchObject({ saveStatus: 'saved', saveError: null });
   });
 
@@ -34,6 +35,19 @@ describe('settings patching', () => {
     resetStore();
     await useSettings.getState().patch({ layout: { focusMode: true } });
     expect(useSettings.getState().saveStatus).toBe('error');
+  });
+
+  it('includes earlier failed edits when a later settings write succeeds', async () => {
+    const settingsSet = vi.fn().mockRejectedValueOnce(new Error('disk busy'))
+      .mockImplementationOnce(async (patch) => settingsWithEditor(patch.editor));
+    vi.stubGlobal('window', { api: { settingsSet } });
+    resetStore();
+    await Promise.all([
+      useSettings.getState().patch({ editor: { fontSize: 16 } }),
+      useSettings.getState().patch({ editor: { tabSize: 4 } })
+    ]);
+    expect(useSettings.getState().settings.editor).toMatchObject({ fontSize: 16, tabSize: 4 });
+    expect(useSettings.getState().saveStatus).toBe('saved');
   });
   afterEach(() => {
     vi.unstubAllGlobals();

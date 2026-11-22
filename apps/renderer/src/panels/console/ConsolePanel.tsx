@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRun, type InlineConsoleEntry } from '../../state/run';
-import { useUi } from '../../state/ui';
+import { restoreRunSnapshot, useUi } from '../../state/ui';
 import type { HistoryRecord, SerializedValue } from '@rh/protocol';
 import { detectConsoleTable, detectTable, type TableShape } from './table-shape';
 import { BlockLoader } from '../../ui/primitives';
@@ -467,12 +467,14 @@ interface ConsolePanelProps {
 }
 
 export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
+  const workspaceId = useUi((s) => s.files.find((file) => file.id === fileId)?.workspaceId ?? 'default');
   const lines = useRun((s) => s.lines);
   const inlineByLine = useRun((s) => s.inlineByLine);
   const resultByLine = useRun((s) => s.resultByLine);
   const notice = useRun((s) => s.notice);
   const runFileId = useRun((s) => s.runFileId);
   const clearConsole = useRun((s) => s.clearConsole);
+  const lastExit = useRun((s) => s.lastExit);
   // Run output is scoped to the source slot that produced it. Without this
   // guard, switching source tabs leaves the previous file's console visible.
   // An omitted fileId keeps the panel usable in isolated/legacy mounts; the
@@ -486,6 +488,7 @@ export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' });
@@ -494,16 +497,19 @@ export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
   useEffect(() => {
     let cancelled = false;
     setHistoryLoading(true);
+    setHistoryError(null);
     void (async () => {
       try {
-        const response = await window.api?.historyList('default');
+        const response = await window.api?.historyList(workspaceId);
         if (!cancelled && response?.ok === true) setHistory(response.records.slice().reverse());
+      } catch (error) {
+        if (!cancelled) setHistoryError(error instanceof Error ? error.message : String(error));
       } finally {
         if (!cancelled) setHistoryLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [visibleLines.length]);
+  }, [workspaceId, lastExit]);
 
   // Build an ordered list of all source lines that have structured output
   const structuredLineSet = useMemo(() => {
@@ -554,23 +560,22 @@ export function ConsolePanel({ fileId }: ConsolePanelProps): React.JSX.Element {
       {/* ── history drawer ── */}
       {showHistory && (
         <div style={{ maxHeight: 120, overflow: 'auto', borderBottom: `1px solid ${C.border}`, marginBottom: 4, flexShrink: 0 }}>
-          {history.length === 0 && <div style={{ color: C.dim, fontSize: 11, padding: 4 }}>no runs yet</div>}
+          {historyError && <div role="alert">Could not load history: {historyError}</div>}
+          {!historyError && !historyLoading && history.length === 0 && <div style={{ color: C.dim, fontSize: 11, padding: 4 }}>no runs yet</div>}
           {history.map((h) => (
-            <div
+            <button
               key={h.runId}
-              onClick={() => {
-                const id = `default:${h.relPath}`;
-                useUi.getState().openFile({ id, relPath: h.relPath, language: h.relPath.endsWith('.ts') ? 'typescript' : 'javascript', content: h.contentSnapshot, dirty: false });
-                useUi.getState().setActive(id);
-              }}
-              title="Click to restore snapshot"
-              style={{ fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", fontSize: 11, color: 'var(--text-dim)', cursor: 'pointer', padding: '2px 4px', borderRadius: 0 }}
+              type="button"
+              disabled={h.snapshotTruncated}
+              onClick={() => restoreRunSnapshot(workspaceId, h)}
+              title={h.snapshotTruncated ? 'Only part of this source was stored in history' : 'Restore this run snapshot'}
+              style={{ ...btnStyle, width: '100%', textAlign: 'left', border: 0, fontFamily: "'JetBrainsMono Nerd Font Mono', monospace", padding: '2px 4px' }}
               onMouseEnter={(e) => ((e.currentTarget.style.background = 'var(--bg-hover)'), (e.currentTarget.style.color = 'var(--text)'))}
               onMouseLeave={(e) => ((e.currentTarget.style.background = 'transparent'), (e.currentTarget.style.color = 'var(--text-dim)'))}
             >
               {new Date(h.finishedAt).toLocaleTimeString()} · {h.status} · {h.durationMs}ms
-              {h.killedBy !== null ? ` · ${h.killedBy}` : ''} · {h.relPath} — restore
-            </div>
+              {h.killedBy !== null ? ` · ${h.killedBy}` : ''} · {h.relPath} — {h.snapshotTruncated ? 'partial snapshot' : 'restore'}
+            </button>
           ))}
         </div>
       )}

@@ -256,8 +256,7 @@ export class V8EngineAdapterV0 implements EngineAdapter {
       return;
     }
     const binaryPath = description.binaryPath;
-    const caps = await this.registry.capabilities(binaryPath);
-    const engineVersion = description.version ?? 'unknown';
+    const caps = description.capabilities;
     const inner = new V8EngineAdapter({
       capabilitiesOf: async () => caps,
       execute: realExecutor,
@@ -268,7 +267,7 @@ export class V8EngineAdapterV0 implements EngineAdapter {
     let code = req.code;
     if (req.lang === 'ts') {
       try {
-        const { transform } = await import('esbuild');
+        const { transform } = await import('../transpile/esbuild.js');
         const stripped = await transform(req.code, { loader: 'ts', format: 'esm', target: 'esnext' });
         code = stripped.code;
       } catch (err) {

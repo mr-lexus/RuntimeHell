@@ -54,7 +54,7 @@ export function createAtaController(deps: AtaDeps): AtaController {
     switch (msg.type) {
       case 'file':
         if (msg.code !== undefined && msg.path !== undefined) {
-          deps.addExtraLib(msg.code, `file:///node_modules/${msg.path}`);
+          deps.addExtraLib(msg.code, `file://${msg.path}`);
           setStatus('ready');
         }
         break;

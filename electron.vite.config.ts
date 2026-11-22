@@ -54,7 +54,30 @@ export default defineConfig({
   },
   renderer: {
     root: 'apps/renderer',
-    plugins: [],
+    plugins: [{
+      name: 'renderer-content-security-policy',
+      apply: 'build',
+      transformIndexHtml() {
+        return [{
+          tag: 'meta',
+          injectTo: 'head-prepend',
+          attrs: {
+            'http-equiv': 'Content-Security-Policy',
+            content: [
+              "default-src 'none'",
+              "script-src 'self'",
+              "style-src 'self' 'unsafe-inline'",
+              "font-src 'self'",
+              "img-src 'self' data:",
+              "worker-src 'self' blob:",
+              "connect-src 'self' https://registry.npmjs.org https://data.jsdelivr.com https://cdn.jsdelivr.net",
+              "base-uri 'none'",
+              "form-action 'none'",
+            ].join('; '),
+          },
+        }];
+      },
+    }],
     server: {
       port: 5189,
       strictPort: true,

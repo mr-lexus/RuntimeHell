@@ -5,7 +5,7 @@
 | Node.js | MIT | nodejs.org/dist | Includes bundled npm (Artistic-2.0) |
 | V8 (d8, d8-debug) | BSD-style | chromium-v8 official canary | No upstream checksums; record-mode sha256 |
 | SpiderMonkey (jsshell) | MPL-2.0 | Mozilla taskcluster/archive | Unmodified binaries |
-| JavaScriptCore (jsc) | LGPL-2.1 + BSD mix | WebKitForWindows / wincairo CI | Requires WebKitRequirements DLLs |
+| JavaScriptCore (jsc) | LGPL-2.1 + BSD mix | WebKit Windows x64 release Buildbot archives | Includes JavaScriptCore, ICU and MSVC runtime DLLs. Range downloads use the archive ETag. The manifest pins SHA-256 of the selected filenames and file digests. |
 | WebKitRequirements | BSD-style | WebKitForWindows GitHub releases | Support DLLs only |
 | QuickJS-ng | MIT | quickjs-ng GitHub releases | Windows x64 executable; upstream sha256 digest |
 | txiki.js | MIT | saghul/txiki.js GitHub releases | Windows x64 archive; installed as a managed runtime |

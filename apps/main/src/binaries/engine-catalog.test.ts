@@ -83,10 +83,10 @@ describe('resolveEngineArtifact (C-lane decision table)', () => {
     });
   }
 
-  it('JSC win64 declares its webkit-requirements support artifact', () => {
+  it('JSC win64 gets its runtime DLLs from the engine archive', () => {
     const source = resolveEngineArtifact('javascriptcore', 'win64', 'x64');
     expect(source.enabled).toBe(true);
-    expect(source.requiresSupport).toBe('webkit-requirements');
+    expect(source.requiresSupport).toBeUndefined();
   });
 
   it('never marks a C-lane combo as a normal download', () => {

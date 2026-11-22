@@ -43,6 +43,22 @@ function record(n: number): HistoryRecord {
 }
 
 describe('history ring', () => {
+  it('distinguishes clipped snapshots from complete records at the storage limit', async () => {
+    await appendHistory('default', { ...record(1), contentSnapshot: 'x'.repeat(20_001) });
+    await appendHistory('default', { ...record(2), contentSnapshot: 'y'.repeat(20_000) });
+    const records = await readHistory('default');
+    expect(records[0]?.contentSnapshot).toHaveLength(20_000);
+    expect(records.map((item) => item.snapshotTruncated)).toEqual([true, false]);
+  });
+
+  it('treats old snapshots at the size limit as potentially incomplete', async () => {
+    await appendHistory('default', record(1));
+    const { writeFile } = await import('node:fs/promises');
+    const path = join(sandbox, 'RuntimeHell', 'workspaces', 'default', '.rhhistory.jsonl');
+    await writeFile(path, JSON.stringify({ ...record(1), contentSnapshot: 'x'.repeat(20_000) }), 'utf8');
+    expect((await readHistory('default'))[0]?.snapshotTruncated).toBe(true);
+  });
+
   it('appends and reads back records', async () => {
     await appendHistory('default', record(1));
     await appendHistory('default', record(2));

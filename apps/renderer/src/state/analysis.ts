@@ -4,9 +4,10 @@
  * fed by EnginesController via the preload bridge.
  */
 import { create } from 'zustand';
-import type { AnalysisEngineId, AnalysisEvent, AnalysisResult, AnalysisType, EngineDescriptor } from '@rh/protocol';
+import type { AnalysisEngineId, AnalysisEvent, AnalysisResult, AnalysisType, EngineCapabilities, EngineDescriptor } from '@rh/protocol';
 import { buildAnalysisSnippet } from '../editor/wrapping';
 import type { SelectionInfo } from '../editor/selection-service';
+import { getActiveFile } from './ui';
 
 export type TypeStatus = 'idle' | 'running' | 'done' | 'unsupported' | 'error';
 
@@ -20,6 +21,15 @@ export type EngineChoice = EngineDescriptor;
 export type { AnalysisEngineId } from '@rh/protocol';
 
 const ALL_TYPES: AnalysisType[] = ['ast', 'bytecode', 'optcode', 'ir-graph', 'deopts', 'gc'];
+
+export const CAPABILITY_FOR_TYPE: Record<AnalysisType, keyof Omit<EngineCapabilities, 'notes'>> = {
+  ast: 'astDump',
+  bytecode: 'bytecodeDump',
+  optcode: 'optCodeDisasm',
+  'ir-graph': 'irGraphDump',
+  deopts: 'deoptTrace',
+  gc: 'gcLog'
+};
 
 function freshTypes(): Record<AnalysisType, TypeState> {
   return {
@@ -37,6 +47,8 @@ interface AnalysisState {
   engineId: AnalysisEngineId;
   engines: EngineChoice[];
   types: Record<AnalysisType, TypeState>;
+  selectedAnalysisType: AnalysisType | null;
+  selectType: (type: AnalysisType) => void;
   lastError: string | null;
   cancelledNotice: boolean;
   /** Exact snippet that will run — powers the "show generated wrapper" toggle. */
@@ -59,8 +71,6 @@ interface AnalysisState {
   handleEvent: (e: AnalysisEvent) => void;
 }
 
-let seq = 0;
-
 export const useAnalysis = create<AnalysisState>((set, get) => ({
   requestId: null,
   engineId: 'd8-debug',
@@ -68,6 +78,8 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
   generatedCode: null,
   focusFunction: null,
   types: freshTypes(),
+  selectedAnalysisType: null,
+  selectType: (selectedAnalysisType) => set({ selectedAnalysisType }),
   lastError: null,
   cancelledNotice: false,
 
@@ -75,6 +87,7 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
 
   reset: () => set({
     requestId: null,
+    selectedAnalysisType: null,
     types: freshTypes(),
     lastError: null,
     cancelledNotice: false,
@@ -117,11 +130,13 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
     const kind = info?.kind ?? 'module';
     const text = info?.text ?? fullText;
     const snippet = buildAnalysisSnippet({ kindGuess: kind, text, sampleInvocation, targetName: focusName });
-    const requestId = `ui-${Date.now()}-${++seq}`;
+    const requestId = crypto.randomUUID();
     const typesState = freshTypes();
     for (const t of types) typesState[t] = { status: 'running', reason: null, result: null };
+    const selectedType = get().selectedAnalysisType;
     set({
       requestId,
+      selectedAnalysisType: selectedType !== null && types.includes(selectedType) ? selectedType : types[0]!,
       types: typesState,
       lastError: null,
       cancelledNotice: false,
@@ -135,34 +150,27 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
         code: snippet.code,
         analysisTypes: types,
         ...(snippet.functionName !== null ? { functionName: snippet.functionName } : {}),
-        workspaceId: 'default',
+        workspaceId: getActiveFile()?.workspaceId ?? 'default',
         ...(lang !== undefined ? { lang } : {})
       })
-      .catch((error: unknown) =>
-        set((s) => {
-          const next = { ...s.types };
-          for (const type of types) {
-            if (next[type].status === 'running') {
-              next[type] = {
-                status: 'error',
-                reason: error instanceof Error ? error.message : String(error),
-                result: null
-              };
-            }
-          }
-          return {
-            types: next,
-            requestId: null,
-            lastError: error instanceof Error ? error.message : String(error)
-          };
-        })
-      );
+      .catch((error: unknown) => {
+        get().handleEvent({
+          t: 'error', requestId, message: error instanceof Error ? error.message : String(error)
+        });
+      });
   },
 
   cancel: async () => {
     const { requestId } = get();
     if (requestId === null) return;
-    await window.api?.cancelAnalysis(requestId);
+    try {
+      const response = await window.api.cancelAnalysis(requestId);
+      if (!response.ok) throw new Error('The engine did not acknowledge cancellation');
+    } catch (error) {
+      if (get().requestId === requestId) {
+        set({ lastError: `Could not stop analysis: ${error instanceof Error ? error.message : String(error)}` });
+      }
+    }
   },
 
   handleEvent: (e) => {
@@ -189,19 +197,19 @@ export const useAnalysis = create<AnalysisState>((set, get) => ({
           for (const key of ALL_TYPES) {
             if (next[key].status === 'running') next[key] = { ...next[key], status: 'idle' };
           }
-          return { types: next, requestId: null, cancelledNotice: true };
+          return { types: next, requestId: null, cancelledNotice: true, lastError: null };
         });
         break;
       case 'error':
-        set({ lastError: e.message, requestId: null });
-        break;
       case 'done':
         set((s) => {
           const next = { ...s.types };
           for (const key of ALL_TYPES) {
-            if (next[key].status === 'running') next[key] = { ...next[key], status: 'error', reason: 'did not finish' };
+            if (next[key].status === 'running') {
+              next[key] = { ...next[key], status: 'error', reason: e.t === 'error' ? e.message : 'did not finish' };
+            }
           }
-          return { types: next, requestId: null };
+          return { types: next, requestId: null, lastError: e.t === 'error' ? e.message : null };
         });
         break;
     }

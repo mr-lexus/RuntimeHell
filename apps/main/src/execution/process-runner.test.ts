@@ -66,6 +66,24 @@ describe('ProcessRunner (real processes)', () => {
     expect(alive).toBe(false);
   });
 
+  it('preserves multibyte text split across child output chunks', async () => {
+    const entry = await script('unicode.cjs', `
+      const bytes = Buffer.from('🙂');
+      for (const stream of [process.stdout, process.stderr]) stream.write(bytes.subarray(0, 2));
+      setTimeout(() => {
+        for (const stream of [process.stdout, process.stderr]) stream.write(bytes.subarray(2));
+      }, 120);
+    `);
+    const runner = new ProcessRunner();
+    const text = { stdout: '', stderr: '' };
+    runner.onEvent((e) => {
+      if (e.type === 'stdout' || e.type === 'stderr') text[e.type] += e.data;
+    });
+    const result = await runner.run({ exePath: nodeExe, args: [entry], cwd: dir, timeoutMs: 5000 }).result;
+    expect(result.exitCode).toBe(0);
+    expect(text).toEqual({ stdout: '🙂', stderr: '🙂' });
+  });
+
   it('timeout kills a slow run with killedBy=timeout', async () => {
     const entry = await script('slow.cjs', 'setTimeout(()=>{},60000);\n');
     const runner = new ProcessRunner();

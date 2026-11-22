@@ -23,6 +23,7 @@ import {
   type ManifestEntry
 } from '@rh/protocol';
 import { engineDir, manifestPath, runtimeDir, supportDir, tmpDir } from './paths.js';
+import { extractWebKitShell } from './jsc-archive.js';
 import { executableName, hostArch, hostPlatform, managedRuntimeExecutableRelativePath } from '../platform.js';
 
 export interface DownloadProgress {
@@ -48,7 +49,7 @@ export interface InstallRequest {
   entry: Omit<ManifestEntry, 'installedPath' | 'addedAt'>;
   source: FetchSource;
   /** Archive format; zip remains the default for existing installers. */
-  archive?: 'zip' | 'tar.gz' | 'tar.xz' | 'file';
+  archive?: 'zip' | 'tar.gz' | 'tar.xz' | 'file' | 'webkit-jsc';
   /** Optional executable path inside an extracted archive to materialize at its root. */
   executablePath?: string;
   /** Directory name inside the archive containing the payload root (auto-detect when absent). */
@@ -458,7 +459,9 @@ export async function installArtifact(req: InstallRequest): Promise<ManifestEntr
 
   try {
     const expected = req.source.sha256;
-    const actual = await downloadTo(req.source, stageZip, req.onProgress, req.entry.id, req.entry.version);
+    const actual = req.archive === 'webkit-jsc'
+      ? await extractWebKitShell(req.source.url, stageDir, (receivedBytes) => req.onProgress?.({ id: req.entry.id, version: req.entry.version, receivedBytes, totalBytes: null }))
+      : await downloadTo(req.source, stageZip, req.onProgress, req.entry.id, req.entry.version);
     // Empty/undefined expected ⇒ RECORD MODE (no upstream checksum exists,
     // e.g. Mozilla jsshell zips): the observed digest is pinned instead.
     if (expected !== undefined && expected !== '' && actual !== expected) {
@@ -478,7 +481,7 @@ export async function installArtifact(req: InstallRequest): Promise<ManifestEntr
     } else if (req.archive === 'tar.xz') {
       await extractTarXz(stageZip, stageDir);
       if (req.stripRoot !== false) await hoistSingleRoot(stageDir);
-    } else {
+    } else if (req.archive !== 'webkit-jsc') {
       await extractZipArchive(stageZip, stageDir);
       if (req.stripRoot !== false) await hoistSingleRoot(stageDir);
     }

@@ -383,7 +383,10 @@ export class EmbeddedBrowserRuntime implements BrowserRuntimeRunner {
       failed: false,
       cancelled: null,
       startedAt: Date.now(),
-      timeout: setTimeout(() => undefined, 2 ** 31 - 1),
+      timeout: setTimeout(() => {
+        session.cancelled = 'timeout';
+        this.finish(session, 'timeout', null);
+      }, options.timeoutMs),
       resolveResult
     };
     const handle: RunHandle = {
@@ -393,7 +396,6 @@ export class EmbeddedBrowserRuntime implements BrowserRuntimeRunner {
       cancel: async () => {
         if (session.settled) return;
         session.cancelled = 'user';
-        session.window?.close();
         this.finish(session, 'cancelled', null);
       }
     };
@@ -421,12 +423,6 @@ export class EmbeddedBrowserRuntime implements BrowserRuntimeRunner {
       win.on('closed', () => {
         if (!session.settled) this.finish(session, session.cancelled === 'timeout' ? 'timeout' : 'completed', null);
       });
-      session.timeout = setTimeout(() => {
-        if (session.settled) return;
-        session.cancelled = 'timeout';
-        win.close();
-        this.finish(session, 'timeout', null);
-      }, options.timeoutMs);
       await win.loadURL(`data:text/html,${encodeURIComponent(PAGE_HTML)}`);
       if (session.settled) return;
       const entryPath = options.args?.[options.args.length - 1];
@@ -475,6 +471,6 @@ export class EmbeddedBrowserRuntime implements BrowserRuntimeRunner {
     const durationMs = Date.now() - session.startedAt;
     this.emit({ type: 'exit', runId: session.runId, code, signal: null, durationMs, killedBy: session.cancelled });
     session.resolveResult({ runId: session.runId, status, exitCode: code, durationMs, reports: [...session.reports.entries()].sort((a, b) => a[0] - b[0]).map(([index, value]) => ({ index, value })) });
-    if (session.window && !session.window.isDestroyed()) session.window.close();
+    if (session.window && !session.window.isDestroyed()) session.window.destroy();
   }
 }

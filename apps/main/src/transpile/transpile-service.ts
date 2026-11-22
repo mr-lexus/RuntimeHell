@@ -4,7 +4,8 @@
  * through unchanged. Transform failures return structured diagnostics; the
  * runner is never invoked for broken sources.
  */
-import { build, transform, type BuildFailure, type TransformFailure } from 'esbuild';
+import type { BuildFailure, TransformFailure } from 'esbuild';
+import { build, transform } from './esbuild.js';
 import { dirname, join } from 'node:path';
 import { promises as fs } from 'node:fs';
 import { originalPositionFor, TraceMap, type TraceMap as TraceMapType } from '@jridgewell/trace-mapping';

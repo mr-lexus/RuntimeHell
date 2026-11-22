@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const WindowUnloadSignalSchema = z.object({}).strict();
+
 /** Request payload for the `app:ping` liveness channel. */
 export const PingRequestSchema = z.object({
   sentAt: z.number().finite()

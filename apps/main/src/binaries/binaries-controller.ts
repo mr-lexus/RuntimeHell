@@ -183,9 +183,6 @@ export class BinariesController {
           if (hostPlatform() !== 'win64' || hostArch() !== 'x64') {
             throw new Error('JavaScriptCore managed download currently targets Windows x64; import a local build instead');
           }
-          // JSC needs the WebKitRequirements DLLs on the CHILD PATH (todo 25).
-          const { ensureWebKitRequirements } = await import('./webkit-requirements.js');
-          await ensureWebKitRequirements();
           const { installJscEngine } = await import('./jsc-downloader.js');
           const entry = await installJscEngine({ onProgress: (p) => this.deps.emitProgress({ kind: 'runtime', id, version: p.totalBytes === null ? '' : id, receivedBytes: p.receivedBytes, totalBytes: p.totalBytes }) });
           this.deps.emitProgress({ kind: 'runtime', id, version: entry.version, receivedBytes: 0, totalBytes: null, done: true });

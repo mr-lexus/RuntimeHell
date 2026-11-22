@@ -1,98 +1,68 @@
 #!/usr/bin/env node
 /**
- * E2E: runtime switching (user follow-up) — Playwright _electron.
- *
- * Journey: launch the app against the running dev renderer (vite :5189) with
- * the REAL environment (system bun on PATH, managed node in the real cache),
- * type a runtime-discriminator program, run on the default runtime (node),
- * switch the active runtime to bun via the Runtimes panel, run again, and
- * assert the second run actually executed under bun.
- *
- * The test instance uses a temp --user-data-dir so it bypasses the dev
- * electron's single-instance lock and starts with a fresh UI state.
- *
- * Run:  node scripts/e2e-runtime-switch.mjs   (dev stack must be up: pnpm dev)
+ * Run against a built app with Node.js and Bun installed on PATH:
+ *   pnpm build && node scripts/e2e-runtime-switch.mjs
  */
-import { _electron as electron } from 'playwright';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { firstTestWindow } from './electron-test-window.mjs';
+import assert from 'node:assert/strict';
+import { access, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
+import { _electron as electron } from 'playwright';
 
-const log = (m) => console.log(`[e2e-rs] ${m}`);
+const entry = fileURLToPath(new URL('../out/main/index.js', import.meta.url));
+await access(entry);
+const profile = await mkdtemp(join(tmpdir(), 'rh-runtime-switch-'));
+const config = join(profile, 'config');
+const local = join(profile, 'local');
+const env = {
+  ...process.env,
+  USERPROFILE: profile, HOME: profile,
+  APPDATA: config, LOCALAPPDATA: local,
+  XDG_CONFIG_HOME: config, XDG_CACHE_HOME: local,
+  RH_CACHE_ROOT: join(profile, 'cache')
+};
+delete env.ELECTRON_RENDERER_URL;
 
-const userData = await mkdtemp(join(tmpdir(), 'rh-rs-userdata-'));
-const env = { ...process.env, ELECTRON_RENDERER_URL: 'http://localhost:5189/' };
-
-log('launching electron (dev renderer via ELECTRON_RENDERER_URL)…');
-const app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], env, timeout: 60_000 });
-const win = await app.firstWindow();
-win.on('console', (msg) => {
-  const t = msg.text();
-  if (t.startsWith('[boot]') || t.startsWith('[run]')) log(t);
-});
-
-await win.waitForFunction(() => window.__rh_editor !== undefined, null, { timeout: 30_000 });
-log('editor ready');
-
-const PROGRAM = [
-  "console.log('runtime:', typeof Bun !== 'undefined' ? 'bun' : typeof Deno !== 'undefined' ? 'deno' : 'node');",
-  "console.log('version:', typeof Bun !== 'undefined' ? Bun.version : typeof Deno !== 'undefined' ? Deno.version.deno : process.version);"
+const program = [
+  "const runtime = typeof Bun !== 'undefined' ? 'bun' : typeof Deno !== 'undefined' ? 'deno' : 'node';",
+  "const version = runtime === 'bun' ? Bun.version : runtime === 'deno' ? Deno.version.deno : process.versions.node;",
+  "console.log('runtime-check ' + runtime + '@' + version);"
 ].join('\n');
-await win.evaluate(([v]) => window.__rh_editor.setValue(v), [PROGRAM]);
-log('program typed');
 
-// 1. Run on the default runtime (node).
-await win.locator('.monaco-editor').click();
-await win.keyboard.press('Control+Enter');
+async function runAndCheck(page, runtime) {
+  const consoleTab = page.getByRole('tab', { name: 'console', exact: true });
+  if ((await consoleTab.getAttribute('aria-selected')) !== 'true') await consoleTab.click();
+  await page.getByRole('button', { name: /^Run source/ }).click();
+
+  const pattern = new RegExp('runtime-check ' + runtime + '@(\\d+\\.\\d+\\.\\d+(?:[-+][\\w.-]+)?)');
+  const output = page.locator('.rh-console-output').getByText(pattern).first();
+  await output.waitFor();
+  const [, version] = (await output.innerText()).match(pattern);
+  await page.locator('.rh-statusbar .rh-status').filter({ hasText: /exit 0\b/ }).waitFor();
+  const badge = await page.getByRole('button', { name: 'Open runtime selector' }).innerText();
+  assert.equal(badge.trim(), 'runtime ' + runtime.toUpperCase() + ' v' + version);
+  console.log('[e2e-runtime-switch]', badge.trim(), 'exit 0');
+}
+
+let app;
 try {
-  await win.waitForFunction(() => document.body.innerText.includes('runtime: node'), null, { timeout: 30_000 });
-} catch {
-  const snap = await win.evaluate(() => document.body.innerText.slice(0, 900));
-  log(`NODE RUN SNAPSHOT: ${snap.replace(/\n/g, ' | ')}`);
-  throw new Error('node run did not produce runtime: node');
+  await Promise.all([mkdir(config), mkdir(local)]);
+  app = await electron.launch({ args: [entry, '--user-data-dir=' + join(profile, 'chromium')], env, timeout: 60_000 });
+  const page = await firstTestWindow(app);
+  page.setDefaultTimeout(30_000);
+  await page.waitForFunction(() => Boolean(window.__rh_editor));
+  await page.evaluate((source) => window.__rh_editor.setValue(source), program);
+
+  await runAndCheck(page, 'node');
+  await page.getByRole('tab', { name: 'runtimes', exact: true }).click();
+  await page.getByTitle('run code with Bun', { exact: true }).click();
+  await runAndCheck(page, 'bun');
+} finally {
+  try {
+    await app?.close();
+  } finally {
+    await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  }
 }
-log('node run OK');
-
-// 2. Switch the active runtime to bun via the Runtimes panel.
-await win.getByRole('button', { name: 'runtimes', exact: true }).click();
-await win.getByRole('button', { name: /^Bun$/, exact: true }).first().click();
-await win.getByRole('button', { name: 'console', exact: true }).click();
-log('switched active runtime to bun');
-
-// 3. Run again — must execute under bun.
-await win.locator('.monaco-editor').click();
-await win.keyboard.press('Control+Enter');
-try {
-  await win.waitForFunction(() => document.body.innerText.includes('runtime: bun'), null, { timeout: 30_000 });
-} catch {
-  const snap = await win.evaluate(() => document.body.innerText.slice(0, 900));
-  log(`BUN RUN SNAPSHOT: ${snap.replace(/\n/g, ' | ')}`);
-  throw new Error('bun run did not produce runtime: bun');
-}
-log('bun run OK');
-
-// 4. Status badge must name the runtime that actually ran (bun, not node).
-const badge = await win.evaluate(() => {
-  const el = [...document.querySelectorAll('span')].find(
-    (s) => /exit \d+/.test(s.textContent ?? '') && (s.textContent ?? '').length < 120
-  );
-  return el?.textContent?.replace(/\s+/g, ' ').trim() ?? '(badge not found)';
-});
-log(`status badge: ${badge}`);
-if (!/bun v/.test(badge)) {
-  const dump = await win.evaluate(() => {
-    const spans = [...document.querySelectorAll('span')]
-      .map((s) => s.textContent?.replace(/\s+/g, ' ').trim())
-      .filter((t) => t && t.length < 120)
-      .slice(-15);
-    return JSON.stringify({ spans, body: document.body.innerText.slice(0, 1200) });
-  });
-  log(`BADGE DEBUG: ${dump}`);
-}
-assert.match(badge, /bun v/, `badge must show bun runtime, got: ${badge}`);
-
-console.log(JSON.stringify({ ok: true, nodeRun: 'node', bunRun: 'bun', badge }, null, 2));
-await app.close();
-await rm(userData, { recursive: true, force: true });
-log('PASS');

@@ -26,12 +26,17 @@ export class AnalysisManager {
     // the adapter registers the real engine-process kill hook.
     this.cancelByRequest.set(req.requestId, async () => {});
     const ctx: AnalysisContext = {
-      emit: this.deps.emit,
+      emit: (event) => {
+        if (this.live.has(req.requestId)) this.deps.emit(event);
+      },
       registerCancel: (fn) => this.cancelByRequest.set(req.requestId, fn),
       isLive: (id) => this.live.has(id)
     };
     try {
       await this.deps.registry.analyze(req, ctx);
+    } catch (error) {
+      const message = (error instanceof Error ? error.message : String(error)) || 'Engine analysis failed';
+      ctx.emit({ t: 'error', requestId: req.requestId, message });
     } finally {
       this.live.delete(req.requestId);
       this.cancelByRequest.delete(req.requestId);
@@ -40,10 +45,14 @@ export class AnalysisManager {
 
   async cancel(requestId: string): Promise<boolean> {
     const cancel = this.cancelByRequest.get(requestId);
-    if (!cancel) return false;
+    if (!cancel || !this.live.has(requestId)) return false;
     this.live.delete(requestId); // stops subsequent types before they start
-    await cancel();
-    this.cancelByRequest.delete(requestId);
+    try {
+      await cancel();
+    } catch (error) {
+      this.deps.emit({ t: 'error', requestId, message: `Could not stop analysis: ${error instanceof Error ? error.message : String(error)}` });
+      return false;
+    }
     this.deps.emit({ t: 'cancelled', requestId });
     return true;
   }

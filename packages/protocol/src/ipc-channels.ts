@@ -11,6 +11,8 @@ export const IPC = {
   windowMinimize: 'window:minimize',
   windowToggleMaximize: 'window:toggle-maximize',
   windowClose: 'window:close',
+  windowUnloadBlocked: 'window:unload-blocked',
+  windowContinueUnload: 'window:continue-unload',
   windowState: 'window:state',
 
   // execution

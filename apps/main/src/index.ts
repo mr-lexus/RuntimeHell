@@ -1,7 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
-import { BrowserWindow, app, ipcMain, type IpcMainInvokeEvent } from 'electron';
-import { EngineCapabilitiesRequestSchema, EngineCapabilitiesResponseSchema, EnginesListResponseSchema, IPC } from '@rh/protocol';
+import { BrowserWindow, app, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
+import { EngineCapabilitiesRequestSchema, EngineCapabilitiesResponseSchema, EnginesListResponseSchema, IPC, WindowUnloadSignalSchema } from '@rh/protocol';
 import { registerBinariesHandlers, registerExecutionHandlers, registerIpcHandlers, registerPackageHandlers, registerAnalysisHandlers, registerPersistenceHandlers, registerPerformanceHandlers } from './ipc/router.js';
 import { appendHistory } from './workspace/history.js';
 import { ExecutionManager } from './execution/execution-manager.js';
@@ -15,10 +15,12 @@ import { SpiderMonkeyAdapter } from './engines/spidermonkey/sm-adapter.js';
 import { JavaScriptCoreAdapter } from './engines/javascriptcore/jsc-adapter.js';
 import { DenoBunRuntimeAdapter, NodeRuntimeAdapter, RuntimeRegistry } from './runtimes/runtime-adapter.js';
 import { PerformanceManager, RegistryPerformanceTargetResolver } from './performance/performance-manager.js';
-import { shouldQuitAfterAllWindowsClosed } from './app-lifecycle.js';
+import { isNpmPackagePage, shouldQuitAfterAllWindowsClosed } from './app-lifecycle.js';
 
 const isDev = !app.isPackaged;
 const trustedRendererIds = new Set<number>();
+const blockedUnloads = new Map<number, 'close' | 'quit' | 'reload'>();
+let quitRequested = false;
 
 function assertTrustedIpcSender(event: IpcMainInvokeEvent): void {
   const frame = event.senderFrame;
@@ -71,8 +73,24 @@ function createWindow(): BrowserWindow {
   });
   const webContentsId = win.webContents.id;
   trustedRendererIds.add(webContentsId);
-  win.on('closed', () => trustedRendererIds.delete(webContentsId));
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.on('closed', () => {
+    trustedRendererIds.delete(webContentsId);
+    blockedUnloads.delete(webContentsId);
+  });
+  let closeRequested = false;
+  win.on('close', () => { closeRequested = true; });
+  win.webContents.on('will-prevent-unload', () => {
+    blockedUnloads.set(webContentsId, quitRequested ? 'quit' : closeRequested ? 'close' : 'reload');
+    closeRequested = false;
+    quitRequested = false;
+    win.webContents.send(IPC.windowUnloadBlocked, {});
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isNpmPackagePage(url)) {
+      void shell.openExternal(url).catch((error: unknown) => console.warn('Could not open the npm package page', error));
+    }
+    return { action: 'deny' };
+  });
   win.webContents.on('will-navigate', (event) => event.preventDefault());
 
   win.webContents.on('did-finish-load', () => {
@@ -111,6 +129,7 @@ function main(): void {
   app.on('second-instance', () => {
     if (app.isReady()) focusOrCreatePrimaryWindow();
   });
+  app.on('before-quit', () => { quitRequested = true; });
 
   registerIpcHandlers((channel, handler) => {
     handleTrusted(channel, (_event, payload) => handler(payload));
@@ -133,6 +152,15 @@ function main(): void {
     BrowserWindow.fromWebContents(event.sender)?.close();
     return { ok: true };
   });
+  handleTrusted(IPC.windowContinueUnload, (event, payload) => {
+    WindowUnloadSignalSchema.parse(payload);
+    const action = blockedUnloads.get(event.sender.id);
+    blockedUnloads.delete(event.sender.id);
+    if (action === 'quit') app.quit();
+    if (action === 'close') BrowserWindow.fromWebContents(event.sender)?.close();
+    if (action === 'reload') event.sender.reload();
+    return {};
+  });
   handleTrusted(IPC.windowState, (event) => ({ maximized: BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false }));
   registerPersistenceHandlers((channel, handler) => {
     handleTrusted(channel, (_event, payload) => handler(payload));
@@ -141,9 +169,7 @@ function main(): void {
   // Persistence (todo 21): settings + workspaces + history.
   const execution = new ExecutionManager({
     emit: (event) => sendToTrustedRenderers(IPC.runEvent, event),
-    recordRun: (record) => {
-      void appendHistory(record.workspaceId, record).catch(() => {});
-    }
+    recordRun: appendHistory
   });
   registerExecutionHandlers((channel, handler) => {
     handleTrusted(channel, (_event, payload) => handler(payload));

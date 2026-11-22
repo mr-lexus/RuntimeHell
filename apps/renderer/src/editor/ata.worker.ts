@@ -12,6 +12,7 @@
 import { setupTypeAcquisition } from '@typescript/ata';
 import * as ts from 'typescript';
 
+let fileCount = 0;
 const acquire = setupTypeAcquisition({
   projectName: 'runtimehell',
   typescript: ts,
@@ -23,16 +24,31 @@ const acquire = setupTypeAcquisition({
       (self as unknown as Worker).postMessage({ type: 'error', message });
     },
     finished: (files) => {
-      (self as unknown as Worker).postMessage({ type: 'done', count: files.size });
+      fileCount = files.size;
     }
   }
 });
 
-self.onmessage = (event: MessageEvent<{ code: string }>): void => {
-  void acquire(event.data.code)?.catch((err: unknown) => {
-    (self as unknown as Worker).postMessage({
-      type: 'error',
-      message: err instanceof Error ? err.message : String(err)
-    });
-  });
+// ATA shares a module cache and counters between calls. While it fetches
+// declarations, retain only the most recent editor snapshot.
+let nextCode: string | undefined;
+let acquiring = false;
+self.onmessage = async (event: MessageEvent<{ code: string }>): Promise<void> => {
+  nextCode = event.data.code;
+  if (acquiring) return;
+  acquiring = true;
+  try {
+    while (nextCode !== undefined) {
+      const code = nextCode;
+      nextCode = undefined;
+      try {
+        await acquire(code);
+      } catch (error) {
+        self.postMessage({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    self.postMessage({ type: 'done', count: fileCount });
+  } finally {
+    acquiring = false;
+  }
 };

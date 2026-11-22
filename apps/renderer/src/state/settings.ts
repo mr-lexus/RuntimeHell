@@ -31,6 +31,7 @@ interface SettingsState {
   hydrated: boolean;
   saveStatus: 'idle' | 'saving' | 'saved' | 'error';
   saveError: string | null;
+  failedPatch: SettingsPatch | null;
   hydrate: () => Promise<void>;
   patch: (patch: SettingsPatch) => Promise<void>;
   resetAppearance: () => Promise<void>;
@@ -56,11 +57,16 @@ function legacyPatch(): SettingsPatch {
 let patchQueue: Promise<void> = Promise.resolve();
 let localPatchRevision = 0;
 
+export function waitForSettingsWrites(): Promise<void> {
+  return patchQueue;
+}
+
 export const useSettings = create<SettingsState>((set, get) => ({
   settings: DEFAULT_RENDERER_SETTINGS,
   hydrated: false,
   saveStatus: 'idle',
   saveError: null,
+  failedPatch: null,
   hydrate: async () => {
     if (get().hydrated) return;
     const remote = await window.api?.settingsGet().catch(() => undefined);
@@ -86,12 +92,22 @@ export const useSettings = create<SettingsState>((set, get) => ({
     } }));
 
     const request = patchQueue.then(async () => {
+      const failed = get().failedPatch;
+      const write = failed ? {
+        prefs: { ...failed.prefs, ...patch.prefs }, appearance: { ...failed.appearance, ...patch.appearance },
+        editor: { ...failed.editor, ...patch.editor }, layout: { ...failed.layout, ...patch.layout },
+        session: { ...failed.session, ...patch.session }
+      } : patch;
       try {
-        const next = await window.api?.settingsSet(patch);
+        const next = await window.api?.settingsSet(write);
         if (!next) throw new Error('Settings service is unavailable');
-        if (revision === localPatchRevision) set({ settings: next, saveStatus: 'saved', saveError: null });
+        set(revision === localPatchRevision
+          ? { settings: next, saveStatus: 'saved', saveError: null, failedPatch: null }
+          : { failedPatch: null });
       } catch (error) {
-        if (revision === localPatchRevision) set({ saveStatus: 'error', saveError: error instanceof Error ? error.message : 'Could not save preferences' });
+        set(revision === localPatchRevision
+          ? { saveStatus: 'error', saveError: error instanceof Error ? error.message : 'Could not save preferences', failedPatch: write }
+          : { failedPatch: write });
       }
     });
     patchQueue = request.catch(() => undefined);

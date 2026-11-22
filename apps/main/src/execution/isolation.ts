@@ -30,6 +30,7 @@ export type IsolatedRun = (options: IsolatedRunOptions) => Promise<IsolatedRunRe
 
 export function trackedProcessIsolation(ctx: AnalysisContext, requestId: string): IsolatedRun {
   return async (options) => {
+    if (!ctx.isLive(requestId)) throw new Error('analysis cancelled');
     const runner = new ProcessRunner();
     const out: string[] = [];
     const err: string[] = [];

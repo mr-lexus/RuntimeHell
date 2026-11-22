@@ -10,8 +10,12 @@ export type DrawerTab = 'normalized' | 'raw' | 'artifacts';
 
 const NORMALIZED_ANALYSIS_TYPES: readonly AnalysisType[] = ['ast', 'bytecode', 'optcode', 'ir-graph', 'deopts', 'gc'];
 
-export function hasAnalysisNormalizer(type: AnalysisType): boolean {
-  return NORMALIZED_ANALYSIS_TYPES.includes(type);
+export function hasAnalysisNormalizer(type: AnalysisType, engine: AnalysisResult['engine']): boolean {
+  return type === 'ast' || (engine === 'v8' && NORMALIZED_ANALYSIS_TYPES.includes(type));
+}
+
+function availableTab(tab: DrawerTab, hasNormalizer: boolean): DrawerTab {
+  return tab === 'normalized' && !hasNormalizer ? 'raw' : tab;
 }
 
 export function ResultViewerTabs({
@@ -25,6 +29,7 @@ export function ResultViewerTabs({
   hasNormalizer: boolean;
   artifactCount: number;
 }): React.JSX.Element {
+  const selectedTab = availableTab(tab, hasNormalizer);
   return (
     <div className="rh-analysis-view-tabs" role="tablist" aria-label="Analysis result view">
       {(['normalized', 'raw', 'artifacts'] as const).map((t) => {
@@ -34,10 +39,10 @@ export function ResultViewerTabs({
             key={t}
             type="button"
             role="tab"
-            aria-selected={tab === t}
+            aria-selected={selectedTab === t}
             onClick={() => !disabled && onChange(t)}
             disabled={disabled}
-            className={`rh-analysis-view-tab ${tab === t ? 'is-active' : ''}`}
+            className={`rh-analysis-view-tab ${selectedTab === t ? 'is-active' : ''}`}
           >
             <span className="rh-analysis-icon" aria-hidden="true">{ANALYSIS_VIEW_ICONS[t]}</span> {t}
           </button>
@@ -868,7 +873,8 @@ function NormalizedIrGraphView({ normalized, artifacts, onCopyRaw }: { normalize
  * Per-type result viewer (plan todo 19): Normalized view first-class,
  * raw as fallback, artifact listing.
  */
-export function ResultViewer({ result, focusFunction, tab }: { result: AnalysisResult; focusFunction?: string | null; tab: DrawerTab }): React.JSX.Element {
+export function ResultViewer({ result, focusFunction, tab: requestedTab }: { result: AnalysisResult; focusFunction?: string | null; tab: DrawerTab }): React.JSX.Element {
+  const tab = availableTab(requestedTab, hasAnalysisNormalizer(result.analysisType, result.engine));
   return (
     <div className="rh-analysis-result-viewer">
       <div className={`rh-analysis-result-content ${result.analysisType === 'ir-graph' ? 'is-ir-graph' : ''}`}>

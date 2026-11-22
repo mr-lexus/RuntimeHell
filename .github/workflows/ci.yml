@@ -67,9 +67,9 @@ jobs:
         run: pnpm lint
       - name: Typecheck
         run: pnpm typecheck:all
-      - name: Unit tests
-        run: ${{ matrix.tests }}
       - name: Build
         run: pnpm build
+      - name: Tests including built Electron app
+        run: ${{ matrix.tests }}
       - name: Native compatibility smoke
         run: ${{ matrix.smoke }}

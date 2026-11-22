@@ -163,29 +163,17 @@ export const useRuntimes = create<RuntimesState>((set, get) => ({
   bindEvents: () => {
     if (!window.api?.onBinariesProgress) return undefined;
     return window.api.onBinariesProgress((event: BinaryProgressEvent) => {
+      const versionKey = progressKey(event.id, event.version);
+      const latestKey = progressKey(event.id, 'latest');
+      const key = get().progress[versionKey] === undefined && get().progress[latestKey] !== undefined
+        ? latestKey : versionKey;
       if (event.done) {
-        set((state) => {
-          const key = progressKey(event.id, event.version);
-          if (state.progress[key] !== undefined) return { progress: withoutProgress(state.progress, key) };
-          const matchingKeys = Object.entries(state.progress)
-            .filter(([, progress]) => progress.id === event.id)
-            .map(([matchingKey]) => matchingKey);
-          return matchingKeys.length === 1
-            ? { progress: withoutProgress(state.progress, matchingKeys[0]!) }
-            : state;
-        });
+        set((state) => ({ progress: withoutProgress(state.progress, key) }));
         void get().refresh();
         return;
       }
       set((state) => {
-        const key = progressKey(event.id, event.version);
-        const existingKey = state.progress[key] !== undefined
-          ? key
-          : Object.entries(state.progress).find(([, progress]) =>
-              progress.id === event.id && (progress.version === 'latest' || progress.version === event.version)
-            )?.[0];
         const next = { ...state.progress };
-        if (existingKey !== undefined && existingKey !== key) delete next[existingKey];
         next[key] = {
           id: event.id,
           version: event.version,

@@ -10,20 +10,24 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import type { EngineCapabilities } from '@rh/protocol';
 import { tmpDir } from '../binaries/paths.js';
 
 export type ExecuteBinary = (
   exePath: string,
   args: string[],
-  opts?: { cwd?: string }
+  opts?: { cwd?: string; pathPrepend?: string }
 ) => Promise<{ code: number | null; stdout: string; stderr: string }>;
 
 /** Real child-process executor with a hard 8s watchdog. */
 export const realExecutor: ExecuteBinary = (exePath, args, opts) =>
   new Promise((resolve) => {
-    const child = spawn(exePath, args, { windowsHide: true, ...(opts?.cwd !== undefined ? { cwd: opts.cwd } : {}) });
+    const child = spawn(exePath, args, {
+      windowsHide: true,
+      cwd: opts?.cwd,
+      ...(opts?.pathPrepend ? { env: { ...process.env, PATH: `${opts.pathPrepend}${delimiter}${process.env['PATH'] ?? ''}` } } : {})
+    });
     let out = '';
     let err = '';
     let settled = false;

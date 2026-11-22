@@ -10,6 +10,8 @@ import { readManifest } from '../binaries/binary-manager.js';
 import { join } from 'node:path';
 import { executableName } from '../platform.js';
 import { hashBinary, probeV8Binary, realExecutor, type ExecuteBinary } from './probe.js';
+import { probeSmBinary } from './sm-probe.js';
+import { probeJscBinary } from './javascriptcore/jsc-probe.js';
 import type { AnalysisEvent, AnalysisStartRequest } from '@rh/protocol';
 import type { EngineAdapter } from './engine-adapter.js';
 
@@ -67,12 +69,14 @@ export class EngineRegistry {
    * Probe one binary. Results cached by sha256 so repeated UI queries never
    * re-spawn the engine.
    */
-  async capabilities(binaryPath: string): Promise<EngineCapabilities> {
+  private async capabilities(binaryPath: string, engineId: AnalysisEngineId): Promise<EngineCapabilities> {
     const digest = await this.hash(binaryPath).catch(() => `unreadable:${binaryPath}`);
-    const cached = this.capsByHash.get(digest);
+    const key = `${engineId}:${digest}`;
+    const cached = this.capsByHash.get(key);
     if (cached) return cached;
-    const caps = await probeV8Binary(binaryPath, this.execute);
-    this.capsByHash.set(digest, caps);
+    const probe = engineId === 'spidermonkey' ? probeSmBinary : engineId === 'javascriptcore' ? probeJscBinary : probeV8Binary;
+    const caps = await probe(binaryPath, this.execute);
+    this.capsByHash.set(key, caps);
     return caps;
   }
 
@@ -97,7 +101,7 @@ export class EngineRegistry {
     if (!exists) {
       return { id, version: match.version, binaryPath: match.binaryPath, capabilities: null, reason: 'binary missing on disk' };
     }
-    const capabilities = await this.capabilities(match.binaryPath);
+    const capabilities = await this.capabilities(match.binaryPath, id);
     return {
       id,
       version: match.version,

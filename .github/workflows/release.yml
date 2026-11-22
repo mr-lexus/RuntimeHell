@@ -40,6 +40,8 @@ jobs:
         run: pnpm lint
       - name: Typecheck
         run: pnpm typecheck:all
+      - name: Build for Electron integration tests
+        run: pnpm build
       - name: Unit tests
         run: xvfb-run -a pnpm test --maxWorkers=4
 
@@ -53,21 +55,25 @@ jobs:
         include:
           - name: windows-x64
             os: windows-latest
+            executable: dist-release/win-unpacked/RuntimeHell.exe
             target: win
             arch: x64
             smoke: node scripts/e2e-compatibility.mjs
           - name: linux-x64
             os: ubuntu-latest
+            executable: dist-release/linux-unpacked/runtimehell
             target: linux
             arch: x64
             smoke: xvfb-run -a node scripts/e2e-compatibility.mjs
           - name: macos-x64
             os: macos-15-intel
+            executable: dist-release/mac/RuntimeHell.app/Contents/MacOS/RuntimeHell
             target: mac
             arch: x64
             smoke: node scripts/e2e-compatibility.mjs
           - name: macos-arm64
-            os: macos-14
+            os: macos-15
+            executable: dist-release/mac-arm64/RuntimeHell.app/Contents/MacOS/RuntimeHell
             target: mac
             arch: arm64
             smoke: node scripts/e2e-compatibility.mjs
@@ -84,12 +90,14 @@ jobs:
           ELECTRON_SKIP_NOTHING: '1'
       - name: Build application
         run: pnpm build
-      - name: Native compatibility smoke
-        run: ${{ matrix.smoke }}
       - name: Package installer
         run: pnpm exec electron-builder --${{ matrix.target }} --${{ matrix.arch }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Run TypeScript in the packaged application
+        run: ${{ matrix.smoke }}
+        env:
+          RH_TEST_EXECUTABLE: ${{ matrix.executable }}
       - name: Upload platform artifacts
         uses: actions/upload-artifact@v7
         with:

@@ -210,15 +210,15 @@ describe('PerformanceManager real Node child', () => {
     expect(result?.type === 'result' ? result.result.comparisons : []).toHaveLength(0);
   });
 
-  it('runs only the cases assigned to each runtime/profile group', async () => {
+  it.each([['a', 'managed', 'b', 'managed'], ['a', 'managed', 'a', 'nvm']])('keeps cases and result groups distinct for %s/%s and %s/%s', async (versionA, sourceA, versionB, sourceB) => {
     const events: PerformanceEvent[] = [];
     let finish!: () => void;
     const done = new Promise<void>((resolve) => { finish = resolve; });
-    const targetA: ResolvedPerformanceTarget = { ref: { source: 'runtime', id: 'node', version: 'a', provenance: 'test' }, executable: process.execPath, runtimeId: 'node', runtimeVersion: process.versions.node, engineId: 'v8' };
-    const targetB: ResolvedPerformanceTarget = { ...targetA, ref: { source: 'runtime', id: 'node', version: 'b', provenance: 'test' } };
+    const targetA: ResolvedPerformanceTarget = { ref: { source: 'runtime', id: 'node', version: versionA, provenance: sourceA }, executable: process.execPath, runtimeId: 'node', runtimeVersion: process.versions.node, engineId: 'v8' };
+    const targetB: ResolvedPerformanceTarget = { ...targetA, ref: { source: 'runtime', id: 'node', version: versionB, provenance: sourceB } };
     const manager = new PerformanceManager({
       targetResolver: {
-        resolve: async (ref) => ref.version === 'b' ? targetB : targetA,
+        resolve: async (ref) => ref.version === versionB && ref.provenance === sourceB ? targetB : targetA,
         catalog: async () => ({ targets: [] }),
         resolveProfile: async (_target, profile) => ({ ref: profile, flags: [], extraEnv: {} })
       },
@@ -240,8 +240,8 @@ describe('PerformanceManager real Node child', () => {
     await done;
     const results = events.filter((event): event is Extract<PerformanceEvent, { type: 'result' }> => event.type === 'result').map((event) => event.result);
     expect(results).toHaveLength(2);
-    expect(results.find((result) => result.target.version === 'a')?.results.map((item) => item.caseId)).toEqual(['a']);
-    expect(results.find((result) => result.target.version === 'b')?.results.map((item) => item.caseId)).toEqual(['b']);
+    expect(new Set(results.map((result) => result.groupId)).size).toBe(2);
+    expect(results.map((result) => result.results.map((item) => item.caseId))).toEqual([['a'], ['b']]);
   });
 
   it('runs a case snippet that includes a static local import', async () => {

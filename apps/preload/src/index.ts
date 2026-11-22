@@ -2,6 +2,7 @@
 
 import {
   IPC,
+  WindowUnloadSignalSchema,
   ListFilesRequestSchema,
   ListFilesResponseSchema,
   type ListFilesResponse,
@@ -16,6 +17,7 @@ import {
   RunStartRequestSchema,
   RunStartResponseSchema,
   SaveFileRequestSchema,
+  type SaveFileRequest,
   SaveFileResponseSchema,
   type SaveFileResponse,
   BinaryInstallRequestSchema,
@@ -103,11 +105,21 @@ const api = {
   windowClose: async (): Promise<void> => {
     await ipcRenderer.invoke(IPC.windowClose);
   },
+  onWindowUnloadBlocked: (cb: () => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+      if (WindowUnloadSignalSchema.safeParse(payload).success) cb();
+    };
+    ipcRenderer.on(IPC.windowUnloadBlocked, handler);
+    return () => { ipcRenderer.removeListener(IPC.windowUnloadBlocked, handler); };
+  },
+  windowContinueUnload: async (): Promise<void> => {
+    WindowUnloadSignalSchema.parse(await ipcRenderer.invoke(IPC.windowContinueUnload, {}));
+  },
   windowState: async (): Promise<{ maximized: boolean }> => {
     const result = (await ipcRenderer.invoke(IPC.windowState)) as { maximized?: unknown };
     return { maximized: result.maximized === true };
   },
-  saveFile: async (req: { workspaceId: string; relPath: string; content: string }): Promise<SaveFileResponse> => {
+  saveFile: async (req: SaveFileRequest): Promise<SaveFileResponse> => {
     return SaveFileResponseSchema.parse(await ipcRenderer.invoke(IPC.wsSaveFile, SaveFileRequestSchema.parse(req)));
   },
   readFile: async (req: { workspaceId: string; relPath: string }): Promise<ReadFileResponse> => {

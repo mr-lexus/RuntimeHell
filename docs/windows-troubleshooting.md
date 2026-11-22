@@ -12,12 +12,12 @@ Enable long paths if workspace paths exceed 260 chars:
 New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force
 ```
 
-## WebKitRequirements DLLs
+## JavaScriptCore DLLs
 
-JSC analysis requires `bin64` DLLs from the WebKitRequirements support
-artifact. RuntimeHell downloads and manages these automatically, scoping
-them to the child process PATH only. If JSC fails to start, verify that
-`%LOCALAPPDATA%\RuntimeHell\cache\support\webkit-requirements\bin64\` exists.
+Current managed Windows installs place `jsc.exe`, `JavaScriptCore.dll`, ICU
+and the required runtime DLLs together. If a managed shell reports a missing
+DLL, reinstall JavaScriptCore from the Runtimes panel. Older or locally
+imported builds may require their matching WebKitRequirements package.
 
 ## taskkill permissions
 

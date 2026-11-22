@@ -4,9 +4,33 @@
  * spawn processes / touch the fs — covered by integration, not here.
  */
 import { describe, expect, it } from 'vitest';
-import { nvmRoot, nvmSymlink, parseNvmVersions, parseRuntimeVersionOutput } from './runtime-detection.js';
+import { detectSystemRuntime, nvmRoot, nvmSymlink, parseNvmVersions, parseRuntimeVersionOutput } from './runtime-detection.js';
 import { executableName, isWindows } from '../platform.js';
 import { join } from 'node:path';
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+
+it.runIf(isWindows())('finds the native runtime on PATH when an npm command shim appears first', async () => {
+  const profile = await mkdtemp(join(tmpdir(), 'rh-runtime-path-'));
+  const originalPath = process.env['PATH'];
+  const originalProfile = process.env['USERPROFILE'];
+  try {
+    const native = join(profile, 'native');
+    await mkdir(native);
+    await writeFile(join(profile, 'bun.cmd'), '@exit /b 1');
+    const exePath = join(native, 'bun.exe');
+    await copyFile(process.execPath, exePath);
+    process.env['USERPROFILE'] = profile;
+    process.env['PATH'] = [profile, native, join(process.env['SystemRoot']!, 'System32')].join(';');
+    expect(await detectSystemRuntime('bun')).toMatchObject({ exePath, version: process.versions.node });
+  } finally {
+    if (originalPath !== undefined) process.env['PATH'] = originalPath;
+    else delete process.env['PATH'];
+    if (originalProfile !== undefined) process.env['USERPROFILE'] = originalProfile;
+    else delete process.env['USERPROFILE'];
+    await rm(profile, { recursive: true, force: true });
+  }
+});
 
 describe('parseRuntimeVersionOutput', () => {
   it('parses Firefox --version output for system browser detection', () => {

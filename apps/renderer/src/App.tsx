@@ -3,16 +3,18 @@ import { exposeMonacoForTests, setRhTheme } from './editor/monaco-setup';
 import { useMemo } from 'react';
 import { createAtaController, getAtaStatus, onAtaStatus, type AtaStatus } from './editor/ata';
 import { typescriptDefaults } from './editor/monaco-setup';
-import { emitRunRequested, getActiveFile, onRunRequested, useActiveFile, useUi, type DrawerTab, type OpenFile } from './state/ui';
+import { emitRunRequested, needsFileSave, onRunRequested, useActiveFile, useUi, type DrawerTab, type OpenFile } from './state/ui';
 import type { SelectionInfo } from './editor/selection-service';
 import { resolveRunLanguage, useRun } from './state/run';
 import { useRuntimes } from './state/runtimes';
-import { ANALYSIS_ALL_TYPES } from './state/analysis';
+import { ANALYSIS_ALL_TYPES, CAPABILITY_FOR_TYPE } from './state/analysis';
 import { useAnalysis } from './state/analysis';
-import { useSettings, DEFAULT_RENDERER_SETTINGS } from './state/settings';
+import { useSettings, DEFAULT_RENDERER_SETTINGS, waitForSettingsWrites } from './state/settings';
 import { usePerformance } from './state/performance';
 import type { PaletteCommand } from './ui/CommandPalette';
 import { WorkbenchShell } from './ui/WorkbenchShell';
+import { Dialog } from './ui/Dialog';
+import { Button } from './ui/primitives';
 import type { SettingsPatch } from '@rh/protocol';
 import { ANALYSIS_DEMO_CODE } from './panels/analysis/analysis-demo';
 import { primaryShortcut } from './platform-ui';
@@ -42,7 +44,8 @@ export function App(): React.JSX.Element {
   const renameFile = useUi((s) => s.renameFile);
   const setActive = useUi((s) => s.setActive);
   const updateContent = useUi((s) => s.updateContent);
-  const markSaved = useUi((s) => s.markSaved);
+  const saveOpenFile = useUi((s) => s.saveFile);
+  const saveError = useUi((s) => Object.values(s.saveErrors)[0]);
   const setDrawerTab = useUi((s) => s.setDrawerTab);
   const setDrawerRatio = useUi((s) => s.setDrawerRatio);
   const appSettings = useSettings((s) => s.settings);
@@ -55,6 +58,7 @@ export function App(): React.JSX.Element {
   const [workspaceView, setWorkspaceView] = useState<'editor' | 'settings'>('editor');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sessionRestored, setSessionRestored] = useState(false);
   const [systemThemeTick, setSystemThemeTick] = useState(0);
   const runtimeSettingsReadyRef = useRef(false);
   const activeRuntime = useRuntimes((s) => s.activeRuntime);
@@ -103,12 +107,53 @@ export function App(): React.JSX.Element {
   const analysisEngineId = useAnalysis((s) => s.engineId);
   const analyzeActions = ANALYSIS_ALL_TYPES.map((type) => {
     const caps = analysisEngines.find((e) => e.id === analysisEngineId)?.capabilities;
-    const key = type as keyof typeof caps;
-    const supported = typeof caps === 'object' && caps !== null ? caps[key] !== false : true;
+    const supported = caps?.[CAPABILITY_FOR_TYPE[type]] === true;
     return { type, label: `Analyze ▸ ${type}`, supported };
   });
   const [status, setStatus] = useState<string>('ready');
   const lastSelectionRef = useRef<SelectionInfo | null>(null);
+  const [unloadSettingsError, setUnloadSettingsError] = useState<string | null>(null);
+  const skipFailedSettingsOnce = useRef(false);
+  const settingsSaving = useSettings((state) => state.saveStatus === 'saving');
+
+  useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent): void => {
+      const status = useSettings.getState().saveStatus;
+      const skipFailure = skipFailedSettingsOnce.current;
+      skipFailedSettingsOnce.current = false;
+      if (useUi.getState().files.some(needsFileSave) || status === 'saving' || (status === 'error' && !skipFailure)) {
+        event.preventDefault();
+        event.returnValue = 'Unsaved changes';
+      }
+    };
+    const unsubscribe = window.api?.onWindowUnloadBlocked(async () => {
+      const ui = useUi.getState();
+      const saved = await Promise.all(ui.files.filter(needsFileSave).map((file) => ui.saveFile(file.id)));
+      if (saved.includes(false)) return;
+      await waitForSettingsWrites();
+      const settings = useSettings.getState();
+      if (settings.saveStatus === 'error') {
+        setUnloadSettingsError(settings.saveError ?? 'Settings are unavailable.');
+        return;
+      }
+      await window.api.windowContinueUnload();
+    });
+    window.addEventListener('beforeunload', beforeUnload);
+    return () => { unsubscribe?.(); window.removeEventListener('beforeunload', beforeUnload); };
+  }, []);
+  const resumeUnload = async (discard: boolean): Promise<void> => {
+    if (!discard) {
+      await patchSettings({});
+      const settings = useSettings.getState();
+      if (settings.saveStatus === 'error') {
+        setUnloadSettingsError(settings.saveError ?? 'Settings are unavailable.');
+        return;
+      }
+    }
+    skipFailedSettingsOnce.current = discard;
+    setUnloadSettingsError(null);
+    await window.api.windowContinueUnload();
+  };
 
   // Analysis is explicit: changing the source or engine clears stale results
   // and cancels any in-flight request, but never starts a replacement probe.
@@ -151,18 +196,29 @@ export function App(): React.JSX.Element {
       setDrawerRatio(settings.layout.drawerRatio);
       setDrawerTab(settings.layout.drawerTab);
       useRuntimes.getState().setActiveRuntime(settings.prefs.defaultRuntime);
-      for (const tab of settings.session.tabs) {
-        const read = await window.api?.readFile({ workspaceId: tab.workspaceId, relPath: tab.relPath });
-        const content = read?.ok === true ? read.content : '';
+      const tabs = settings.session.tabs.length ? settings.session.tabs : [{ workspaceId: WORKSPACE_ID, relPath: DEMO_FILE.relPath }];
+      for (const tab of tabs) {
+        const read = await window.api?.readFile(tab)
+          .catch((error: unknown) => ({ ok: false as const, error: String(error) }));
+        if (disposed) return;
+        if (!read?.ok) {
+          if (tab.workspaceId === WORKSPACE_ID && tab.relPath === DEMO_FILE.relPath && (!read || read.error.startsWith('ENOENT:'))) {
+            openFile({ ...DEMO_FILE, dirty: true });
+          } else {
+            setStatus(`Could not open ${tab.relPath}: ${read?.error ?? 'Workspace unavailable'}`);
+          }
+          continue;
+        }
         const language = tab.relPath.endsWith('.ts') || tab.relPath.endsWith('.tsx') ? 'typescript' : 'javascript';
-        openFile({ id: `${tab.workspaceId}:${tab.relPath}`, relPath: tab.relPath, language, content, dirty: false });
+        openFile({ id: `${tab.workspaceId}:${tab.relPath}`, ...tab, language, content: read.content, dirty: false });
       }
       if (settings.session.activeRelPath !== null) {
-        const match = useUi.getState().files.find((f) => f.relPath === settings.session.activeRelPath);
+        const matching = useUi.getState().files.filter((file) => file.relPath === settings.session.activeRelPath);
+        const match = matching.find((file) => (file.workspaceId ?? WORKSPACE_ID) === settings.session.activeWorkspaceId) ?? matching[0];
         if (match !== undefined) useUi.getState().setActive(match.id);
       }
-      if (!disposed && useUi.getState().files.length === 0) openFile(DEMO_FILE);
-    })();
+      setSessionRestored(true);
+    })().catch((error: unknown) => { if (!disposed) setStatus(`Could not restore session: ${String(error)}`); });
     // Real executor wiring (todo 11): Ctrl+Enter and toolbar both funnel into
     // the run store; streamed events update it via the preload bridge.
     const offRun = onRunRequested(() => {
@@ -280,40 +336,21 @@ export function App(): React.JSX.Element {
     ataRef.current?.schedule(code);
   };
 
-  // Autosave (todo 21): 500ms debounce after edits; session tabs persisted.
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sessionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Persist tab changes only after the complete session has been restored.
   useEffect(() => {
-    if (saveTimer.current !== null) clearTimeout(saveTimer.current);
-    if (activeFile?.dirty === true) {
-      const file = activeFile;
-      saveTimer.current = setTimeout(() => {
-        void window.api
-          ?.saveFile({ workspaceId: WORKSPACE_ID, relPath: file.relPath, content: file.content })
-          .then(() => markSaved(file.id))
-          .catch(() => {});
-      }, 500);
-    }
-    if (sessionTimer.current !== null) clearTimeout(sessionTimer.current);
-    sessionTimer.current = setTimeout(() => {
-      void window.api?.settingsSet({
-        session: {
-          tabs: files.map((f) => ({ workspaceId: WORKSPACE_ID, relPath: f.relPath })),
-          activeRelPath: getActiveFile()?.relPath ?? null
-        }
-      });
-    }, 500);
-  }, [files, activeFile, markSaved]);
+    if (!sessionRestored) return;
+    const previous = useSettings.getState().settings.session;
+    const tabs = files.map((file) => ({ workspaceId: file.workspaceId ?? WORKSPACE_ID, relPath: file.relPath }));
+    const activeRelPath = activeFile?.relPath ?? null;
+    const activeWorkspaceId = activeFile ? activeFile.workspaceId ?? WORKSPACE_ID : null;
+    if (previous.activeWorkspaceId === activeWorkspaceId && previous.activeRelPath === activeRelPath && previous.tabs.length === tabs.length &&
+      tabs.every((tab, i) => tab.relPath === previous.tabs[i]?.relPath && tab.workspaceId === previous.tabs[i]?.workspaceId)) return;
+    void patchSettings({ session: { tabs, activeRelPath, activeWorkspaceId } });
+  }, [files, activeFile, sessionRestored, patchSettings]);
 
   const saveFile = (file: OpenFile, content = file.content): void => {
-    if (!file) return;
-    void window.api
-      .saveFile({ workspaceId: WORKSPACE_ID, relPath: file.relPath, content })
-      .then(() => {
-        markSaved(file.id);
-        setStatus(`saved ${file.relPath}`);
-      })
-      .catch((err: unknown) => setStatus(`save failed: ${String(err)}`));
+    if (content !== file.content) updateContent(file.id, content);
+    void saveOpenFile(file.id).then((saved) => { if (saved) setStatus(`saved ${file.relPath}`); });
   };
   const onSave = (content: string): void => {
     if (activeFile) saveFile(activeFile, content);
@@ -339,11 +376,20 @@ export function App(): React.JSX.Element {
   };
 
   // Tab management: create a fresh untitled tab, close existing ones.
-  const createTab = (): void => {
+  const createTab = async (): Promise<void> => {
+    let occupied: Set<string>;
+    try {
+      const stored = await window.api.listFiles({ workspaceId: WORKSPACE_ID });
+      occupied = new Set(stored.files.map((file) => file.relPath.toLowerCase()));
+    } catch (error) {
+      setStatus(`Could not create tab: ${String(error)}`);
+      return;
+    }
     const files = useUi.getState().files;
+    for (const file of files) occupied.add(file.relPath.toLowerCase());
     let n = files.length + 1;
     let id = `${WORKSPACE_ID}:untitled-${n}.ts`;
-    while (files.some((f) => f.id === id)) {
+    while (occupied.has(`untitled-${n}.ts`) || files.some((f) => f.id === id)) {
       n += 1;
       id = `${WORKSPACE_ID}:untitled-${n}.ts`;
     }
@@ -352,7 +398,7 @@ export function App(): React.JSX.Element {
       relPath: `untitled-${n}.ts`,
       language: 'typescript',
       content: `// untitled-${n}.ts — ${primaryShortcut('Enter')} runs\nconsole.log('hello from tab ${n}');\n`,
-      dirty: false
+      dirty: true
     });
   };
 
@@ -400,17 +446,18 @@ export function App(): React.JSX.Element {
     { id: 'autorun', label: autoRun ? 'Disable auto-run' : 'Enable auto-run', category: 'Execution', run: () => applySettingsPatch({ prefs: { autorun: !autoRun } }) }
   ];
 
-  return <WorkbenchShell
+  return <><WorkbenchShell
     settings={appSettings} files={files} activeFileId={activeFileId} activeFile={activeFile}
     drawerTab={drawerTab} drawerRatio={drawerRatio} drawerOpen={drawerOpen} showOutputColumn={showOutputColumn}
     phase={phase} runtimeVersion={runtimeVersion} lastRuntimeId={lastRuntimeId} activeRuntime={activeRuntime}
-    lastExit={lastExit} autoRun={autoRun} lang={lang} ataStatus={ataStatus} status={status}
+    lastExit={lastExit} autoRun={autoRun} lang={lang} ataStatus={ataStatus} status={saveError ?? status} saveError={saveError}
     lineCount={lineCount} scrollTop={scrollTop} inlineByLine={inlineByLine} resultByLine={resultByLine}
     analyzeActions={analyzeActions} commands={commands} paletteOpen={paletteOpen}
     settingsViewActive={workspaceView === 'settings'} onSetWorkspaceView={setWorkspaceView}
     onOpenPalette={() => setPaletteOpen(true)} onClosePalette={() => setPaletteOpen(false)}
     onOpenSettings={() => setWorkspaceView('settings')}
-    onSetActive={setActive} onCloseFile={closeFile} onMoveFile={moveFile} onRenameFile={renameFile} onCreateTab={createTab}
+    onSetActive={setActive} onCloseFile={closeFile} onMoveFile={moveFile}
+    onRenameFile={async (id, path) => await renameFile(id, path) ? null : useUi.getState().saveErrors[id] ?? 'Could not rename this tab.'} onCreateTab={createTab}
     onRun={() => emitRunRequested()} onSave={onSave} onSaveFile={(file) => saveFile(file)}
     onChange={(value, source) => {
       if (activeFile) {
@@ -436,5 +483,12 @@ export function App(): React.JSX.Element {
     onSetOutputColumn={(inlineInspector) => applySettingsPatch({ editor: { inlineInspector } })}
     onPatchSettings={applySettingsPatch} onResetAppearance={() => void resetAppearance()}
     onResetEditor={() => void resetEditor()} onResetAll={() => void resetAllSettings()}
-  />;
+  />
+    {unloadSettingsError !== null && <Dialog label="Settings could not be saved" className="rh-layout-dialog" onClose={() => { if (!settingsSaving) setUnloadSettingsError(null); }}>
+      <header className="rh-dialog-heading"><div><h2>Settings could not be saved</h2><p>{unloadSettingsError}</p></div></header>
+      <Button disabled={settingsSaving} onClick={() => void resumeUnload(false)}>Retry save</Button>
+      <Button disabled={settingsSaving} onClick={() => void resumeUnload(true)}>Continue without saving settings</Button>
+      <Button disabled={settingsSaving} onClick={() => setUnloadSettingsError(null)}>Stay here</Button>
+    </Dialog>}
+  </>;
 }

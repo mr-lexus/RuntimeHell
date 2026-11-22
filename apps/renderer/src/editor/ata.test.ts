@@ -49,7 +49,7 @@ describe('createAtaController', () => {
 
     expect(posted.length).toBe(1);
     // Worker 'file' messages route into addExtraLib with node_modules prefix.
-    channel.emit({ type: 'file', code: 'declare const _: any;', path: 'lodash/index.d.ts' });
+    channel.emit({ type: 'file', code: 'declare const _: any;', path: '/node_modules/lodash/index.d.ts' });
     expect(extras[0]).toContain('file:///node_modules/lodash/index.d.ts');
   });
 

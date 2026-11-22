@@ -3,13 +3,15 @@ import { createRequire } from 'node:module';
 import { arch, cpus, platform } from 'node:os';
 import { dirname, join } from 'node:path';
 import { execFile } from 'node:child_process';
-import { build, type BuildFailure } from 'esbuild';
+import type { BuildFailure } from 'esbuild';
+import { build } from '../transpile/esbuild.js';
 import { z } from 'zod';
 import {
   PerformanceCatalogResponseSchema,
   PerformanceEventSchema,
   PerformanceRawSampleSchema,
   PerformanceRunResultSchema,
+  performanceTargetMatches,
   type PerformanceCancelResponse,
   type PerformanceCase,
   type PerformanceCaseResult,
@@ -817,14 +819,11 @@ function profileConfig(target: ResolvedPerformanceTarget, profileId: string): Pi
   if (profileId === 'maglev-disabled') return { flags: ['--no-maglev'], extraEnv: {} };
   return { flags: [], extraEnv: {} };
 }
-function groupKey(target: PerformanceTargetRef, profile: PerformanceProfileRef): string { return `${target.source}:${target.id}:${target.version ?? 'auto'}:${profile.id}`; }
-function targetRefMatches(left: PerformanceTargetRef | undefined, right: PerformanceTargetRef): boolean {
-  if (left === undefined) return false;
-  if (left.source !== right.source || left.id !== right.id) return false;
-  return left.version === undefined || right.version === undefined || left.version === right.version || left.version === 'system' || left.version === 'auto' || right.version === 'system' || right.version === 'auto';
+function groupKey(target: PerformanceTargetRef, profile: PerformanceProfileRef): string {
+  return `${target.source}:${target.id}:${target.version ?? 'auto'}:${target.provenance ?? 'auto'}:${profile.id}`;
 }
 function casesForPerformanceGroup(cases: readonly PerformanceCase[], target: PerformanceTargetRef, profile: PerformanceProfileRef): PerformanceCase[] {
-  return cases.filter((item) => item.target === undefined || (targetRefMatches(item.target, target) && (item.profileIds === undefined || item.profileIds.includes(profile.id))));
+  return cases.filter((item) => item.target === undefined || (performanceTargetMatches(item.target, target) && (item.profileIds === undefined || item.profileIds.includes(profile.id))));
 }
 function safeIdentifier(value: string): string { return value.replace(/[^a-zA-Z0-9_$]/g, '_').replace(/^[^a-zA-Z_$]/, '_$&'); }
 

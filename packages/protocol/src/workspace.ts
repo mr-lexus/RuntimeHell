@@ -15,7 +15,7 @@ export const RelPathSchema = z
   });
 
 export const SaveFileRequestSchema = z
-  .object({ workspaceId: WorkspaceIdSchema, relPath: RelPathSchema, content: z.string() })
+  .object({ workspaceId: WorkspaceIdSchema, relPath: RelPathSchema, content: z.string(), createOnly: z.literal(true).optional() })
   .strict();
 export type SaveFileRequest = z.infer<typeof SaveFileRequestSchema>;
 
@@ -64,6 +64,7 @@ export const HistoryRecordSchema = z.object({
   finishedAt: z.string().min(1),
   relPath: RelPathSchema,
   contentSnapshot: z.string(),
+  snapshotTruncated: z.boolean().optional(),
   status: RunStatusSchema,
   exitCode: z.number().int().nullable(),
   durationMs: z.number().nonnegative(),

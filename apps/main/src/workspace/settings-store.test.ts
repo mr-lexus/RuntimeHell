@@ -58,6 +58,24 @@ describe('settings store', () => {
     expect(settings.appearance.background).toBe('topology');
   });
 
+  it('keeps usable legacy preferences when some session tabs are malformed', async () => {
+    const path = join(dir, 'legacy.json');
+    const tab = { workspaceId: 'default', relPath: 'entry.ts' };
+    await writeFile(path, JSON.stringify({
+      schemaVersion: 1, prefs: { timeoutMs: 0.1, autorun: true },
+      session: { tabs: [tab, { ...tab, relPath: '' }, { ...tab, workspaceId: 'bad id' }, { ...tab, relPath: '../old.ts' }, null], activeRelPath: 'entry.ts' }
+    }));
+    const { settings } = await loadSettings(path);
+    expect(settings.session.tabs).toEqual([tab]);
+    expect(settings.prefs.timeoutMs).toBe(DEFAULT_SETTINGS.prefs.timeoutMs);
+    expect(settings.prefs.autorun).toBe(true);
+    await expect(saveSettings(settings, path)).resolves.toBeUndefined();
+  });
+
+  it('propagates read errors other than a missing settings file', async () => {
+    await expect(loadSettings(dir)).rejects.toThrow();
+  });
+
   it('adds the Vim editor default when loading an older v2 settings file', async () => {
     const path = settingsPath();
     await saveSettings(DEFAULT_SETTINGS, path);

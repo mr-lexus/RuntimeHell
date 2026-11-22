@@ -1,6 +1,37 @@
 import { runInNewContext } from 'node:vm';
-import { describe, expect, it } from 'vitest';
-import { buildBrowserScript } from './browser-runtime.js';
+import { EventEmitter } from 'node:events';
+import { describe, expect, it, vi } from 'vitest';
+import { buildBrowserScript, EmbeddedBrowserRuntime } from './browser-runtime.js';
+
+describe('embedded browser run cleanup', () => {
+  it.each(['Stop', 'timeout'] as const)('releases the window and watchdog on %s', async (action) => {
+    vi.useFakeTimers();
+    let loaded!: () => void;
+    const loading = new Promise<void>((resolve) => { loaded = resolve; });
+    let destroyed = false;
+    class TestWindow extends EventEmitter {
+      webContents = Object.assign(new EventEmitter(), { setWindowOpenHandler() {} });
+      loadURL(): Promise<void> { loaded(); return new Promise(() => {}); }
+      isDestroyed(): boolean { return destroyed; }
+      close(): void { this.destroy(); }
+      destroy(): void { destroyed = true; this.emit('closed'); }
+    }
+    vi.doMock('electron', () => ({ BrowserWindow: TestWindow }));
+    try {
+      const timerCount = vi.getTimerCount();
+      const handle = new EmbeddedBrowserRuntime().run({ exePath: '', args: ['test.js'], cwd: '.', timeoutMs: 1000 });
+      await loading;
+      if (action === 'Stop') await handle.cancel();
+      else await vi.advanceTimersByTimeAsync(1000);
+      expect((await handle.result).status).toBe(action === 'Stop' ? 'cancelled' : 'timeout');
+      expect(destroyed).toBe(true);
+      expect(vi.getTimerCount()).toBe(timerCount);
+    } finally {
+      vi.doUnmock('electron');
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe('embedded browser runtime page shim', () => {
   it('inspects hidden/symbol properties without invoking own, constructor or then getters', () => {

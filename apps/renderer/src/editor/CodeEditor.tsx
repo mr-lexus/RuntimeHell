@@ -20,7 +20,14 @@ export interface EditorScrollController {
   scrollBy: (deltaY: number) => void;
 }
 
+export interface EditorTabModel {
+  model: monaco.editor.ITextModel;
+  viewState: monaco.editor.ICodeEditorViewState | null;
+}
+
 export interface CodeEditorProps {
+  fileId: string;
+  tabModels: Map<string, EditorTabModel>;
   path: string;
   value: string;
   language: string;
@@ -138,7 +145,6 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const vimStatusRef = useRef<HTMLDivElement | null>(null);
   const capKeysRef = useRef<Map<AnalyzeType, monaco.editor.IContextKey<boolean>>>(new Map());
-  const modelsRef = useRef<Map<string, monaco.editor.ITextModel>>(new Map());
   const propsRef = useRef(props);
   propsRef.current = props;
   const vimRef = useRef<VimModeController | null>(null);
@@ -151,9 +157,14 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     if (!containerRef.current) return;
     const editorSettings = propsRef.current.editorSettings ?? DEFAULT_EDITOR_SETTINGS;
     const fontSize = propsRef.current.fontSize ?? editorSettings.fontSize;
+    const { fileId, tabModels, value, language } = propsRef.current;
+    let tab = tabModels.get(fileId);
+    if (!tab) {
+      tab = { model: monaco.editor.createModel(value, language), viewState: null };
+      tabModels.set(fileId, tab);
+    }
     const editor = monaco.editor.create(containerRef.current, {
-      value: propsRef.current.value,
-      language: propsRef.current.language,
+      model: tab.model,
       theme: propsRef.current.theme ?? 'rh-dark',
       automaticLayout: true,
       minimap: { enabled: editorSettings.minimap },
@@ -276,7 +287,7 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     notifyLineCount();
     propsRef.current.onScrollTop?.(editor.getScrollTop());
 
-    editor.onDidChangeCursorSelection(() => {
+    const notifySelection = (): void => {
       const sel = editor.getSelection();
       const model = editor.getModel();
       if (!sel || !model) return;
@@ -289,7 +300,10 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
           endCol: sel.endColumn
         }) : null
       );
-    });
+    };
+    editor.onDidChangeCursorSelection(notifySelection);
+    if (tab.viewState) editor.restoreViewState(tab.viewState);
+    notifySelection();
 
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       propsRef.current.onSave?.(editor.getValue());
@@ -334,13 +348,12 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     });
 
     return () => {
+      tab.viewState = editor.saveViewState();
       if (importController?.insert === insertPackage) importController.insert = () => ({ ok: false, message: 'Open a source file first.' });
       if (scrollController?.scrollBy === scrollBy) scrollController.scrollBy = () => undefined;
       currentLineNumberDecorationsRef.current = editor.deltaDecorations(currentLineNumberDecorationsRef.current, []);
       editor.dispose();
       editorRef.current = null;
-      for (const m of modelsRef.current.values()) m.dispose();
-      modelsRef.current.clear();
     };
   }, []);
 
@@ -401,20 +414,15 @@ export function CodeEditor(props: CodeEditorProps): React.JSX.Element {
     };
   }, [props.vimMode]);
 
-  // Tab switching: one Monaco model per file path; external content updates
-  // (history restore, initial open) are pushed into the existing model.
+  // History restore and language changes update the existing undoable model.
   useEffect(() => {
     const editor = editorRef.current;
-    if (!editor) return;
-    let model = modelsRef.current.get(props.path);
-    if (!model || model.isDisposed()) {
-      model = monaco.editor.createModel(props.value, props.language);
-      modelsRef.current.set(props.path, model);
-    }
-    if (editor.getModel() !== model) {
-      editor.setModel(model);
-    } else if (model.getValue() !== props.value) {
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    if (model.getValue() !== props.value) {
+      model.pushStackElement();
       model.pushEditOperations([], [{ range: model.getFullModelRange(), text: props.value }], () => null);
+      model.pushStackElement();
     }
     if (model.getLanguageId() !== props.language) {
       monaco.editor.setModelLanguage(model, props.language);

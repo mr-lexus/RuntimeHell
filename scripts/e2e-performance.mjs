@@ -1,5 +1,6 @@
 /** Deterministic Electron UX checks with real preload validation.
  * Uses an isolated profile/cache. Run after pnpm build; --real uses Node. */
+import { firstTestWindow } from './electron-test-window.mjs';
 import { _electron as electron } from 'playwright';
 import { mkdtemp, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,7 @@ const app = await electron.launch({
   env: { ...process.env, USERPROFILE: profile, HOME: profile, APPDATA: join(profile, 'config'), LOCALAPPDATA: join(profile, 'local'), XDG_CONFIG_HOME: join(profile, 'config'), RH_CACHE_ROOT: join(profile, 'cache') }
 });
 try {
-  const page = await app.firstWindow();
+  const page = await firstTestWindow(app);
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.waitForFunction(() => Boolean(window.__rh_editor), null, { timeout: 30000 });
@@ -197,7 +198,7 @@ try {
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ checks, screenshots: output }, null, 2));
 } catch (error) {
-  const page = await app.firstWindow();
+  const page = await firstTestWindow(app);
   await page.screenshot({ path: join(output, 'failure.png') });
   console.error(await page.locator('#tool-panel-performance').innerText());
   throw error;

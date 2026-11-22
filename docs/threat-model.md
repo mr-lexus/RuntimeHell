@@ -23,6 +23,6 @@ RuntimeHell is a **local developer tool**. It executes arbitrary JavaScript/Type
 ## Supply-chain mitigations
 
 - `--ignore-scripts` ON by default
-- Official download sources only (nodejs.org, chromium-v8 canary, Mozilla taskcluster/archive, WebKitForWindows releases)
+- Official download sources only (nodejs.org, chromium-v8 canary, Mozilla taskcluster/archive, WebKit Buildbot and its build archive)
 - SHA-256 verification where upstream publishes checksums; record-mode pinning otherwise
 - Lockfile committed per workspace

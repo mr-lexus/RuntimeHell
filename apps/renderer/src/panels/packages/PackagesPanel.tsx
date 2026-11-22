@@ -137,8 +137,10 @@ function npmUrl(name: string): string {
 
 function InstalledRow({ name, range, ...importActions }: { name: string; range: string } & ImportActions): React.JSX.Element {
   const busy = usePackages((s) => s.busy);
-  const meta = usePackages((s) => s.meta[name]);
-  const latest = usePackages((s) => s.outdated[name]);
+  const meta = usePackages((s) => Object.hasOwn(s.meta, name) ? s.meta[name] : undefined);
+  const metaError = usePackages((s) => Object.hasOwn(s.metaErrors, name) ? s.metaErrors[name] : undefined);
+  const fetchMeta = usePackages((s) => s.fetchMeta);
+  const latest = usePackages((s) => Object.hasOwn(s.outdated, name) ? s.outdated[name] : null);
   const install = usePackages((s) => s.install);
   const installVersioned = usePackages((s) => s.installVersioned);
   const remove = usePackages((s) => s.remove);
@@ -170,7 +172,10 @@ function InstalledRow({ name, range, ...importActions }: { name: string; range: 
         }}
       >
         <strong style={{ color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</strong>
-        <button style={VERSION_CHIP} title="choose a different version" onClick={() => setOpen((o) => !o)}>
+        <button style={VERSION_CHIP} aria-expanded={open} title="choose a different version" onClick={() => {
+          if (!open) void fetchMeta(name);
+          setOpen(!open);
+        }}>
           {range} {open ? '▾' : '▸'}
         </button>
         <a href={npmUrl(name)} target="_blank" rel="noreferrer" style={LINK} title={npmUrl(name)}>
@@ -194,7 +199,9 @@ function InstalledRow({ name, range, ...importActions }: { name: string; range: 
       </div>
       {open && (
         <div style={PICKER}>
-          {meta === undefined ? (
+          {metaError ? (
+            <div role="alert">Could not load versions: {metaError} <button style={BTN} onClick={() => void fetchMeta(name)}>Retry</button></div>
+          ) : meta === undefined ? (
             <span style={PICKER_LABEL}><BlockLoader label="loading version list from registry" /></span>
           ) : (
             <>
@@ -216,6 +223,7 @@ function InstalledRow({ name, range, ...importActions }: { name: string; range: 
                     if (e.key === 'Enter') submitExact();
                   }}
                   placeholder="4.17.21"
+                  aria-label={`Exact version of ${name}`}
                   style={EXACT_INPUT}
                   disabled={busy}
                 />
@@ -235,7 +243,7 @@ function InstalledRow({ name, range, ...importActions }: { name: string; range: 
 
 function SearchResultRow({ row, ...importActions }: { row: PkgSearchRow } & ImportActions): React.JSX.Element {
   const busy = usePackages((s) => s.busy);
-  const installedRange = usePackages((s) => s.installed[row.name]);
+  const installedRange = usePackages((s) => Object.hasOwn(s.installed, row.name) ? s.installed[row.name] : undefined);
   const install = usePackages((s) => s.install);
   const remove = usePackages((s) => s.remove);
 
@@ -285,17 +293,17 @@ function NpmLog({ log }: { log: string[] }): React.JSX.Element {
   useEffect(() => {
     const el = bodyRef.current;
     if (el !== null) el.scrollTop = el.scrollHeight;
-  }, [log.length, open]);
+  }, [log, open]);
 
   return (
     <div>
-      <div
+      <button type="button" aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        style={{ cursor: 'pointer', userSelect: 'none', color: 'var(--text-dim)', fontSize: 11, padding: '2px 0' }}
+        style={{ ...BTN, border: 0, color: 'var(--text-dim)', padding: '2px 0' }}
         title={open ? 'collapse log' : 'expand log'}
       >
         {open ? '▾' : '▸'} npm log (verbatim){log.length > 0 ? ` · ${log.length}` : ''}
-      </div>
+      </button>
       {open && (
         <div
           ref={bodyRef}
@@ -343,7 +351,7 @@ function NpmLog({ log }: { log: string[] }): React.JSX.Element {
  * version input fed by fetchMeta), and a collapsible verbatim npm log with
  * stderr/failure lines highlighted.
  */
-export function PackagesPanel({ activeFile, importController }: { activeFile: { id: string; relPath: string } | null; importController: PackageImportController }): React.JSX.Element {
+export function PackagesPanel({ activeFile, importController }: { activeFile: { id: string; relPath: string; workspaceId?: string } | null; importController: PackageImportController }): React.JSX.Element {
   const activeFileRef = useRef(activeFile);
   activeFileRef.current = activeFile;
   const alive = useRef(true);
@@ -362,7 +370,8 @@ export function PackagesPanel({ activeFile, importController }: { activeFile: { 
   const setQuery = usePackages((s) => s.setQuery);
   const refresh = usePackages((s) => s.refresh);
   const bindEvents = usePackages((s) => s.bindEvents);
-  const fetchMeta = usePackages((s) => s.fetchMeta);
+  const searchError = usePackages((s) => s.searchError);
+  const search = usePackages((s) => s.search);
   const checkUpdates = usePackages((s) => s.checkUpdates);
 
   useDebouncedSearch();
@@ -371,8 +380,7 @@ export function PackagesPanel({ activeFile, importController }: { activeFile: { 
     void refresh();
     const off = bindEvents();
     return () => off?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refresh, bindEvents]);
 
   // Lazy, non-blocking registry metadata + update checks, debounced and
   // re-run whenever the installed set changes (post install/remove).
@@ -382,12 +390,10 @@ export function PackagesPanel({ activeFile, importController }: { activeFile: { 
   useEffect(() => {
     if (namesKey === '') return;
     const timer = setTimeout(() => {
-      for (const name of namesKey.split('\n')) void fetchMeta(name);
       void checkUpdates();
     }, 400);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [namesKey]);
+  }, [namesKey, checkUpdates]);
 
   const names = namesKey === '' ? [] : namesKey.split('\n');
   const queryActive = query.trim() !== '';
@@ -402,7 +408,7 @@ export function PackagesPanel({ activeFile, importController }: { activeFile: { 
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const response = await Promise.race([
-        window.api.pkgImportInfo('default', name),
+        window.api.pkgImportInfo(file.workspaceId ?? 'default', name),
         new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('Reading package metadata timed out. Try again.')), 15000); })
       ]);
       if (!alive.current) return;
@@ -434,7 +440,7 @@ export function PackagesPanel({ activeFile, importController }: { activeFile: { 
         minHeight: 0
       }}
     >
-      <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="search npm…" style={SEARCH_INPUT} />
+      <input aria-label="Search npm packages" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="search npm…" style={SEARCH_INPUT} />
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px', color: 'var(--text-dim)', fontSize: 11 }}>
         <span>{canImport ? `Import into ${activeFile?.relPath}` : 'Open a JS/TS source file to insert imports.'}</span>
         <label><input type="checkbox" checked={includeExample} disabled={importing !== null} onChange={(event) => setIncludeExample(event.target.checked)} /> Include commented README example, when available</label>
@@ -446,7 +452,8 @@ export function PackagesPanel({ activeFile, importController }: { activeFile: { 
         {queryActive && (
           <>
             <div style={{ ...SECTION_TITLE, marginTop: 2 }}>search results{searching && <BlockLoader className="rh-inline-loader" label="searching registry" />}</div>
-            {!searching && results.length === 0 && (
+            {searchError && <div role="alert">Search failed: {searchError} <button style={BTN} onClick={() => void search()}>Retry</button></div>}
+            {!searching && !searchError && results.length === 0 && (
               <div style={{ color: 'var(--text-faint)', fontSize: 11 }}>no packages match “{query.trim()}”</div>
             )}
             {results.map((row) => (
