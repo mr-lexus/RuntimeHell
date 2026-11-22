@@ -112,9 +112,14 @@ describe.skipIf(!existsSync(mainEntry))('monaco e2e (built app)', () => {
         await rename(`${settingsPath}.bak`, settingsPath);
         blocked = false;
       }
-      const closed = page.waitForEvent('close', { timeout: 8000 });
-      await dialog.getByRole('button', { name: choice === 'retry' ? 'Retry save' : 'Continue without saving settings' }).click();
-      await closed;
+      const button = dialog.getByRole('button', { name: choice === 'retry' ? 'Retry save' : 'Continue without saving settings' });
+      await Promise.all([
+        page.waitForEvent('close', { timeout: 8000 }),
+        button.click().catch((error: unknown) => {
+          // Electron can destroy the page before Playwright acknowledges the click.
+          if (!(error instanceof Error) || !error.message.includes('Target page, context or browser has been closed')) throw error;
+        })
+      ]);
       const path = blocked ? `${settingsPath}.bak` : settingsPath;
       expect(JSON.parse(await readFile(path, 'utf8')).prefs.autorun).toBe(choice === 'retry');
     } finally {
